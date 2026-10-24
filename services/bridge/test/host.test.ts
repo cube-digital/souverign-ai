@@ -251,3 +251,66 @@ describe("agent host replies", () => {
     expect(row?.status).toBe("error");
   });
 });
+
+describe("agent host live activity", () => {
+  it("announces thinking, a growing draft, the final reply and done, in that order", async () => {
+    await setup(new EchoRuntime());
+    const ana = await anaInChat();
+    const agent = await addAgent(ana, "Scout");
+    const [agentRow] = await db.query<{ public_key: string }>(
+      "select public_key from sa.devices where id = $1",
+      [agent.device_id],
+    );
+    await ana.engine.createEpoch(ana.chatId, [
+      ana.pub,
+      { device_id: agent.device_id, public_key: agentRow?.public_key ?? "" },
+    ]);
+    type Step = { kind: string; draft?: string; text?: string };
+    const timeline: Step[] = [];
+    ana.engine.onActivity((a) => {
+      if (a.senderDevice === agent.device_id)
+        timeline.push({ kind: a.body.phase, draft: a.body.draft });
+    });
+    ana.engine.onMessage((m) => {
+      if (m.senderDevice === agent.device_id && m.status === "ok")
+        timeline.push({ kind: "message", text: (m.body as { text: string }).text });
+    });
+
+    await ana.engine.sendText(ana.chatId, "@Scout please summarise the room status for me");
+    await expect.poll(() => timeline.some((s) => s.kind === "done"), { timeout: 8000 }).toBe(true);
+
+    const kinds = timeline.map((s) => s.kind);
+    expect(kinds[0]).toBe("thinking");
+    expect(kinds.slice(-2)).toEqual(["message", "done"]);
+    expect(kinds.slice(1, -2).length).toBeGreaterThanOrEqual(1);
+    expect(new Set(kinds.slice(1, -2))).toEqual(new Set(["writing"]));
+    const drafts = timeline.filter((s) => s.kind === "writing").map((s) => s.draft ?? "");
+    const finalText = timeline[timeline.length - 2]?.text ?? "";
+    const first = drafts[0] ?? "";
+    const last = drafts[drafts.length - 1] ?? "";
+    expect(first.length).toBeGreaterThan(0);
+    expect(last.length).toBeGreaterThan(first.length);
+    expect(last.startsWith(first)).toBe(true);
+    expect(finalText.startsWith(last)).toBe(true);
+  }, 15000);
+
+  it("starts an agent's runtime when it is added to a chat, before any question", async () => {
+    const started: string[] = [];
+    const echo = new EchoRuntime();
+    await setup({
+      ensureStarted: async (agent: RuntimeAgent) => {
+        started.push(agent.id);
+      },
+      stop: async () => {},
+      stopAll: async () => {},
+      chat: (a, c, m) => echo.chat(a, c, m),
+      chatStream: (a, c, m, d) => echo.chatStream(a, c, m, d),
+    } as AgentRuntime);
+    const ana = await anaInChat();
+    expect(started).toEqual([]);
+
+    const agent = await addAgent(ana, "Scout");
+
+    await expect.poll(() => started, { timeout: 5000 }).toEqual([agent.id]);
+  }, 15000);
+});
