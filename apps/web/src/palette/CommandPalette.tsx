@@ -75,7 +75,7 @@ function Palette({ onClose }: { onClose: () => void }) {
         id: `chat:${c.id}`,
         group: "Chats" as const,
         label: c.title,
-        run: () => navigate(`/chats/${encodeURIComponent(c.id)}`),
+        run: () => navigate(`/c/${encodeURIComponent(c.id)}`),
       })),
       ...agentList.flatMap((a) => [
         {
@@ -90,7 +90,7 @@ function Palette({ onClose }: { onClose: () => void }) {
           label: `Message ${a.name}`,
           run: () => {
             agentDm(a.id).then(
-              (dm) => navigate(`/chats/${encodeURIComponent(dm.id)}`),
+              (dm) => navigate(`/c/${encodeURIComponent(dm.id)}`),
               () => toast.push(`Could not open a chat with ${a.name}.`, "error"),
             );
           },

@@ -24,7 +24,7 @@ export function WelcomePage() {
     }
     markWelcomed(s.user.id);
     const general = list.find((c) => c.seed_key === "general");
-    navigate(general ? `/chats/${encodeURIComponent(general.id)}` : "/");
+    navigate(general ? `/c/${encodeURIComponent(general.id)}` : "/");
   }
 
   function skip() {
