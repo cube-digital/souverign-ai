@@ -1,8 +1,8 @@
 import type { RelayRecentRow } from "@sa/protocol";
 import { useEffect, useState } from "react";
 import { SHARED_TICKET_KEY } from "../api";
+import { Chip } from "../ds";
 import { formatSize, shortId, timeOf } from "../lib/format";
-import { Pill } from "../ui/Pill";
 
 const SLOTS = [1, 2, 3, 4];
 
@@ -40,11 +40,11 @@ export function PresenterPage() {
   const rows = useRecent();
   const latest = [...rows].sort((a, b) => b.seq - a.seq).slice(0, 3);
   return (
-    <div className="flex min-h-full flex-col bg-bg text-[13px] text-text">
-      <header className="flex flex-wrap items-center gap-3 border-b border-line bg-panel px-5 py-2.5">
-        <span aria-hidden="true" className="inline-block h-5 w-5 rounded-[6px] bg-teal" />
+    <div className="flex min-h-full flex-col bg-bg-0 text-[13px] text-text-0">
+      <header className="flex flex-wrap items-center gap-3 border-b border-border-soft bg-bg-1 px-5 py-2.5">
+        <span aria-hidden="true" className="inline-block h-5 w-5 rounded-sm bg-ai" />
         <h1 className="text-[15px] font-semibold">Presenter view</h1>
-        <span className="text-muted">Four people, one Mac</span>
+        <span className="text-text-2">Four people, one Mac</span>
       </header>
       <main className="grid flex-1 grid-cols-2 gap-3.5 p-3.5">
         {SLOTS.map((n) => (
@@ -52,18 +52,18 @@ export function PresenterPage() {
             key={n}
             src={`/?slot=${n}`}
             title={`User ${n}`}
-            className="h-[calc(50vh-70px)] min-h-[360px] w-full rounded-[14px] border border-line bg-panel"
+            className="h-[calc(50vh-70px)] min-h-[360px] w-full rounded-lg border border-border-soft bg-bg-1"
           />
         ))}
       </main>
-      <footer className="flex flex-wrap gap-3.5 border-t border-line bg-panel px-5 py-3">
+      <footer className="flex flex-wrap gap-3.5 border-t border-border-soft bg-bg-1 px-5 py-3">
         <div className="min-w-0 flex-[2_1_520px]">
-          <div className="mb-1 text-xs text-muted">Relay, live: ciphertext only</div>
+          <div className="mb-1 text-[12px] text-text-2">Relay, live: ciphertext only</div>
           {latest.map((r) => (
             <div
               key={r.seq}
               data-testid="relay-strip-row"
-              className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs text-[#7c8597]"
+              className="overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[12px] text-text-3"
             >
               {timeOf(r.ts, true)} {r.kind} {shortId(r.chat_id)} {shortId(r.sender_device)}{" "}
               {formatSize(r.size)} {r.ciphertext_prefix}…
@@ -71,7 +71,7 @@ export function PresenterPage() {
           ))}
         </div>
         <div className="flex flex-[1_1_320px] flex-wrap content-center gap-2">
-          <Pill tone="teal">All AI runs on this Mac</Pill>
+          <Chip tone="ai">All AI runs on this Mac</Chip>
         </div>
       </footer>
     </div>

@@ -112,7 +112,7 @@ export const MessageItem = memo(function MessageItem({
   const n = replies?.length ?? 0;
   const last = replies?.[n - 1];
   return (
-    <div className="group relative flex gap-2.5 px-4 py-0.5 hover:bg-bg-1">
+    <li className="group relative flex gap-2.5 px-4 py-0.5 hover:bg-bg-1">
       {isAgentCard ? null : compact ? <span className="w-6 shrink-0" /> : <Avatar name={name} />}
       <div className="min-w-0 flex-1">
         {!isAgentCard && !compact && (
@@ -147,6 +147,6 @@ export const MessageItem = memo(function MessageItem({
           actions={actions}
         />
       )}
-    </div>
+    </li>
   );
 });

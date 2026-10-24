@@ -2,29 +2,25 @@ import type { Agent } from "@sa/protocol";
 import { ROSTER } from "@sa/protocol/roster";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
-import { agentDm, agents as fetchAgents } from "../api";
 import { Button, EmptyState } from "../ds";
+import { openAgentDm } from "../state/agentDm";
+import { useAgents } from "../state/agents";
 import { addAgentWithKey } from "../state/membership";
 import { useSession } from "../state/session";
 import { AgentCard } from "./AgentCard";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
 export function AgentsDirectoryPage() {
-  const { chats, engine, refreshChats, user } = useSession();
+  const session = useSession();
+  const { chats, engine, refreshChats, user } = session;
   const navigate = useNavigate();
-  const [list, setList] = useState<Agent[] | null>(null);
+  const { agents: list, failed, reload } = useAgents();
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(failed ? "Couldn't load agents." : null);
 
   useEffect(() => {
-    let live = true;
-    fetchAgents()
-      .then((l) => live && setList(l))
-      .catch(() => live && setError("Couldn't load agents."));
-    return () => {
-      live = false;
-    };
-  }, []);
+    if (failed) setError("Couldn't load agents.");
+  }, [failed]);
 
   const loaded = list ?? [];
   const workspace = ROSTER.flatMap((r) => {
@@ -40,7 +36,7 @@ export function AgentsDirectoryPage() {
 
   async function message(a: Agent) {
     try {
-      const dm = await agentDm(a.id);
+      const dm = await openAgentDm(session, a.id);
       navigate(`/c/${encodeURIComponent(dm.id)}`);
     } catch {
       setError(`Couldn't open a chat with ${a.name}.`);
@@ -91,9 +87,9 @@ export function AgentsDirectoryPage() {
       {creating && (
         <CreateAgentDialog
           onClose={() => setCreating(false)}
-          onCreated={(a) => {
+          onCreated={() => {
             setCreating(false);
-            setList((l) => [...(l ?? []), a]);
+            void reload();
           }}
         />
       )}

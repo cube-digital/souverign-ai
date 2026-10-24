@@ -19,32 +19,34 @@ export function ThreadView({ chatId, rootId }: { chatId: string; rootId: string 
   const replies = v.replies.get(rootId) ?? [];
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto py-2">
-      {root ? (
-        <MessageItem
-          chat={chat}
-          m={root}
-          reactions={v.reactions.get(root.id)}
-          others={others}
-          actions={actions}
-          rootId={rootId}
-        />
-      ) : (
-        <p className="px-4 text-text-2">This thread's first message is not available.</p>
-      )}
-      <div className="my-1 px-4 text-[12px] text-text-2">
-        {`${replies.length} ${replies.length === 1 ? "reply" : "replies"}`}
-      </div>
-      {replies.map((m) => (
-        <MessageItem
-          key={m.id}
-          chat={chat}
-          m={m}
-          reactions={v.reactions.get(m.id)}
-          others={others}
-          actions={actions}
-          rootId={rootId}
-        />
-      ))}
+      <ul className="m-0 flex list-none flex-col p-0">
+        {root ? (
+          <MessageItem
+            chat={chat}
+            m={root}
+            reactions={v.reactions.get(root.id)}
+            others={others}
+            actions={actions}
+            rootId={rootId}
+          />
+        ) : (
+          <li className="px-4 text-text-2">This thread's first message is not available.</li>
+        )}
+        <li className="my-1 px-4 text-[12px] text-text-2">
+          {`${replies.length} ${replies.length === 1 ? "reply" : "replies"}`}
+        </li>
+        {replies.map((m) => (
+          <MessageItem
+            key={m.id}
+            chat={chat}
+            m={m}
+            reactions={v.reactions.get(m.id)}
+            others={others}
+            actions={actions}
+            rootId={rootId}
+          />
+        ))}
+      </ul>
       <LiveStatus chatId={chatId} rootId={rootId} chat={chat} />
     </div>
   );

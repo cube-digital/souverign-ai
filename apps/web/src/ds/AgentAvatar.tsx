@@ -29,6 +29,7 @@ export function AgentAvatar({
   return (
     <span
       aria-hidden="true"
+      data-glyph={glyph}
       style={{
         width: size,
         height: size,
@@ -38,11 +39,10 @@ export function AgentAvatar({
         color: `oklch(var(--avatar-l) 0.17 ${hue})`,
       }}
       className={cn(
-        "inline-grid shrink-0 place-items-center rounded-md border font-semibold",
+        // the glyph is drawn by CSS so the visible name next to it is the only text node
+        "inline-grid shrink-0 place-items-center rounded-md border font-semibold before:content-[attr(data-glyph)]",
         className,
       )}
-    >
-      {glyph}
-    </span>
+    />
   );
 }

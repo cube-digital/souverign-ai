@@ -1,24 +1,20 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
-import type { Agent, ChatMember, DirectoryEntry } from "@sa/protocol";
+import type { ChatMember, DirectoryEntry } from "@sa/protocol";
 import { useEffect, useRef, useState } from "react";
-import { agents as fetchAgents, directory as fetchDirectory } from "../api";
+import { directory as fetchDirectory } from "../api";
+import { agentLabel } from "../channel/shared";
 import { AgentAvatar, Avatar, Button, StatusDot } from "../ds";
 import { timeOf } from "../lib/format";
+import { useAgents } from "../state/agents";
 import { addAgentWithKey, addPersonWithKey, removeWithKey } from "../state/membership";
 import { useSession } from "../state/session";
-
-function agentLabel(m: ChatMember): string {
-  return m.agent_scope === "workspace"
-    ? "Workspace agent"
-    : `${m.owner_display_name ?? "Someone"}'s agent`;
-}
 
 /** People and agents of a chat, with the add and remove controls the caller may use. */
 export function MembersRail({ chatId }: { chatId: string }) {
   const { chats, engine, user, refreshChats } = useSession();
   const chat = chats.find((c) => c.id === chatId);
   const [people, setPeople] = useState<DirectoryEntry[]>([]);
-  const [roster, setRoster] = useState<Agent[]>([]);
+  const roster = useAgents().agents ?? [];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -37,7 +33,6 @@ export function MembersRail({ chatId }: { chatId: string }) {
 
   useEffect(() => {
     if (canAddPeople) fetchDirectory().then(setPeople, () => {});
-    fetchAgents().then(setRoster, () => {});
   }, [canAddPeople]);
 
   if (!chat || !engine) return null;

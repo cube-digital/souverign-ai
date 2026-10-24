@@ -20,7 +20,9 @@ async function signIn(browser: Browser, u: (typeof USERS)[number]): Promise<Pers
   await page.getByRole("button", { name: u.id }).click();
   await page.getByLabel("PIN").fill(u.pin);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByText("Pick a chat or start a new one")).toBeVisible();
+  await expect(page.getByText("Meet your team")).toBeVisible();
+  await page.getByRole("button", { name: "Skip" }).click();
+  await expect(page.getByLabel("Message # general")).toBeVisible();
   return { name: u.id, word: u.word, context, page };
 }
 
@@ -74,6 +76,7 @@ test("four people chat in a group, share a file, and a removed member stops rece
   expect(readFileSync(path, "utf8")).toBe(FILE_TEXT);
 
   // 5. the relay panel shows rows and never a sentinel
+  await ana.page.getByRole("button", { name: "Relay", exact: true }).click();
   const aside = ana.page.getByRole("complementary", { name: "What the relay sees" });
   await expect(aside.getByTestId("relay-row").first()).toBeVisible();
   const panelText = (await aside.textContent()) ?? "";
@@ -82,8 +85,9 @@ test("four people chat in a group, share a file, and a removed member stops rece
   // 6. Ana removes Janosch; Vlad still hears her, Janosch does not
   await ana.page.getByRole("button", { name: "Members" }).click();
   await ana.page.getByRole("button", { name: "Remove Janosch" }).click();
+  await ana.page.getByRole("button", { name: "Confirm remove Janosch" }).click();
   await expect(ana.page.getByText("Ana removed Janosch.")).toBeVisible();
-  await ana.page.getByRole("button", { name: "Close" }).click();
+  await ana.page.getByRole("button", { name: "Close panel" }).click();
   await say(ana.page, `after the change ${REMOVED_WORD}`);
   await expect(vlad.page.getByText(REMOVED_WORD)).toBeVisible();
   await janosch.page.waitForTimeout(3000);

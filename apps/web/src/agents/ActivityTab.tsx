@@ -1,5 +1,6 @@
 import type { Agent } from "@sa/protocol";
 import { useMemo } from "react";
+import { ReceiptsFooter } from "../channel/ReceiptsFooter";
 import { EmptyState } from "../ds";
 import { useSession } from "../state/session";
 
@@ -26,19 +27,13 @@ export function ActivityTab({ agent }: { agent: Agent }) {
       {rows.map((m) => {
         const body = m.body?.type === "text" ? m.body : null;
         const meta = body?.meta;
-        const receipt = [
-          meta?.tools?.length ? `Used ${meta.tools.join(", ")}` : "Answered",
-          meta?.ms === undefined ? null : `${(meta.ms / 1000).toFixed(1)} s`,
-        ]
-          .filter(Boolean)
-          .join(" · ");
         return (
           <li key={m.id} className="rounded-lg border border-border-soft p-2 text-[13px]">
             <p className="text-[12px] text-text-3">
               {`${title(m.chatId)} · ${new Date(m.ts).toLocaleString()}`}
             </p>
             <p className="line-clamp-3 whitespace-pre-wrap break-words text-text-1">{body?.text}</p>
-            <p className="text-[12px] text-text-2">{receipt}</p>
+            {meta && <ReceiptsFooter meta={meta} />}
           </li>
         );
       })}
