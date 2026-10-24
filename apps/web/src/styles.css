@@ -3,7 +3,9 @@
 @import "@fontsource/inter/500.css";
 @import "@fontsource/inter/600.css";
 @import "@fontsource/jetbrains-mono/400.css";
+@import "./styles/tokens.css";
 
+/* Legacy palette: the pre-donna screens still use these names until they are switched over. */
 @theme {
   --color-bg: #0e1014;
   --color-panel: #14171d;
@@ -23,9 +25,34 @@
   --color-amber-soft: #1b1710;
   --color-amber-line: #5a4520;
   --color-amber-text: #f7cd7e;
-  --color-danger: #d9363e;
   --font-sans: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+}
+
+/* Donna tokens: `inline` keeps the var() so light and body.theme-dark both apply. */
+@theme inline {
+  --color-bg-0: var(--bg-0);
+  --color-bg-1: var(--bg-1);
+  --color-bg-2: var(--bg-2);
+  --color-bg-3: var(--bg-3);
+  --color-bg-4: var(--bg-4);
+  --color-text-0: var(--text-0);
+  --color-text-1: var(--text-1);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-4: var(--text-4);
+  --color-border-soft: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-ai: var(--ai);
+  --color-ai-bg: var(--ai-bg);
+  --color-ai-glow: var(--ai-glow);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
 }
 
 html,
@@ -35,9 +62,9 @@ body,
 }
 body {
   margin: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
+  background: var(--bg-0);
+  color: var(--text-0);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1.45;
 }

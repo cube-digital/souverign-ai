@@ -1,0 +1,127 @@
+/* Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md. */
+/* DonnaAI · Goofy design tokens — OKLCH.
+ *
+ * Cream paper is the default (light). `body.theme-dark` / `.gx.dark`
+ * swaps in the Midnight palette. The single `--ai-h` variable controls
+ * the AI hue family (grape, 288°) — change it once and every agent
+ * surface re-tints in lockstep.
+ *
+ * The `.gx` namespace wraps any subtree that wants the full sticker
+ * background (paper-dot texture, chunky scrollbars, Fredoka/Caveat).
+ * Plain Tailwind utilities like `bg-bg-0` still resolve outside `.gx`
+ * because the variables cascade onto :root.
+ */
+
+:root,
+.gx {
+  /* Tells the UA which palette to use for native UI (scrollbars, form
+   * controls, focus rings on inputs) so our custom tokens don't sit on
+   * top of a dark-mode native chrome. The Midnight branch below flips
+   * this to `dark`. */
+  color-scheme: light;
+
+  /* Cream goofy (light, default) */
+  --bg-0: oklch(0.962 0.022 92);
+  /* Card / raised surface. Was near-white (0.995 L / 0.006 C), which read as
+   * harsh white boxes glaring against the warm cream. Warmed + tinted so cards
+   * lift off the page without the glare — fixes every card app-wide (profile,
+   * settings, connector cards, file panel). */
+  --bg-1: oklch(0.978 0.013 92);
+  --bg-2: oklch(0.945 0.026 92);
+  --bg-3: oklch(0.905 0.045 92);
+  --bg-4: oklch(0.86 0.06 92);
+
+  /* Mockup-aligned bold ink — used as the chunky 2px stroke on chrome
+   * stickers (workspace squares, topbar search pill, ⌘K badges). */
+  --ink: oklch(0.26 0.03 285);
+  /* Layout-shell border — kept very light so seams between adjacent
+   * paper surfaces stay quiet. */
+  --border: oklch(0.26 0.03 285 / 0.09);
+  --border-strong: oklch(0.55 0.02 285 / 0.45);
+  --paper-dot: oklch(0.26 0.03 285 / 0.05);
+
+  --text-0: oklch(0.24 0.035 285);
+  --text-1: oklch(0.34 0.03 285);
+  --text-2: oklch(0.46 0.028 285);
+  --text-3: oklch(0.56 0.026 285);
+  --text-4: oklch(0.66 0.024 285);
+
+  --ai-h: 288;
+  --ai: oklch(0.52 0.21 var(--ai-h));
+  --ai-dim: oklch(0.62 0.17 var(--ai-h));
+  --ai-deep: oklch(0.4 0.18 var(--ai-h));
+  --ai-bg: oklch(0.52 0.21 var(--ai-h) / 0.1);
+  --ai-glow: oklch(0.52 0.21 var(--ai-h) / 0.45);
+
+  /* Crayon-box accents — used directly + as button variants */
+  --pop-blue: oklch(0.52 0.22 258);
+  --pop-coral: oklch(0.66 0.2 33);
+  --pop-sun: oklch(0.84 0.16 92);
+  --pop-mint: oklch(0.74 0.16 158);
+  --on-bright: oklch(0.22 0.04 285); /* text on bright sticker fills */
+
+  --ok: oklch(0.66 0.18 150);
+  --warn: oklch(0.78 0.16 78);
+  --danger: oklch(0.62 0.22 28);
+
+  /* Refined radii — still rounded and friendly, just not bubble-gum. */
+  --r-sm: 6px;
+  --r: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+
+  /* Soft modern shadows — keep a gentle sense of depth without the
+   * hard-offset "sticker" stamp. Tinted with the cool ink hue so they
+   * sit naturally on the cream paper. */
+  --shadow-1: 0 1px 2px oklch(0.26 0.03 285 / 0.08), 0 1px 3px oklch(0.26 0.03 285 / 0.1);
+  --shadow-2: 0 4px 10px oklch(0.26 0.03 285 / 0.1), 0 12px 24px oklch(0.26 0.03 285 / 0.08);
+  --shadow-ai: 0 4px 14px oklch(0.55 0.23 var(--ai-h) / 0.28);
+}
+
+body.theme-dark,
+.gx.dark {
+  /* Match the native widget palette to the Midnight tokens. */
+  color-scheme: dark;
+
+  /* Midnight goofy */
+  --bg-0: oklch(0.305 0.02 285);
+  --bg-1: oklch(0.35 0.022 285);
+  --bg-2: oklch(0.395 0.024 285);
+  --bg-3: oklch(0.45 0.028 285);
+  --bg-4: oklch(0.51 0.03 285);
+
+  --ink: oklch(0.8 0.028 92);
+  /* Same softening as the cream palette — keep the layout seam quiet
+   * so it doesn't compete with sticker chrome on midnight. */
+  --border: oklch(0.8 0.028 92 / 0.12);
+  --border-strong: oklch(0.86 0.025 92);
+  --paper-dot: oklch(0.9 0.03 92 / 0.045);
+
+  --text-0: oklch(0.94 0.012 285);
+  --text-1: oklch(0.86 0.015 285);
+  --text-2: oklch(0.73 0.017 285);
+  --text-3: oklch(0.63 0.018 285);
+  --text-4: oklch(0.55 0.02 285);
+
+  --ai: oklch(0.74 0.18 var(--ai-h));
+  --ai-dim: oklch(0.66 0.15 var(--ai-h));
+  --ai-deep: oklch(0.84 0.14 var(--ai-h));
+  --ai-bg: oklch(0.74 0.18 var(--ai-h) / 0.18);
+  --ai-glow: oklch(0.74 0.18 var(--ai-h) / 0.45);
+
+  --pop-blue: oklch(0.68 0.17 255);
+  --pop-coral: oklch(0.72 0.19 33);
+  --pop-sun: oklch(0.85 0.15 92);
+  --pop-mint: oklch(0.79 0.15 158);
+
+  --ok: oklch(0.76 0.16 150);
+  --warn: oklch(0.83 0.14 78);
+  --danger: oklch(0.7 0.2 28);
+}
+
+/* Legacy alias — older code references `.theme-light` as the toggle.
+   The goofy default is light, so `.theme-light` is a no-op; we still
+   honor `body.theme-light` for backward compatibility. */
+.theme-light {
+  /* no-op — light is default */
+}
