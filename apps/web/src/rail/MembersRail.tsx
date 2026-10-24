@@ -1,0 +1,156 @@
+// Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
+import type { Agent, ChatMember, DirectoryEntry } from "@sa/protocol";
+import { useEffect, useState } from "react";
+import { agents as fetchAgents, directory as fetchDirectory } from "../api";
+import { AgentAvatar, Avatar, Button, StatusDot } from "../ds";
+import { timeOf } from "../lib/format";
+import { addAgentWithKey, addPersonWithKey, removeWithKey } from "../state/membership";
+import { useSession } from "../state/session";
+
+function agentLabel(m: ChatMember): string {
+  return m.agent_scope === "workspace"
+    ? "Workspace agent"
+    : `${m.owner_display_name ?? "Someone"}'s agent`;
+}
+
+/** People and agents of a chat, with the add and remove controls the caller may use. */
+export function MembersRail({ chatId }: { chatId: string }) {
+  const { chats, engine, user, refreshChats } = useSession();
+  const chat = chats.find((c) => c.id === chatId);
+  const [people, setPeople] = useState<DirectoryEntry[]>([]);
+  const [roster, setRoster] = useState<Agent[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const isOwner = chat?.members.some((m) => m.member_id === user.id && m.role === "owner") ?? false;
+  const canAddPeople = isOwner || chat?.kind === "room";
+
+  useEffect(() => {
+    if (canAddPeople) fetchDirectory().then(setPeople, () => {});
+    fetchAgents().then(setRoster, () => {});
+  }, [canAddPeople]);
+
+  if (!chat || !engine) return null;
+  const ids = new Set(chat.members.map((m) => m.member_id));
+  const ctx = { engine, chat, refresh: refreshChats };
+  const addablePeople = canAddPeople ? people.filter((p) => !ids.has(p.id)) : [];
+  // workspace agents: any member (the bridge enforces the rest); personal agents: the chat owner
+  const addableAgents = roster.filter(
+    (a) => !ids.has(a.id) && (a.scope === "workspace" || isOwner),
+  );
+
+  async function run(job: () => Promise<unknown>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await job();
+    } catch {
+      setError("Couldn't update the members. Try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canRemove = (m: ChatMember) =>
+    m.member_id !== user.id && (m.agent_scope === "workspace" || isOwner);
+
+  return (
+    <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-3">
+      <ul className="flex flex-col gap-1">
+        {chat.members.map((m) => {
+          const isAgent = m.member_type === "agent";
+          return (
+            <li key={m.member_id} className="flex min-h-9 items-center gap-2">
+              {isAgent ? (
+                <AgentAvatar name={m.display_name} id={m.member_id} size={24} />
+              ) : (
+                <Avatar name={m.display_name} size={24} />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-[13px] text-text-0">
+                  <span className="truncate">{m.display_name}</span>
+                  {isAgent && m.status && <StatusDot status={m.status} />}
+                </div>
+                {isAgent && <div className="text-[12px] text-text-2">{agentLabel(m)}</div>}
+                {isAgent && m.joined_at !== undefined && (
+                  <div className="text-[12px] text-text-3">can read from {timeOf(m.joined_at)}</div>
+                )}
+                {m.seed && (
+                  <div className="text-[12px] text-text-2">demo colleague · hosted on this Mac</div>
+                )}
+                {m.role === "owner" && <div className="text-[12px] text-text-3">Owner</div>}
+              </div>
+              {canRemove(m) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  aria-label={`Remove ${m.display_name}`}
+                  onClick={() =>
+                    run(() =>
+                      removeWithKey({
+                        ...ctx,
+                        actor: user.display_name,
+                        target: {
+                          kind: isAgent ? "agent" : "user",
+                          id: m.member_id,
+                          name: m.display_name,
+                        },
+                      }),
+                    )
+                  }
+                >
+                  Remove
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {addablePeople.length > 0 && (
+        <section className="flex flex-col gap-1">
+          <div className="text-[12px] text-text-2">Add to this chat</div>
+          {addablePeople.map((p) => (
+            <div key={p.id} className="flex min-h-9 items-center gap-2 text-[13px]">
+              <span className="flex-1 truncate">{p.display_name}</span>
+              {p.devices.length === 0 && (
+                <span className="text-[12px] text-text-3">hasn't signed in yet</span>
+              )}
+              <Button
+                size="sm"
+                disabled={busy || p.devices.length === 0}
+                aria-label={`Add ${p.display_name}`}
+                onClick={() => run(() => addPersonWithKey({ ...ctx, person: p }))}
+              >
+                Add
+              </Button>
+            </div>
+          ))}
+        </section>
+      )}
+      {addableAgents.length > 0 && (
+        <section className="flex flex-col gap-1">
+          <div className="text-[12px] text-text-2">Add an agent</div>
+          {addableAgents.map((a) => (
+            <div key={a.id} className="flex min-h-9 items-center gap-2 text-[13px]">
+              <AgentAvatar name={a.name} id={a.id} rosterId={a.roster_id} size={20} />
+              <span className="flex-1 truncate">{a.name}</span>
+              <Button
+                size="sm"
+                disabled={busy}
+                aria-label={`Add agent ${a.name}`}
+                onClick={() => run(() => addAgentWithKey({ ...ctx, agent: a }))}
+              >
+                Add
+              </Button>
+            </div>
+          ))}
+        </section>
+      )}
+      {error && (
+        <p role="alert" className="text-[12px] text-danger">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
