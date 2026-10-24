@@ -151,6 +151,14 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
       if (existing.owner_id !== userId) return reply.code(409).send({ error: "device_taken" });
       return { ok: true };
     }
+    // Relay first (add is idempotent): a failure leaves no device row, so the client can retry.
+    const mine = await db.query<{ chat_id: string }>(
+      "select chat_id from sa.chat_members where member_type = 'user' and member_id = $1",
+      [userId],
+    );
+    for (const c of mine) {
+      await relayAdmin.setMember({ chat_id: c.chat_id, device_id: body.data.device_id, op: "add" });
+    }
     await db.query(
       "insert into sa.devices (id, owner_type, owner_id, public_key) values ($1, 'user', $2, $3)",
       [body.data.device_id, userId, body.data.public_key],
