@@ -34,6 +34,36 @@ export async function createSim(
         }),
       ),
     );
+    if (req.method === "POST" && parts.join("/") === "sim/admin/alerts") {
+      if (!(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return send(res, 415, { error: "unsupported_media_type" });
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      req.on("data", (c: Buffer) => {
+        size += c.length;
+        if (size <= 4096) chunks.push(c);
+      });
+      req.on("end", () => {
+        try {
+          const b = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+          const { node, severity, message } = b;
+          if (
+            size > 4096 ||
+            ![node, severity, message].every((v) => typeof v === "string" && v) ||
+            String(message).length > 280 ||
+            String(node).length > 64 ||
+            String(severity).length > 16
+          ) {
+            return send(res, 400, { error: "bad_request" });
+          }
+          return send(res, 200, sim.raiseAlert(String(node), String(severity), String(message)));
+        } catch {
+          return send(res, 400, { error: "bad_request" });
+        }
+      });
+      return;
+    }
     if (req.method !== "GET" || parts[0] !== "sim") return send(res, 404, { error: "not_found" });
     const [, a, b = "", c = ""] = parts;
     const q = u.searchParams;
@@ -59,6 +89,32 @@ export async function createSim(
     if (a === "qa" && b === "flaky") return send(res, 200, sim.flaky());
     if (a === "release" && b === "status") return send(res, 200, sim.release());
     if (a === "tickets" && !b) return send(res, 200, sim.tickets(q.get("status") ?? "open"));
+    if (a === "dev" && b === "merge-requests" && !c) {
+      const st = q.get("state");
+      return send(res, 200, sim.mergeRequests(st === "merged" || st === "all" ? st : "open"));
+    }
+    if (a === "dev" && b === "pipelines" && !c)
+      return send(res, 200, sim.pipelines(posInt(q.get("limit"), 5, 10)));
+    if (a === "dev" && b === "pipelines" && parts[4] === "log") {
+      const r = sim.pipelineLog(c);
+      return r ? send(res, 200, r) : send(res, 404, { error: "unknown_pipeline" });
+    }
+    if (a === "docs" && b === "search" && !c)
+      return send(res, 200, sim.docsSearch(q.get("q") ?? ""));
+    if (a === "docs" && b !== "" && !c) {
+      const r = sim.doc(b);
+      return r ? send(res, 200, r) : send(res, 404, { error: "unknown_doc" });
+    }
+    if (a === "crm" && b === "accounts" && !c)
+      return send(res, 200, sim.accounts(q.get("q") ?? ""));
+    if (a === "crm" && b === "deals" && c !== "" && !parts[4]) {
+      const r = sim.deal(c);
+      return r ? send(res, 200, r) : send(res, 404, { error: "unknown_deal" });
+    }
+    if (a === "crm" && b === "accounts" && c !== "" && parts[4] === "activities") {
+      const r = sim.activities(c);
+      return r ? send(res, 200, r) : send(res, 404, { error: "unknown_account" });
+    }
     return send(res, 404, { error: "not_found" });
   });
 
