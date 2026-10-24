@@ -32,7 +32,7 @@ beforeAll(async () => {
   await cryptoReady();
 });
 
-async function setup(runtime: AgentRuntime) {
+async function setup(runtime: AgentRuntime, describe?: AgentHost["opts"]["describe"]) {
   db = await openDb("pglite://memory");
   await migrate(db);
   await db.query("insert into sa.users (id, display_name, pin_hash) values ($1, $2, $3)", [
@@ -48,6 +48,7 @@ async function setup(runtime: AgentRuntime) {
     relayInternalUrl: "http://127.0.0.1:1",
     adminToken: ADMIN_TOKEN,
     toolLog,
+    describe,
     // test seam: the host talks to the in-memory relay instead of a websocket
     linkFactory: (deviceId: string) => relay.link(deviceId),
   });
@@ -313,4 +314,42 @@ describe("agent host live activity", () => {
 
     await expect.poll(() => started, { timeout: 5000 }).toEqual([agent.id]);
   }, 15000);
+});
+
+describe("agent host vision", () => {
+  it("describes an image posted before the question and keeps the description", async () => {
+    const calls: string[] = [];
+    await setup(new EchoRuntime(), async (_bytes, mime, name) => {
+      calls.push(`${name}:${mime}`);
+      return "A dashboard with the text DISK 91%";
+    });
+    const ana = await anaInChat();
+    const agent = await addAgent(ana, "Scout");
+    const [row] = await db.query<{ public_key: string }>(
+      "select public_key from sa.devices where id = $1",
+      [agent.device_id],
+    );
+    await ana.engine.createEpoch(ana.chatId, [
+      ana.pub,
+      { device_id: agent.device_id, public_key: row?.public_key ?? "" },
+    ]);
+    await ana.engine.sendFile(ana.chatId, {
+      name: "shot.png",
+      mime: "image/png",
+      bytes: new Uint8Array([1, 2, 3]),
+    });
+    await ana.engine.sendText(ana.chatId, "@Scout what is in this screenshot?");
+
+    await expect.poll(() => from(ana.seen, agent.device_id).length, { timeout: 5000 }).toBe(1);
+    const reply = from(ana.seen, agent.device_id)[0] as Seen;
+    expect(textOf(reply)).toContain("[image shot.png] A dashboard with the text DISK 91%");
+    expect(metaOf(reply)?.trace).toContainEqual(
+      expect.objectContaining({ kind: "tool", name: "describe_image", args: "shot.png" }),
+    );
+    expect(calls).toEqual(["shot.png:image/png"]);
+    const stored = await db.query<{ d: string }>(
+      "select body->>'description' as d from sa.messages_plain where body->>'type' = 'file'",
+    );
+    expect(stored.map((r) => r.d)).toContain("A dashboard with the text DISK 91%");
+  });
 });

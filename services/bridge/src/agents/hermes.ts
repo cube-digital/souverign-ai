@@ -38,7 +38,7 @@ type ModelsConfig = {
   };
 };
 
-function llmTarget(): { baseUrl: string; model: string } {
+export function llmTarget(): { baseUrl: string; model: string } {
   const cfg = parse(readFileSync(join(ROOT, "config", "models.yaml"), "utf8")) as ModelsConfig;
   const profile = process.env.LLM_PROFILE || cfg.llm.active_profile;
   const repo = cfg.llm.profiles[profile]?.repo;

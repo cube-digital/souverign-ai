@@ -12,11 +12,13 @@ import { ToolLog } from "../mcp/tool-log.js";
 import { PgKeyStore } from "./pg-keystore.js";
 import type { AgentRuntime, ChatMessage, RuntimeAgent } from "./runtime.js";
 import { decrypt, encrypt } from "./secrets.js";
+import { describeImage } from "./vision.js";
 
 const MIN_GAP_MS = 3000;
 const CONTEXT_MESSAGES = 20;
 const WRITING_GAP_MS = 400;
 const DRAFT_MAX = 8000;
+const IMAGE_WINDOW = 5;
 const DOWN = "I can't answer right now (the local model is not available).";
 
 export type AgentHostOptions = {
@@ -25,6 +27,8 @@ export type AgentHostOptions = {
   relayInternalUrl: string;
   adminToken: string;
   toolLog?: ToolLog;
+  /** Test seam: replaces the vision model call. */
+  describe?: ((bytes: Uint8Array, mime: string, name: string) => Promise<string>) | undefined;
   /** Test seam: replaces the websocket client. */
   linkFactory?: (deviceId: string) => RelayLink;
 };
@@ -42,6 +46,16 @@ const log = (msg: string, extra: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ level: "info", msg, ...extra }));
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const isImage = (mime: unknown) =>
+  typeof mime === "string" && /^image\/(png|jpeg|webp|gif)$/.test(mime);
+
+const formatSize = (n: number) =>
+  n < 1024
+    ? `${n} B`
+    : n < 1048576
+      ? `${(n / 1024).toFixed(1)} KB`
+      : `${(n / 1048576).toFixed(1)} MB`;
 
 export class AgentHost {
   private devices = new Map<string, Device>();
@@ -233,6 +247,7 @@ export class AgentHost {
 
   private async turn(dev: Device, chatId: string, text: string): Promise<void> {
     const { db, runtime } = this.opts;
+    const describe = this.opts.describe ?? describeImage;
     const { agent } = dev;
     const [member] = await db.query(
       "select 1 from sa.chat_members where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null",
@@ -260,17 +275,59 @@ export class AgentHost {
       const [chat] = await db.query<{ title: string }>("select title from sa.chats where id = $1", [
         chatId,
       ]);
-      const recent = await db.query<{ name: string | null; text: string }>(
-        `select coalesce(u.display_name, a.name, p.sender_device) as name, p.body->>'text' as text
+      const recent = await db.query<{
+        id: string;
+        name: string | null;
+        body: Record<string, unknown>;
+      }>(
+        `select p.id, coalesce(u.display_name, a.name, p.sender_device) as name, p.body
          from sa.messages_plain p
          left join sa.devices d on d.id = p.sender_device
          left join sa.users u on d.owner_type = 'user' and u.id = d.owner_id
          left join sa.agents a on d.owner_type = 'agent' and a.id = d.owner_id
-         where p.device_id = $1 and p.chat_id = $2 and p.body->>'type' = 'text'
+         where p.device_id = $1 and p.chat_id = $2 and p.body->>'type' in ('text', 'file')
          order by p.seq desc limit ${CONTEXT_MESSAGES}`,
         [dev.deviceId, chatId],
       );
-      const history = recent.reverse().map((r) => `${r.name}: ${r.text}`);
+      // Newest first; index 0 is the addressing message.
+      const imageSteps: TraceStep[] = [];
+      for (const r of recent.slice(1, 1 + IMAGE_WINDOW)) {
+        const b = r.body;
+        if (b.type !== "file" || !isImage(b.mime) || typeof b.description === "string") continue;
+        const fname = String(b.name);
+        signal({ type: "activity", phase: "tool", tool: "describe_image" });
+        const t0 = Date.now();
+        let result: string;
+        try {
+          const bytes = await dev.engine.downloadFile(b as never);
+          const description = (await describe(bytes, String(b.mime), fname)).trim();
+          if (!description) throw new Error("empty description");
+          b.description = description;
+          await db.query(
+            "update sa.messages_plain set body = body || jsonb_build_object('description', $3::text) where device_id = $1 and id = $2",
+            [dev.deviceId, r.id, description],
+          );
+          result = description;
+        } catch (e) {
+          log("describe image failed", { agent: agent.id, error: (e as Error).message });
+          result = "could not be read";
+        }
+        imageSteps.push({
+          kind: "tool",
+          name: "describe_image",
+          args: fname.slice(0, 500),
+          result: result.slice(0, 1500),
+          ms: Date.now() - t0,
+        });
+      }
+      const history = recent.reverse().map((r) => {
+        const b = r.body;
+        if (b.type !== "file") return `${r.name}: ${b.text}`;
+        if (!isImage(b.mime)) return `${r.name}: [file ${b.name}, ${formatSize(Number(b.size))}]`;
+        return typeof b.description === "string"
+          ? `${r.name}: [image ${b.name}] ${b.description}`
+          : `${r.name}: [image ${b.name}, could not be read]`;
+      });
       const messages: ChatMessage[] = [
         {
           role: "system",
@@ -309,7 +366,7 @@ export class AgentHost {
       const trace: TraceStep[] = [];
       if (reply.reasoning?.trim())
         trace.push({ kind: "thinking", text: reply.reasoning.slice(0, 4000) });
-      trace.push(...steps);
+      trace.push(...imageSteps, ...steps);
       body = {
         text: reply.content.slice(0, 8000) || "(no answer)",
         meta: {
