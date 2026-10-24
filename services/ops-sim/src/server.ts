@@ -35,6 +35,9 @@ export async function createSim(
       ),
     );
     if (req.method === "POST" && parts.join("/") === "sim/admin/alerts") {
+      if (!(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return send(res, 415, { error: "unsupported_media_type" });
+      }
       const chunks: Buffer[] = [];
       let size = 0;
       req.on("data", (c: Buffer) => {
@@ -45,7 +48,13 @@ export async function createSim(
         try {
           const b = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
           const { node, severity, message } = b;
-          if (size > 4096 || ![node, severity, message].every((v) => typeof v === "string" && v)) {
+          if (
+            size > 4096 ||
+            ![node, severity, message].every((v) => typeof v === "string" && v) ||
+            String(message).length > 280 ||
+            String(node).length > 64 ||
+            String(severity).length > 16
+          ) {
             return send(res, 400, { error: "bad_request" });
           }
           return send(res, 200, sim.raiseAlert(String(node), String(severity), String(message)));

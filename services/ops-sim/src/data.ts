@@ -60,6 +60,7 @@ export function buildSim(start: number) {
     ...mock,
     raiseAlert(node: string, severity: string, message: string): { id: string } {
       raised.push({ at: now(), severity, node, message });
+      if (raised.length > 50) raised.shift();
       return { id: `${node}:${slug(message)}` };
     },
     healthz: () => ({ ok: true, service: "ops-sim", uptime_s: Math.round((now() - start) / 1000) }),

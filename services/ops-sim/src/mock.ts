@@ -348,10 +348,10 @@ export function buildMock(now: () => number) {
       };
     },
     deal(id: string) {
-      return DEALS[id];
+      return Object.hasOwn(DEALS, id) ? DEALS[id] : undefined;
     },
     activities(accountId: string) {
-      const list = ACTIVITIES[accountId];
+      const list = Object.hasOwn(ACTIVITIES, accountId) ? ACTIVITIES[accountId] : undefined;
       return (
         list && {
           activities: list.map((a) => ({

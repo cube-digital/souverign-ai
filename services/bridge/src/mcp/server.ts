@@ -247,15 +247,22 @@ const chatDigest: Tool = {
       [];
     for (const c of chats) {
       const rows = await db.query<{ sender: string | null; body: { text?: string }; ts: string }>(
-        `select coalesce(u.display_name, ag.name, 'unknown') as sender, m.body, m.ts
-         from sa.messages_plain m
-         join sa.agent_devices me on me.device_id = m.device_id and me.agent_id = $2
-         left join sa.devices d on d.id = m.sender_device
-         left join sa.users u on d.owner_type = 'user' and u.id = d.owner_id
-         left join sa.agents ag on d.owner_type = 'agent' and ag.id = d.owner_id
-         where m.chat_id = $1 and m.body->>'type' = 'text' and m.ts >= $3
-         order by m.seq desc limit 15`,
-        [c.id, agentId, since],
+        `select * from (
+           select distinct on (m.id) coalesce(us.display_name, ag.name, 'unknown') as sender,
+                  m.body, m.ts, m.seq
+           from sa.messages_plain m
+           join sa.agent_devices me on me.device_id = m.device_id and me.agent_id = $2
+           join sa.chat_members rq on rq.chat_id = m.chat_id and rq.member_type = 'user'
+             and rq.member_id = $4 and rq.removed_at is null
+           join sa.chat_members am on am.chat_id = m.chat_id and am.member_type = 'agent'
+             and am.member_id = $2 and am.removed_at is null
+           left join sa.devices d on d.id = m.sender_device
+           left join sa.users us on d.owner_type = 'user' and us.id = d.owner_id
+           left join sa.agents ag on d.owner_type = 'agent' and ag.id = d.owner_id
+           where m.chat_id = $1 and m.body->>'type' = 'text' and m.ts >= $3
+           order by m.id, m.seq
+         ) t order by seq desc limit 15`,
+        [c.id, agentId, since, requester],
       );
       out.push({
         chat_title: c.title,

@@ -139,11 +139,18 @@ function makeDb(path: string) {
     },
     addMember(chat: string, device: string, historyUntil?: number): void {
       db.transaction(() => {
+        const now = currentSeq();
         if (activeRow.get(chat, device)) {
-          if (historyUntil !== undefined) widenWindow.run(historyUntil, chat, device);
+          if (historyUntil !== undefined)
+            widenWindow.run(Math.min(historyUntil, now), chat, device);
           return;
         }
-        insertMember.run(chat, device, currentSeq(), historyUntil ?? null);
+        insertMember.run(
+          chat,
+          device,
+          now,
+          historyUntil === undefined ? null : Math.min(historyUntil, now),
+        );
       })();
     },
     removeMember(chat: string, device: string): void {
