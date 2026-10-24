@@ -1,11 +1,10 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
-import type { Chat, ChatMember, MessageBody } from "@sa/protocol";
-import { useState } from "react";
+import type { ChatMember, MessageBody } from "@sa/protocol";
+import { memo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentAvatar, Chip, ChipButton, StatusDot } from "../ds";
 import { cn } from "../lib/cn";
-import { useSession } from "../state/session";
 import type { Reaction } from "../state/threads";
 import { ReceiptsFooter } from "./ReceiptsFooter";
 
@@ -32,15 +31,12 @@ export function AgentStatusChip({ status }: { status: ChatMember["status"] }) {
 }
 
 function Helpful({
-  chatId,
-  messageId,
   reactions,
+  onReact,
 }: {
-  chatId: string;
-  messageId: string;
   reactions: Reaction[] | undefined;
+  onReact: (emoji: string, op: "add" | "remove") => void;
 }) {
-  const { engine } = useSession();
   const btn = (emoji: string, label: string) => {
     const mine = reactions?.some((r) => r.emoji === emoji && r.mine) ?? false;
     return (
@@ -48,7 +44,7 @@ function Helpful({
         type="button"
         aria-label={label}
         aria-pressed={mine}
-        onClick={() => void engine?.sendReaction(chatId, messageId, emoji, mine ? "remove" : "add")}
+        onClick={() => onReact(emoji, mine ? "remove" : "add")}
         className={cn(
           "cursor-pointer rounded-sm px-1 text-[12px] hover:bg-bg-2",
           mine ? "opacity-100" : "opacity-60 hover:opacity-100",
@@ -66,26 +62,41 @@ function Helpful({
   );
 }
 
+/** Markdown of an agent answer; memoised so unrelated re-renders do not re-parse it. */
+const AnswerMarkdown = memo(function AnswerMarkdown({ text }: { text: string }) {
+  return (
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: ({ href, children }) => (
+          <a href={href} target="_blank" rel="noopener noreferrer">
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {text}
+    </Markdown>
+  );
+});
+
 /** An agent's text answer: AI chip, markdown body, reasoning, receipts and feedback. */
 export function AgentMessage({
-  chat,
-  id,
   body,
   member,
   time,
   reactions,
-  rootId,
+  onReact,
+  onChip,
 }: {
-  chat: Chat;
-  id: string;
   body: TextBody;
   member: ChatMember;
   time: string;
   reactions: Reaction[] | undefined;
-  /** thread root when the message sits in a thread; chips answer in the same place */
-  rootId?: string | undefined;
+  onReact: (emoji: string, op: "add" | "remove") => void;
+  /** a chip was clicked; the caller sends it in the same place (thread or chat) */
+  onChip: (text: string) => void;
 }) {
-  const { engine } = useSession();
   const [more, setMore] = useState(false);
   const [reasoning, setReasoning] = useState(false);
   const meta = body.meta;
@@ -109,22 +120,12 @@ export function AgentMessage({
         <span className="text-text-2">{time}</span>
       </div>
       <div className="mt-1 break-words text-text-0 [&_a]:underline [&_code]:font-mono [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:overflow-auto [&_ul]:list-disc [&_ul]:pl-5">
-        <Markdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            a: ({ href, children }) => (
-              <a href={href} target="_blank" rel="noopener noreferrer">
-                {children}
-              </a>
-            ),
-          }}
-        >
-          {shown}
-        </Markdown>
+        <AnswerMarkdown text={shown} />
       </div>
       {short && (
         <button
           type="button"
+          aria-expanded={more}
           onClick={() => setMore((m) => !m)}
           className="cursor-pointer text-[12px] text-text-2 hover:text-text-0"
         >
@@ -153,17 +154,7 @@ export function AgentMessage({
       {meta?.chips && meta.chips.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {meta.chips.map((c) => (
-            <ChipButton
-              key={c}
-              onClick={() =>
-                void engine?.sendText(
-                  chat.id,
-                  `@${member.display_name} ${c}`,
-                  undefined,
-                  rootId ? { replyTo: rootId } : undefined,
-                )
-              }
-            >
+            <ChipButton key={c} onClick={() => onChip(`@${member.display_name} ${c}`)}>
               {c}
             </ChipButton>
           ))}
@@ -174,7 +165,7 @@ export function AgentMessage({
       ) : (
         <div className="flex items-end">
           {meta && <ReceiptsFooter meta={meta} />}
-          <Helpful chatId={chat.id} messageId={id} reactions={reactions} />
+          <Helpful reactions={reactions} onReact={onReact} />
         </div>
       )}
     </div>

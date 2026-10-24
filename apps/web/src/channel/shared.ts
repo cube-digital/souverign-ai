@@ -32,9 +32,9 @@ export function useWorkspaceAgents(): Agent[] {
   return list;
 }
 
-/** Workspace agents that are not members of the chat. */
+/** Agents (workspace or your own personal ones) that are not members of the chat. */
 export const agentsOutside = (chat: Chat, all: Agent[]): Agent[] =>
-  all.filter((a) => a.scope === "workspace" && !chat.members.some((m) => m.member_id === a.id));
+  all.filter((a) => !chat.members.some((m) => m.member_id === a.id));
 
 export function ago(ts: number, now = Date.now()): string {
   const s = Math.max(0, Math.round((now - ts) / 1000));

@@ -1,5 +1,6 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { ActivityBody, Chat } from "@sa/protocol";
+import { useMemo } from "react";
 import { stopTurn } from "../api";
 import { Button } from "../ds";
 import { useActivity, useSession } from "../state/session";
@@ -60,7 +61,6 @@ export function LiveStatus({
           <div
             key={device}
             data-testid="agent-activity"
-            role="status"
             className="flex items-center gap-2 rounded-md border border-ai-glow bg-ai-bg px-2.5 py-1.5 text-[13px] text-text-1"
           >
             <span className="min-w-0 flex-1">{line(name, a.body)}</span>
@@ -76,6 +76,54 @@ export function LiveStatus({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Tiny "working…" hint on a thread root; the only part of a row that follows live activity. */
+export function WorkingBadge({ chatId, messageId }: { chatId: string; messageId: string }) {
+  const working = Object.values(useActivity()[chatId] ?? {}).some(
+    (a) => a.body.reply_to === messageId,
+  );
+  return working ? <p className="mt-1 text-[12px] text-ai">working…</p> : null;
+}
+
+function announce(name: string, b: ActivityBody): string | null {
+  switch (b.phase) {
+    case "queued":
+      return `${name}: queued, ${b.ahead ?? 0} ahead`;
+    case "thinking":
+      return `${name} is thinking`;
+    case "reading":
+      return `${name} is reading`;
+    case "tool":
+      return `${name} is using a tool`;
+    case "writing":
+      return `${name} is writing`;
+    case "error":
+      return `${name} couldn't answer`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * One always-mounted polite live region per channel. It speaks phase and queue changes only;
+ * drafts and tool names never reach it, so streaming text is not read out.
+ */
+export function LiveAnnouncer({ chat }: { chat: Chat }) {
+  const all = useActivity()[chat.id];
+  const text = useMemo(
+    () =>
+      Object.entries(all ?? {})
+        .map(([device, a]) => announce(nameOfDevice(chat, device), a.body))
+        .filter(Boolean)
+        .join(". "),
+    [all, chat],
+  );
+  return (
+    <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+      {text}
     </div>
   );
 }

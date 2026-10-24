@@ -1,13 +1,17 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { MessageBody } from "@sa/protocol";
 import { useEffect, useRef, useState } from "react";
-import { useSession } from "../state/session";
 
 type FileBody = Extract<MessageBody, { type: "file" }>;
 
 /** Decrypts and shows an image once it scrolls into view; the object URL is revoked on unmount. */
-export function ImagePreview({ body }: { body: FileBody }) {
-  const { engine } = useSession();
+export function ImagePreview({
+  body,
+  onDownload,
+}: {
+  body: FileBody;
+  onDownload: (body: FileBody) => Promise<Uint8Array>;
+}) {
   const box = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
   const [url, setUrl] = useState<string | null>(null);
@@ -24,11 +28,10 @@ export function ImagePreview({ body }: { body: FileBody }) {
   }, [visible]);
 
   useEffect(() => {
-    if (!visible || !engine) return;
+    if (!visible) return;
     let made: string | null = null;
     let live = true;
-    engine
-      .downloadFile(body)
+    onDownload(body)
       .then((bytes) => {
         if (!live) return;
         made = URL.createObjectURL(new Blob([bytes as BlobPart], { type: body.mime }));
@@ -39,7 +42,7 @@ export function ImagePreview({ body }: { body: FileBody }) {
       live = false;
       if (made) URL.revokeObjectURL(made);
     };
-  }, [visible, engine, body]);
+  }, [visible, onDownload, body]);
 
   return (
     <div ref={box} className="mt-1 min-h-12">

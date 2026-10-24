@@ -4,13 +4,13 @@ import type { Agent, Chat, MessageBody } from "@sa/protocol";
 import { memo, useState } from "react";
 import { Avatar, Button } from "../ds";
 import { formatSize, timeOf } from "../lib/format";
-import { useRail } from "../shell/rail";
-import { useActivity, useSession } from "../state/session";
 import type { Reaction } from "../state/threads";
 import { AgentMessage } from "./AgentMessage";
 import { ImagePreview } from "./ImagePreview";
+import { WorkingBadge } from "./LiveStatus";
 import { MessageActions } from "./MessageActions";
 import { ReactionBar } from "./ReactionBar";
+import type { RowActions } from "./rowActions";
 import { ago, memberOfDevice } from "./shared";
 
 type FileBody = Extract<MessageBody, { type: "file" }>;
@@ -33,14 +33,12 @@ function LinkedText({ text }: { text: string }) {
   );
 }
 
-function FileBlock({ body }: { body: FileBody }) {
-  const { engine } = useSession();
+function FileBlock({ body, actions }: { body: FileBody; actions: RowActions }) {
   const [failed, setFailed] = useState(false);
   async function download() {
     setFailed(false);
     try {
-      const bytes = await engine?.downloadFile(body);
-      if (!bytes) return;
+      const bytes = await actions.download(body);
       const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: body.mime }));
       const a = document.createElement("a");
       a.href = url;
@@ -51,7 +49,8 @@ function FileBlock({ body }: { body: FileBody }) {
       setFailed(true);
     }
   }
-  if (body.mime.startsWith("image/")) return <ImagePreview body={body} />;
+  if (body.mime.startsWith("image/"))
+    return <ImagePreview body={body} onDownload={actions.download} />;
   return (
     <div className="mt-1 inline-flex flex-wrap items-center gap-2 rounded-md border border-border-soft bg-bg-1 px-2.5 py-1.5">
       <span className="text-text-1">{body.name}</span>
@@ -74,6 +73,7 @@ export type MessageItemProps = {
   others: Agent[];
   /** set inside a thread view */
   rootId?: string | undefined;
+  actions: RowActions;
 };
 
 export const MessageItem = memo(function MessageItem({
@@ -84,28 +84,25 @@ export const MessageItem = memo(function MessageItem({
   reactions,
   others,
   rootId,
+  actions,
 }: MessageItemProps) {
-  const rail = useRail();
-  const activity = useActivity()[chat.id];
   const member = memberOfDevice(chat, m.senderDevice);
   const name = member?.display_name ?? "Unknown";
   const body = m.body;
-  const working = !rootId && Object.values(activity ?? {}).some((a) => a.body.reply_to === m.id);
   let content: React.ReactNode;
   if (m.status === "pending") content = <p className="text-text-2">Waiting for the key…</p>;
   else if (m.status === "error" || !body)
     content = <p className="text-text-2">Can't decrypt this message</p>;
-  else if (body.type === "file") content = <FileBlock body={body} />;
+  else if (body.type === "file") content = <FileBlock body={body} actions={actions} />;
   else if (body.type === "text" && member?.member_type === "agent")
     content = (
       <AgentMessage
-        chat={chat}
-        id={m.id}
         body={body}
         member={member}
         time={timeOf(m.ts)}
         reactions={reactions}
-        rootId={rootId}
+        onReact={(emoji, op) => actions.react(m.id, emoji, op)}
+        onChip={(t) => actions.send(t, rootId)}
       />
     );
   else content = <LinkedText text={body.type === "text" ? body.text : ""} />;
@@ -125,17 +122,20 @@ export const MessageItem = memo(function MessageItem({
           </div>
         )}
         {content}
-        <ReactionBar chatId={chat.id} messageId={m.id} reactions={reactions} />
+        <ReactionBar
+          reactions={reactions}
+          onToggle={(emoji, op) => actions.react(m.id, emoji, op)}
+        />
         {n > 0 && last && (
           <button
             type="button"
-            onClick={() => rail.open({ kind: "thread", chatId: chat.id, rootId: m.id })}
+            onClick={() => actions.openThread(m.id)}
             className="mt-1 cursor-pointer text-[12px] text-text-1 hover:underline"
           >
             {`${n} ${n === 1 ? "reply" : "replies"} · last ${ago(last.ts)}`}
           </button>
         )}
-        {working && <p className="mt-1 text-[12px] text-ai">working…</p>}
+        {!rootId && <WorkingBadge chatId={chat.id} messageId={m.id} />}
       </div>
       {m.status === "ok" && (
         <MessageActions
@@ -143,7 +143,8 @@ export const MessageItem = memo(function MessageItem({
           messageId={m.id}
           text={quote}
           others={others}
-          inThread={rootId !== undefined}
+          threadRoot={rootId}
+          actions={actions}
         />
       )}
     </div>

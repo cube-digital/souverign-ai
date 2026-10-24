@@ -1,10 +1,11 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { ChatMessage } from "@sa/client";
 import type { Chat } from "@sa/protocol";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useSession } from "../state/session";
-import { LiveStatus } from "./LiveStatus";
+import { LiveAnnouncer, LiveStatus } from "./LiveStatus";
 import { MessageItem } from "./MessageItem";
+import { useRowActions } from "./rowActions";
 import { agentsOutside, useWorkspaceAgents } from "./shared";
 
 const GROUP_MS = 5 * 60 * 1000;
@@ -28,17 +29,34 @@ export function SystemLine({ text }: { text: string }) {
 
 /** The top-level messages of a chat, grouped by sender and day. */
 export function MessageList({ chat }: { chat: Chat }) {
+  // Keyed by chat: scroll-follow state starts fresh in every chat.
+  return <MessageListInner key={chat.id} chat={chat} />;
+}
+
+function MessageListInner({ chat }: { chat: Chat }) {
   const { view } = useSession();
   const v = view(chat.id);
   const workspace = useWorkspaceAgents();
-  const others = agentsOutside(chat, workspace);
+  const others = useMemo(() => agentsOutside(chat, workspace), [chat, workspace]);
+  const actions = useRowActions(chat.id);
   const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: follow the bottom whenever the list changes
+
+  // Follow the bottom when the content grows: new messages, streaming drafts, loading images.
   useEffect(() => {
     const el = scroller.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [v]);
+    const inner = content.current;
+    if (!el || !inner) return;
+    const follow = () => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    };
+    follow();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(follow);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, []);
 
   let prev: ChatMessage | null = null;
   const rows = v.top.map((m) => {
@@ -53,7 +71,7 @@ export function MessageList({ chat }: { chat: Chat }) {
       prev !== null &&
       prev.senderDevice === m.senderDevice &&
       m.ts - prev.ts < GROUP_MS &&
-      !(prev.body?.type === "system");
+      prev.body?.type !== "system";
     prev = m;
     return [
       divider,
@@ -65,6 +83,7 @@ export function MessageList({ chat }: { chat: Chat }) {
         replies={v.replies.get(m.id)}
         reactions={v.reactions.get(m.id)}
         others={others}
+        actions={actions}
       />,
     ];
   });
@@ -72,14 +91,20 @@ export function MessageList({ chat }: { chat: Chat }) {
   return (
     <div
       ref={scroller}
+      role="log"
+      aria-live="off"
+      aria-label={`Messages in # ${chat.title}`}
       onScroll={(e) => {
         const el = e.currentTarget;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
       }}
       className="flex min-h-0 flex-1 flex-col overflow-auto py-2"
     >
-      {rows}
-      <LiveStatus chatId={chat.id} chat={chat} />
+      <div ref={content} className="flex flex-col">
+        {rows}
+        <LiveStatus chatId={chat.id} chat={chat} />
+      </div>
+      <LiveAnnouncer chat={chat} />
     </div>
   );
 }
