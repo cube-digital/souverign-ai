@@ -200,7 +200,7 @@ describe("ApprovalCard", () => {
     await user.click(screen.getByRole("button", { name: "Approve and send" }));
 
     expect(api.decideApproval).toHaveBeenCalledTimes(1);
-    const [id, decision] = vi.mocked(api.decideApproval).mock.calls[0];
+    const [id, decision] = vi.mocked(api.decideApproval).mock.calls[0]!;
     expect(id).toBe("ap1");
     expect(decision.decision).toBe("approve");
     expect(decision.args?.body).toBe("Edited body");
@@ -217,8 +217,8 @@ describe("ApprovalCard", () => {
 
     await user.click(screen.getByRole("button", { name: "Deny" }));
 
-    expect(vi.mocked(api.decideApproval).mock.calls[0][0]).toBe("ap1");
-    expect(vi.mocked(api.decideApproval).mock.calls[0][1].decision).toBe("deny");
+    expect(vi.mocked(api.decideApproval).mock.calls[0]![0]).toBe("ap1");
+    expect(vi.mocked(api.decideApproval).mock.calls[0]![1].decision).toBe("deny");
     expect(await screen.findByText("Declined")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Approve and send" })).toBeNull();
@@ -308,7 +308,7 @@ describe("approvals around the card", () => {
     expect(await screen.findAllByText("Waiting for Bob · email_send")).toHaveLength(2);
     const cards = screen.getAllByRole("region", { name: "Approval" });
     expect(cards).toHaveLength(1);
-    expect(within(cards[0]).getByRole("button", { name: "Approve and send" })).toBeTruthy();
+    expect(within(cards[0]!).getByRole("button", { name: "Approve and send" })).toBeTruthy();
     const cancel = screen.getByRole("button", { name: "Cancel request" });
 
     await user.click(cancel);
@@ -329,7 +329,7 @@ describe("approvals around the card", () => {
     const stop = await screen.findAllByRole("button", { name: "Stop auto-approving" });
     expect(stop).toHaveLength(1);
 
-    await user.click(stop[0]);
+    await user.click(stop[0]!);
     expect(api.revokeGrant).toHaveBeenCalledWith("ag-ops", "email_send");
   });
 });
