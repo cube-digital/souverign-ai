@@ -8,10 +8,11 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse, stringify } from "yaml";
 import type { Db } from "../db.js";
@@ -120,7 +121,8 @@ function renderSoul(agent: RuntimeAgent): string {
   return tpl.replace(/\$\{(AGENT_NAME|OWNER_NAME|SOUL)\}/g, (_m, key: string) => values[key] ?? "");
 }
 
-const PID_DIR = join(ROOT, ".run", "agents");
+/** Read at call time so tests (and operators) can point it elsewhere. */
+const pidDir = (): string => process.env.SA_AGENT_PID_DIR || join(ROOT, ".run", "agents");
 const isAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -134,6 +136,15 @@ const commandOf = (pid: number): string => {
     return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
   } catch {
     return "";
+  }
+};
+/** Process start time in ms (second resolution), or NaN. */
+const startedAt = (pid: number): number => {
+  try {
+    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], { encoding: "utf8" });
+    return new Date(out.trim()).getTime();
+  } catch {
+    return Number.NaN;
   }
 };
 const signalGroup = (pid: number, sig: NodeJS.Signals): void => {
@@ -152,11 +163,25 @@ async function reapPidFile(file: string): Promise<void> {
   try {
     pid = Number(readFileSync(file, "utf8").trim().split(/\s+/)[0]);
   } catch {}
+  const profile = basename(file, ".pid");
+  // The command must be this profile's gateway, and the process must be older than the pid file
+  // (a recycled pid belongs to a younger process).
+  const isGateway = (): boolean =>
+    new RegExp(`hermes -p ${profile} gateway(\\s|$)`).test(commandOf(pid));
+  const olderThanFile = (): boolean => {
+    try {
+      return startedAt(pid) <= statSync(file).mtimeMs + 1000;
+    } catch {
+      return false;
+    }
+  };
   if (
+    /^sa_agent_[\w-]+$/.test(profile) &&
     Number.isInteger(pid) &&
     pid > 1 &&
     isAlive(pid) &&
-    commandOf(pid).includes("hermes -p sa_agent_")
+    isGateway() &&
+    olderThanFile()
   ) {
     signalGroup(pid, "SIGTERM");
     const deadline = Date.now() + 5000;
@@ -170,10 +195,10 @@ async function reapPidFile(file: string): Promise<void> {
 function pidFiles(): { file: string; profile: string; port: number }[] {
   let names: string[] = [];
   try {
-    names = readdirSync(PID_DIR).filter((f) => f.endsWith(".pid"));
+    names = readdirSync(pidDir()).filter((f) => f.endsWith(".pid"));
   } catch {}
   return names.map((n) => {
-    const file = join(PID_DIR, n);
+    const file = join(pidDir(), n);
     let port = Number.NaN;
     try {
       port = Number(readFileSync(file, "utf8").trim().split(/\s+/)[1]);
@@ -252,8 +277,9 @@ export class HermesRuntime implements AgentRuntime {
       );
       for (const f of ["config.yaml", "SOUL.md", ".env"]) chmodSync(join(dir, f), 0o600);
 
-      const logDir = PID_DIR;
-      mkdirSync(logDir, { recursive: true });
+      const logDir = pidDir();
+      mkdirSync(logDir, { recursive: true, mode: 0o700 });
+      chmodSync(logDir, 0o700);
       const logFile = join(logDir, `${name}.log`);
       const pidFile = join(logDir, `${name}.pid`);
       // A gateway left by a dead bridge may hold this profile or this port.
@@ -262,7 +288,7 @@ export class HermesRuntime implements AgentRuntime {
       // Host-gateway rescan (as in up.sh): the gateway may exit at once; retry.
       let child: ChildProcess | undefined;
       for (let attempt = 1; attempt <= 5; attempt++) {
-        const fd = openSync(logFile, "a");
+        const fd = openSync(logFile, "a", 0o600);
         child = spawn(this.bin(), ["-p", name, "gateway", "run"], {
           stdio: ["ignore", fd, fd],
           detached: true,
@@ -278,9 +304,13 @@ export class HermesRuntime implements AgentRuntime {
       }
       if (!child) throw new Error(lastLine(logFile) || "gateway exited at once");
       this.gateways.set(agent.id, { child, port });
-      writeFileSync(pidFile, `${child.pid} ${port}\n`, { mode: 0o600 });
+      const content = `${child.pid} ${port}\n`;
+      writeFileSync(pidFile, content, { mode: 0o600 });
       child.once("exit", () => {
-        rmSync(pidFile, { force: true });
+        // A newer gateway of this profile may have rewritten the file: only delete our own.
+        try {
+          if (readFileSync(pidFile, "utf8") === content) rmSync(pidFile, { force: true });
+        } catch {}
         this.gateways.delete(agent.id);
         this.releasePort(agent.id);
         if (this.status.get(agent.id)?.status !== "stopped") {
@@ -467,7 +497,7 @@ export class HermesRuntime implements AgentRuntime {
     if (!g) return;
     this.gateways.delete(agent.id);
     this.releasePort(agent.id);
-    rmSync(join(PID_DIR, `${profileName(agent.id)}.pid`), { force: true });
+    rmSync(join(pidDir(), `${profileName(agent.id)}.pid`), { force: true });
     try {
       process.kill(-(g.child.pid ?? 0), "SIGTERM");
     } catch {
@@ -479,7 +509,7 @@ export class HermesRuntime implements AgentRuntime {
   async stopAll(): Promise<void> {
     for (const [id, g] of this.gateways) {
       this.status.set(id, { status: "stopped" });
-      rmSync(join(PID_DIR, `${profileName(id)}.pid`), { force: true });
+      rmSync(join(pidDir(), `${profileName(id)}.pid`), { force: true });
       try {
         process.kill(-(g.child.pid ?? 0), "SIGTERM");
       } catch {
