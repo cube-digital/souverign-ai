@@ -1,0 +1,18 @@
+# Hermes profile config for one Sovereign Agents agent. Rendered by
+# sa_infra.hermes_profile (smoke) and by the bridge's HermesRuntime (SP2).
+# Keys checked against the Hermes version pinned in infra/hermes/VERSION.
+model:
+  provider: custom
+  base_url: "${LLM_BASE_URL}"
+  default: "${LLM_MODEL}"
+  api_key: local-no-key
+agent:
+  reasoning_effort: low
+  disabled_toolsets: [] # filled from infra/hermes/toolsets.yaml
+gateway:
+  api_server:
+    enabled: true
+    host: 127.0.0.1
+    port: ${API_PORT}
+    key: "${API_KEY}"
+mcp_servers: {} # filled per profile
