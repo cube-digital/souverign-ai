@@ -19,6 +19,7 @@ import type { AgentHostApi, BridgeHooks } from "./agents/api.js";
 import { registerAgentRoutes } from "./agents/routes.js";
 import { hashToken, newToken, SESSION_HOURS, verifyPin } from "./auth.js";
 import type { Db } from "./db.js";
+import { registerLlmProxy } from "./llm-proxy.js";
 import { registerMcp } from "./mcp/server.js";
 import type { ToolLog } from "./mcp/tool-log.js";
 import type { BridgePlugin } from "./plugin-api.js";
@@ -397,6 +398,7 @@ export function buildApp({
     return { epoch: Number(row?.key_epoch) };
   });
 
+  registerLlmProxy(app, db);
   registerAgentRoutes(app, {
     db,
     relayAdmin,

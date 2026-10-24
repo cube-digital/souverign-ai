@@ -1,11 +1,13 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   closeSync,
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -55,9 +57,12 @@ export function llmTarget(): { baseUrl: string; model: string } {
 
 /** config.yaml for one agent's Hermes profile. */
 export function renderHermesConfig(a: { agentId: string; port: number }): string {
-  const { baseUrl, model } = llmTarget();
+  const { model } = llmTarget();
+  const bridgePort = process.env.PORT || 8647;
+  // Gateways talk to the bridge's loopback proxy, which forces the first tool round (bug 4).
+  const proxyUrl = `http://127.0.0.1:${bridgePort}/llm/${a.agentId}/v1`;
   const tpl = readFileSync(join(ROOT, "infra", "hermes", "config.template.yaml"), "utf8")
-    .replace("${LLM_BASE_URL}", baseUrl)
+    .replace("${LLM_BASE_URL}", proxyUrl)
     .replace("${LLM_MODEL}", model)
     .replace("${API_PORT}", String(a.port))
     .replace("${API_KEY}", hermesApiKey(a.agentId));
@@ -66,7 +71,6 @@ export function renderHermesConfig(a: { agentId: string; port: number }): string
     disable: string[];
   };
   cfg.agent.disabled_toolsets = toolsets.disable;
-  const bridgePort = process.env.PORT || 8647;
   cfg.mcp_servers = {
     bridge: {
       url: `http://127.0.0.1:${bridgePort}/mcp`,
@@ -83,10 +87,75 @@ function renderSoul(agent: RuntimeAgent): string {
     "utf8",
   ).trim();
   const soul = [templateText, agent.soul.trim()].filter(Boolean).join("\n\n");
-  return tpl
-    .replaceAll("${AGENT_NAME}", agent.name)
-    .replaceAll("${OWNER_NAME}", agent.ownerName)
-    .replace("${SOUL}", () => soul);
+  // One pass with function replacers: names containing `$&`, `$'` or `${...}` cannot inject text.
+  const values: Record<string, string> = {
+    AGENT_NAME: agent.name,
+    OWNER_NAME: agent.ownerName,
+    SOUL: soul,
+  };
+  return tpl.replace(/\$\{(AGENT_NAME|OWNER_NAME|SOUL)\}/g, (_m, key: string) => values[key] ?? "");
+}
+
+const PID_DIR = join(ROOT, ".run", "agents");
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+const commandOf = (pid: number): string => {
+  try {
+    return execFileSync("ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
+  } catch {
+    return "";
+  }
+};
+const signalGroup = (pid: number, sig: NodeJS.Signals): void => {
+  try {
+    process.kill(-pid, sig);
+  } catch {
+    try {
+      process.kill(pid, sig);
+    } catch {}
+  }
+};
+
+/** Stops the Hermes gateway a pid file points at (if it is still one), then deletes the file. */
+async function reapPidFile(file: string): Promise<void> {
+  let pid = Number.NaN;
+  try {
+    pid = Number(readFileSync(file, "utf8").trim().split(/\s+/)[0]);
+  } catch {}
+  if (
+    Number.isInteger(pid) &&
+    pid > 1 &&
+    isAlive(pid) &&
+    commandOf(pid).includes("hermes -p sa_agent_")
+  ) {
+    signalGroup(pid, "SIGTERM");
+    const deadline = Date.now() + 5000;
+    while (isAlive(pid) && Date.now() < deadline) await sleep(100);
+    if (isAlive(pid)) signalGroup(pid, "SIGKILL");
+    console.log(JSON.stringify({ level: "info", msg: "stale gateway stopped", pid }));
+  }
+  rmSync(file, { force: true });
+}
+
+function pidFiles(): { file: string; profile: string; port: number }[] {
+  let names: string[] = [];
+  try {
+    names = readdirSync(PID_DIR).filter((f) => f.endsWith(".pid"));
+  } catch {}
+  return names.map((n) => {
+    const file = join(PID_DIR, n);
+    let port = Number.NaN;
+    try {
+      port = Number(readFileSync(file, "utf8").trim().split(/\s+/)[1]);
+    } catch {}
+    return { file, profile: n.slice(0, -4), port };
+  });
 }
 
 type Gateway = { child: ChildProcess; port: number };
@@ -159,9 +228,13 @@ export class HermesRuntime implements AgentRuntime {
       );
       for (const f of ["config.yaml", "SOUL.md", ".env"]) chmodSync(join(dir, f), 0o600);
 
-      const logDir = join(ROOT, ".run", "agents");
+      const logDir = PID_DIR;
       mkdirSync(logDir, { recursive: true });
       const logFile = join(logDir, `${name}.log`);
+      const pidFile = join(logDir, `${name}.pid`);
+      // A gateway left by a dead bridge may hold this profile or this port.
+      for (const f of pidFiles())
+        if (f.profile === name || f.port === port) await reapPidFile(f.file);
       // Host-gateway rescan (as in up.sh): the gateway may exit at once; retry.
       let child: ChildProcess | undefined;
       for (let attempt = 1; attempt <= 5; attempt++) {
@@ -181,7 +254,9 @@ export class HermesRuntime implements AgentRuntime {
       }
       if (!child) throw new Error(lastLine(logFile) || "gateway exited at once");
       this.gateways.set(agent.id, { child, port });
+      writeFileSync(pidFile, `${child.pid} ${port}\n`, { mode: 0o600 });
       child.once("exit", () => {
+        rmSync(pidFile, { force: true });
         this.gateways.delete(agent.id);
         this.releasePort(agent.id);
         if (this.status.get(agent.id)?.status !== "stopped") {
@@ -333,12 +408,18 @@ export class HermesRuntime implements AgentRuntime {
     }
   }
 
+  /** Stops gateways left behind by a bridge that died without cleaning up. */
+  async reapStale(): Promise<void> {
+    for (const f of pidFiles()) await reapPidFile(f.file);
+  }
+
   async stop(agent: RuntimeAgent): Promise<void> {
     const g = this.gateways.get(agent.id);
     this.status.set(agent.id, { status: "stopped" });
     if (!g) return;
     this.gateways.delete(agent.id);
     this.releasePort(agent.id);
+    rmSync(join(PID_DIR, `${profileName(agent.id)}.pid`), { force: true });
     try {
       process.kill(-(g.child.pid ?? 0), "SIGTERM");
     } catch {
@@ -350,6 +431,7 @@ export class HermesRuntime implements AgentRuntime {
   async stopAll(): Promise<void> {
     for (const [id, g] of this.gateways) {
       this.status.set(id, { status: "stopped" });
+      rmSync(join(PID_DIR, `${profileName(id)}.pid`), { force: true });
       try {
         process.kill(-(g.child.pid ?? 0), "SIGTERM");
       } catch {
