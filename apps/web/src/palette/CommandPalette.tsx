@@ -155,7 +155,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       e.preventDefault();
       setActive(items.length ? (sel - 1 + items.length) % items.length : 0);
     } else if (e.key === "Enter") {
-      if (e.nativeEvent.isComposing || e.keyCode === 229 || e.key === "Process") return;
+      if (e.nativeEvent.isComposing || e.keyCode === 229 || e.nativeEvent.key === "Process") return;
       e.preventDefault();
       run(items[sel]);
     }
