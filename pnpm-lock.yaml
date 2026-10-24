@@ -150,6 +150,12 @@ importers:
         specifier: ^4.23.15
         version: 4.23.15
 
+  services/ops-sim:
+    devDependencies:
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
+
   services/relay:
     dependencies:
       '@sa/crypto':
@@ -171,12 +177,6 @@ importers:
       '@types/ws':
         specifier: ^8.18.2
         version: 8.18.2
-      tsx:
-        specifier: ^4.23.15
-        version: 4.23.15
-
-  services/rt-sim:
-    devDependencies:
       tsx:
         specifier: ^4.23.15
         version: 4.23.15

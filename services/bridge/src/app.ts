@@ -31,13 +31,13 @@ export function buildApp({
   relayAdmin,
   agentHost,
   toolLog,
-  rtSimUrl,
+  opsSimUrl,
 }: {
   db: Db;
   relayAdmin: RelayAdmin;
   agentHost?: AgentHost;
   toolLog?: ToolLog;
-  rtSimUrl?: string;
+  opsSimUrl?: string;
 }): FastifyInstance {
   const failedLogins = new Map<string, number[]>();
   const recentFailures = (user: string): number[] => {
@@ -360,6 +360,6 @@ export function buildApp({
     log,
   });
 
-  if (toolLog) registerMcp(app, { db, toolLog, rtSimUrl: rtSimUrl ?? "http://127.0.0.1:8649" });
+  if (toolLog) registerMcp(app, { db, toolLog, opsSimUrl: opsSimUrl ?? "http://127.0.0.1:8649" });
   return app;
 }

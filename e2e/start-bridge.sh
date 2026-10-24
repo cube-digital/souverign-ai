@@ -11,7 +11,7 @@ export RELAY_INTERNAL_URL=http://127.0.0.1:8658
 export RELAY_ADMIN_TOKEN=e2e-token
 export AGENT_RUNTIME=echo
 export BRIDGE_MASTER_KEY=e2e-master
-export RT_SIM_URL=http://127.0.0.1:8659
+export OPS_SIM_URL=http://127.0.0.1:8659
 export SA_DEMO_PINS=ana:111111,vlad:222222,rares:333333,janosch:444444
 pnpm --filter @sa/bridge run migrate
 # seed writes .run/demo-pins.txt; keep the developer's real demo PINs untouched

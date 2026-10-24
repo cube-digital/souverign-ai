@@ -1,5 +1,5 @@
 {
-  "name": "@sa/rt-sim",
+  "name": "@sa/ops-sim",
   "private": true,
   "type": "module",
   "exports": {

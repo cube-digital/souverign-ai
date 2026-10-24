@@ -11,7 +11,7 @@ const get = async (path: string) => {
   return { status: r.status, body: (await r.json()) as any };
 };
 
-describe("rt-sim", () => {
+describe("ops-sim", () => {
   it("node-3 disk rises ~4.1 per hour and its latest point matches cluster health", async () => {
     const series = (await get("/sim/metrics/node-3/disk_pct?hours=6")).body.points as {
       value: number;

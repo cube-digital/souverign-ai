@@ -36,7 +36,7 @@ const app = buildApp({
   relayAdmin,
   agentHost,
   toolLog,
-  rtSimUrl: process.env.RT_SIM_URL || "http://127.0.0.1:8649",
+  opsSimUrl: process.env.OPS_SIM_URL || "http://127.0.0.1:8649",
 });
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 8647);

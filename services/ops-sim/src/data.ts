@@ -46,7 +46,7 @@ export function buildSim(start: number) {
   }
 
   return {
-    healthz: () => ({ ok: true, service: "rt-sim", uptime_s: Math.round((now() - start) / 1000) }),
+    healthz: () => ({ ok: true, service: "ops-sim", uptime_s: Math.round((now() - start) / 1000) }),
 
     clusterHealth() {
       return {
@@ -219,8 +219,8 @@ export function buildSim(start: number) {
         version: "7.4.0-rc2",
         ready: false,
         blockers: [
-          { id: "RT-1412", title: "Call reconnect drops audio on iOS 17", severity: "blocker" },
-          { id: "RT-1419", title: "Raft follower lag after restart", severity: "major" },
+          { id: "OPS-1412", title: "Call reconnect drops audio on iOS 17", severity: "blocker" },
+          { id: "OPS-1419", title: "Raft follower lag after restart", severity: "major" },
         ],
       };
     },
@@ -229,21 +229,21 @@ export function buildSim(start: number) {
       const t = now();
       const all = [
         {
-          id: "RT-1412",
+          id: "OPS-1412",
           title: "Call reconnect drops audio on iOS 17",
           severity: "blocker",
           status: "open",
           opened_at: iso(t - 5 * 24 * HOUR),
         },
         {
-          id: "RT-1419",
+          id: "OPS-1419",
           title: "Raft follower lag after restart",
           severity: "major",
           status: "open",
           opened_at: iso(t - 2 * 24 * HOUR),
         },
         {
-          id: "RT-1423",
+          id: "OPS-1423",
           title: "Docs: update upgrade guide for 7.4",
           severity: "minor",
           status: "open",

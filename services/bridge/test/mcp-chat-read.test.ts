@@ -29,7 +29,7 @@ it("chat_read refuses any chat other than the current turn's chat", async () => 
   }
   const toolLog = new ToolLog();
   toolLog.begin("agent-qa-00000002", "c1");
-  const app = buildMcpApp({ db, rtSimUrl: "http://127.0.0.1:1", toolLog });
+  const app = buildMcpApp({ db, opsSimUrl: "http://127.0.0.1:1", toolLog });
   await app.listen({ port: 0, host: "127.0.0.1" });
   const url = new URL(`http://127.0.0.1:${(app.server.address() as AddressInfo).port}/mcp`);
   const client = new Client({ name: "t", version: "0" });

@@ -13,14 +13,14 @@ import { migrate } from "../src/migrate.js";
 process.env.BRIDGE_MASTER_KEY = "test-master-key";
 
 // Interface chosen by the test author (the brief leaves names open):
-//   buildMcpApp({ db, rtSimUrl }) -> Fastify instance serving /mcp (src/mcp/server.ts)
+//   buildMcpApp({ db, opsSimUrl }) -> Fastify instance serving /mcp (src/mcp/server.ts)
 //   renderHermesConfig({ agentId, port }) -> YAML string for the profile's config.yaml (src/agents/hermes.ts)
 
 const CLUSTER = { nodes: [{ name: "node-3", state: "degraded", disk_pct: 91 }] };
 
 let db: Db;
-let rtSim: Server;
-let rtSimHits: string[];
+let opsSim: Server;
+let opsSimHits: string[];
 let app: ReturnType<typeof buildMcpApp>;
 let mcpUrl: URL;
 
@@ -37,22 +37,22 @@ beforeEach(async () => {
       [id, name, template, port],
     );
   }
-  rtSimHits = [];
-  rtSim = createServer((req, res) => {
-    rtSimHits.push(req.url ?? "");
+  opsSimHits = [];
+  opsSim = createServer((req, res) => {
+    opsSimHits.push(req.url ?? "");
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(CLUSTER));
   });
-  await new Promise<void>((r) => rtSim.listen(0, "127.0.0.1", r));
-  const rtSimUrl = `http://127.0.0.1:${(rtSim.address() as AddressInfo).port}`;
-  app = buildMcpApp({ db, rtSimUrl });
+  await new Promise<void>((r) => opsSim.listen(0, "127.0.0.1", r));
+  const opsSimUrl = `http://127.0.0.1:${(opsSim.address() as AddressInfo).port}`;
+  app = buildMcpApp({ db, opsSimUrl });
   await app.listen({ port: 0, host: "127.0.0.1" });
   mcpUrl = new URL(`http://127.0.0.1:${(app.server.address() as AddressInfo).port}/mcp`);
 });
 
 afterEach(async () => {
   await app.close();
-  await new Promise((r) => rtSim.close(r));
+  await new Promise((r) => opsSim.close(r));
   await db.close();
 });
 
@@ -67,7 +67,7 @@ async function connect(token: string): Promise<Client> {
 }
 
 describe("bridge MCP server", () => {
-  it("serves each agent only its template's tools, per-agent auth, ops tools read rt-sim", async () => {
+  it("serves each agent only its template's tools, per-agent auth, ops tools read ops-sim", async () => {
     const devops = await connect(mcpToken("agent-devops-0001"));
     const devopsTools = (await devops.listTools()).tools.map((t) => t.name).sort();
     expect(devopsTools).toEqual(
@@ -85,13 +85,13 @@ describe("bridge MCP server", () => {
     const result = await devops.callTool({ name: "cluster_health", arguments: {} });
     const content = result.content as { type: string; text: string }[];
     expect(JSON.parse(content[0]?.text ?? "")).toEqual(CLUSTER);
-    expect(rtSimHits).toHaveLength(1);
+    expect(opsSimHits).toHaveLength(1);
 
     const qa = await connect(mcpToken("agent-qa-00000002"));
     const qaTools = (await qa.listTools()).tools.map((t) => t.name);
     expect(qaTools).not.toContain("cluster_health");
     await qa.callTool({ name: "cluster_health", arguments: {} }).catch(() => undefined);
-    expect(rtSimHits).toHaveLength(1);
+    expect(opsSimHits).toHaveLength(1);
 
     const post = (authorization?: string) =>
       fetch(mcpUrl, {

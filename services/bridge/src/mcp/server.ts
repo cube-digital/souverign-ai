@@ -7,7 +7,7 @@ import type { Db } from "../db.js";
 import { ToolLog } from "./tool-log.js";
 
 type Args = Record<string, unknown>;
-type Ctx = { db: Db; agentId: string; rtSimUrl: string; chatId?: string | undefined };
+type Ctx = { db: Db; agentId: string; opsSimUrl: string; chatId?: string | undefined };
 type Tool = {
   name: string;
   description: string;
@@ -18,7 +18,7 @@ type Tool = {
 
 const sim = (path: string) => async (ctx: Ctx) => simGet(ctx, path);
 async function simGet(ctx: Ctx, path: string): Promise<unknown> {
-  const res = await fetch(`${ctx.rtSimUrl}${path}`);
+  const res = await fetch(`${ctx.opsSimUrl}${path}`);
   return res.json();
 }
 const num = (v: unknown, dflt: number, max: number): number => {
@@ -151,13 +151,13 @@ const GENERAL: Tool[] = [
 
 const BY_TEMPLATE: Record<string, Tool[]> = { general: GENERAL, devops: OPS, qa: QA };
 
-export type McpAppOptions = { db: Db; rtSimUrl?: string; toolLog?: ToolLog };
+export type McpAppOptions = { db: Db; opsSimUrl?: string; toolLog?: ToolLog };
 
 export function buildMcpApp(opts: McpAppOptions): FastifyInstance {
   const app = Fastify({ logger: false, forceCloseConnections: true });
   registerMcp(app, {
     db: opts.db,
-    rtSimUrl: opts.rtSimUrl ?? process.env.RT_SIM_URL ?? "http://127.0.0.1:8649",
+    opsSimUrl: opts.opsSimUrl ?? process.env.OPS_SIM_URL ?? "http://127.0.0.1:8649",
     toolLog: opts.toolLog ?? new ToolLog(),
   });
   return app;
@@ -166,9 +166,9 @@ export function buildMcpApp(opts: McpAppOptions): FastifyInstance {
 /** Adds the /mcp routes (bearer MCP token auth, independent of user sessions) to `app`. */
 export function registerMcp(
   app: FastifyInstance,
-  opts: { db: Db; rtSimUrl: string; toolLog: ToolLog },
+  opts: { db: Db; opsSimUrl: string; toolLog: ToolLog },
 ): void {
-  const rtSimUrl = opts.rtSimUrl.replace(/\/$/, "");
+  const opsSimUrl = opts.opsSimUrl.replace(/\/$/, "");
   const toolLog = opts.toolLog;
 
   async function toolsFor(agentId: string): Promise<Tool[] | null> {
@@ -209,7 +209,10 @@ export function registerMcp(
       let isError = false;
       try {
         text = JSON.stringify(
-          await tool.run({ db: opts.db, agentId, rtSimUrl, chatId: toolLog.chatId(agentId) }, args),
+          await tool.run(
+            { db: opts.db, agentId, opsSimUrl, chatId: toolLog.chatId(agentId) },
+            args,
+          ),
         );
       } catch (e) {
         isError = true;

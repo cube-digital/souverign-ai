@@ -22,7 +22,7 @@ export default defineConfig({
       env: { PORT: "8658", RELAY_DB: join(run, "relay.sqlite"), RELAY_ADMIN_TOKEN: "e2e-token" },
     },
     {
-      command: "pnpm --filter @sa/rt-sim start",
+      command: "pnpm --filter @sa/ops-sim start",
       cwd: root,
       url: "http://127.0.0.1:8659/sim/healthz",
       reuseExistingServer: false,
