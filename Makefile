@@ -42,6 +42,6 @@ seed: ## create the four demo users; prints their PINs once
 	pnpm --filter @sa/bridge run seed
 
 e2e: ## Playwright: four browsers chat end to end (self-contained, no docker)
-	pnpm --filter @sa/e2e run test
+	pnpm --filter @sa/e2e run e2e
 
 .PHONY: help install check prereqs models up down smoke dev seed e2e
