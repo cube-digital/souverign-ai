@@ -19,6 +19,8 @@ import { ToolLog } from "../mcp/tool-log.js";
 import { waitForRelay } from "../relay-ready.js";
 import { ACCESS_RE, accessSummary, agentTools } from "./access.js";
 import type { AgentHostApi, ProactiveRequest, StopResult } from "./api.js";
+import { postIntro } from "./intro.js";
+import { markReask, recordTurn, setFeedback, type TurnOutcome } from "./metrics.js";
 import { PgKeyStore } from "./pg-keystore.js";
 import {
   type AgentRuntime,
@@ -29,6 +31,7 @@ import {
 } from "./runtime.js";
 import { decrypt, encrypt } from "./secrets.js";
 import { setForceFirstTool } from "./turn-policy.js";
+import { type Priority, TurnQueue } from "./turn-queue.js";
 import { describeImage } from "./vision.js";
 
 const MIN_GAP_MS = 3000;
@@ -96,9 +99,15 @@ type Turn = {
   /** the 👀 reaction, so the final reactions are sent after it */
   eyes: Promise<void>;
   started: number;
+  priority: Priority;
+  /** ms from the trigger until 👀 was sent */
+  eyesMs?: number;
 };
 
-type TurnSeed = Omit<Turn, "id" | "agentId" | "abort" | "eyes" | "started" | "stoppedBy">;
+type TurnSeed = Omit<
+  Turn,
+  "id" | "agentId" | "abort" | "eyes" | "started" | "stoppedBy" | "priority" | "eyesMs"
+>;
 
 const HEALTH_INTERVAL_MS = 15_000;
 const DEAD_AFTER_MS = 30_000;
@@ -129,6 +138,8 @@ export class AgentHost implements AgentHostApi {
   /** "chat|root" → the agent that last answered in that thread, whom it answered, and until when
    * that person may follow up without a tag. Shared by every agent device. */
   private threadOwner = new Map<string, { agentId: string; userId: string; until: number }>();
+  /** One queue for every agent: the model can only serve a few turns at once. */
+  private queue = new TurnQueue();
 
   constructor(private opts: AgentHostOptions) {
     this.toolLog = opts.toolLog ?? new ToolLog();
@@ -154,6 +165,26 @@ export class AgentHost implements AgentHostApi {
     const dev = await this.deviceFor(agentId);
     await dev?.engine.start([chatId]);
     this.prewarm(dev);
+    if (dev) {
+      // Waits for the chat key, so it never blocks the add-agent request.
+      void postIntro({
+        db: this.opts.db,
+        engine: dev.engine,
+        agent: dev.agent,
+        chatId,
+        alive: () => this.devices.get(agentId) === dev,
+        afterTurns: (post) => {
+          const run = dev.turns.then(post);
+          dev.turns = run.then(
+            () => {},
+            () => {},
+          );
+          return run;
+        },
+      }).catch((e) => {
+        log("agent intro failed", { agent: agentId, error: (e as Error).message });
+      });
+    }
   }
 
   /** Reloads the agent row and stops its gateway so the next turn writes the new SOUL.md. */
@@ -342,6 +373,10 @@ export class AgentHost implements AgentHostApi {
         ],
       );
       if (fresh.length === 0) return;
+      if (m.body.type === "reaction") {
+        await this.onReaction(dev, m, m.body);
+        return;
+      }
       if (m.body.type !== "text" || m.senderDevice === dev.deviceId) return;
       const seed = await this.triggerFor(dev, m, m.body);
       if (!seed) return;
@@ -349,7 +384,8 @@ export class AgentHost implements AgentHostApi {
         await this.answerAccess(dev, seed);
         return;
       }
-      const turn = this.newTurn(dev, seed);
+      const turn = this.newTurn(dev, seed, "human");
+      await this.noteReask(turn);
       dev.turns = dev.turns
         .then(() => this.runTurn(dev, turn))
         .then(
@@ -421,7 +457,7 @@ export class AgentHost implements AgentHostApi {
   }
 
   /** Registers a stoppable turn and puts 👀 on its trigger message right away. */
-  private newTurn(dev: Device, seed: TurnSeed): Turn {
+  private newTurn(dev: Device, seed: TurnSeed, priority: Priority): Turn {
     const turn: Turn = {
       ...seed,
       id: randomId(),
@@ -429,10 +465,52 @@ export class AgentHost implements AgentHostApi {
       abort: new AbortController(),
       eyes: Promise.resolve(),
       started: Date.now(),
+      priority,
     };
     this.turns.set(turn.id, turn);
-    if (turn.messageId) turn.eyes = this.react(dev, turn, "👀", "add");
+    if (turn.messageId) {
+      turn.eyes = this.react(dev, turn, "👀", "add").then(() => {
+        turn.eyesMs = Date.now() - turn.started;
+      });
+    }
     return turn;
+  }
+
+  /** A new question from the same person in the same thread flags their previous answer. */
+  private async noteReask(turn: Turn): Promise<void> {
+    if (!turn.messageId || !turn.requesterUserId) return;
+    try {
+      await markReask(this.opts.db, {
+        turnId: turn.id,
+        agentId: turn.agentId,
+        chatId: turn.chatId,
+        threadRoot: turn.replyTo ?? null,
+        requesterUserId: turn.requesterUserId,
+      });
+    } catch (e) {
+      log("turn metrics failed", { agent: turn.agentId, error: (e as Error).message });
+    }
+  }
+
+  /** 👍/👎 from a person on this agent's own reply is feedback on that turn. */
+  private async onReaction(
+    dev: Device,
+    m: EngineMessage,
+    body: Extract<MessageBody, { type: "reaction" }>,
+  ): Promise<void> {
+    if (m.senderDevice === dev.deviceId) return;
+    const { db } = this.opts;
+    const [human] = await db.query(
+      "select 1 from sa.devices where id = $1 and owner_type = 'user'",
+      [m.senderDevice],
+    );
+    if (!human) return;
+    await setFeedback(db, {
+      deviceId: dev.deviceId,
+      target: body.target,
+      emoji: body.emoji,
+      op: body.op,
+    });
   }
 
   private async react(dev: Device, turn: Turn, emoji: string, op: "add" | "remove") {
@@ -482,13 +560,17 @@ export class AgentHost implements AgentHostApi {
         requesterName: u?.display_name ?? req.requesterUserId,
       };
     }
-    const turn = this.newTurn(dev, {
-      chatId: req.chatId,
-      trigger: req.kind,
-      text: req.prompt,
-      force: true,
-      ...requester,
-    });
+    const turn = this.newTurn(
+      dev,
+      {
+        chatId: req.chatId,
+        trigger: req.kind,
+        text: req.prompt,
+        force: true,
+        ...requester,
+      },
+      "proactive",
+    );
     const run = dev.turns.then(() => this.runTurn(dev, turn));
     dev.turns = run.then(
       () => {},
@@ -558,18 +640,46 @@ export class AgentHost implements AgentHostApi {
 
   /** Runs one turn to its single final reply. Resolves true when a reply was posted. */
   private async runTurn(dev: Device, turn: Turn): Promise<boolean> {
-    const { db, runtime } = this.opts;
-    const { agent } = dev;
     const { chatId } = turn;
-    const abort = turn.abort.signal;
-    // Live signals are sent in order, never block the turn and are safe to lose.
+    // Live signals are sent in order, never block the turn and are safe to lose. They follow
+    // the 👀 reaction, so people see "seen" before anything else.
     let signals: Promise<void> = Promise.resolve();
     const act = (body: Omit<ActivityBody, "type">) => {
       const full: ActivityBody = { type: "activity", ...body, turn_id: turn.id };
       if (turn.replyTo) full.reply_to = turn.replyTo;
       if (turn.requesterUserId) full.requester = turn.requesterUserId.slice(0, 64);
-      signals = signals.then(() => dev.engine.sendActivity(chatId, full)).catch(() => {});
+      signals = signals
+        .then(() => turn.eyes)
+        .then(() => dev.engine.sendActivity(chatId, full))
+        .catch(() => {});
     };
+    let running = false;
+    return this.queue.enqueue(
+      () => {
+        running = true;
+        return this.executeTurn(dev, turn, act, () => signals);
+      },
+      turn.priority,
+      (ahead) => {
+        if (!running) act({ phase: "queued", ahead });
+      },
+    );
+  }
+
+  private async executeTurn(
+    dev: Device,
+    turn: Turn,
+    act: (body: Omit<ActivityBody, "type">) => void,
+    pending: () => Promise<void>,
+  ): Promise<boolean> {
+    const { db, runtime } = this.opts;
+    const { agent } = dev;
+    const { chatId } = turn;
+    const abort = turn.abort.signal;
+    const queuedMs = Date.now() - turn.started;
+    let firstTokenMs: number | null = null;
+    let timedOut = false;
+    let skipped = false;
     const onTool = (agentId: string, name: string) => {
       if (agentId === agent.id) act({ phase: "tool", tool: name.slice(0, 64) });
     };
@@ -592,6 +702,8 @@ export class AgentHost implements AgentHostApi {
         this.turns.delete(turn.id);
         await turn.eyes;
         await this.react(dev, turn, "👀", "remove");
+        skipped = true;
+        await this.record(turn, dev, "skipped", { queuedMs, firstTokenMs, doneMs: null, tools: 0 });
         return false;
       }
       act({ phase: "thinking" });
@@ -626,6 +738,7 @@ export class AgentHost implements AgentHostApi {
               context.messages,
               (t) => {
                 if (abort.aborted) return;
+                firstTokenMs ??= Date.now() - turn.started;
                 draft = (draft + t).slice(0, DRAFT_MAX);
                 if (Date.now() - lastSent >= WRITING_GAP_MS) flush();
               },
@@ -656,6 +769,7 @@ export class AgentHost implements AgentHostApi {
       } else if (name === "TimeoutError") {
         // Bug 2: the time limit is not an outage, so the agent status stays as it was.
         outcome = "error";
+        timedOut = true;
         text = LIMIT;
         log("agent turn timed out", { agent: agent.id, turn: turn.id });
       } else {
@@ -675,7 +789,7 @@ export class AgentHost implements AgentHostApi {
     meta.tools = steps.flatMap((s) => (s.kind === "tool" ? [s.name] : [])).slice(0, 20);
     meta.read = read;
     meta.ms = Date.now() - turn.started;
-    await signals;
+    await pending();
     dev.lastReply.set(chatId, Date.now());
     this.claimThread(dev, turn);
     let sent = true;
@@ -705,8 +819,54 @@ export class AgentHost implements AgentHostApi {
       await this.react(dev, turn, DONE_EMOJI[final], "add");
     }
     act({ phase: final });
-    await signals;
+    await pending();
+    const toolCount = steps.filter((s) => s.kind === "tool").length;
+    const recorded: TurnOutcome = final === "error" && timedOut && sent ? "timeout" : final;
+    await this.record(turn, dev, skipped ? "skipped" : recorded, {
+      queuedMs,
+      firstTokenMs,
+      doneMs: Date.now() - turn.started,
+      tools: toolCount,
+    });
     return sent;
+  }
+
+  /** Stores the turn's ids and timings (never text) and logs one line. */
+  private async record(
+    turn: Turn,
+    dev: Device,
+    outcome: TurnOutcome,
+    t: { queuedMs: number; firstTokenMs: number | null; doneMs: number | null; tools: number },
+  ): Promise<void> {
+    const eyesMs = turn.eyesMs ?? null;
+    log("turn", {
+      turn_id: turn.id,
+      agent: dev.agent.id,
+      trigger: turn.trigger,
+      outcome,
+      eyes_ms: eyesMs,
+      first_token_ms: t.firstTokenMs,
+      done_ms: t.doneMs,
+      tools: t.tools,
+    });
+    try {
+      await recordTurn(this.opts.db, {
+        turnId: turn.id,
+        agentId: dev.agent.id,
+        chatId: turn.chatId,
+        threadRoot: turn.replyTo ?? null,
+        requesterUserId: turn.requesterUserId ?? null,
+        trigger: turn.trigger,
+        queuedMs: t.queuedMs,
+        eyesMs,
+        firstTokenMs: t.firstTokenMs,
+        doneMs: t.doneMs,
+        tools: t.tools,
+        outcome,
+      });
+    } catch (e) {
+      log("turn metrics failed", { agent: dev.agent.id, error: (e as Error).message });
+    }
   }
 
   /** The chat context: the last messages up to the trigger, plus the thread being answered. */
