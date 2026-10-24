@@ -6,6 +6,8 @@ import type {
   DevicePublic,
   DirectoryEntry,
   LoginResponse,
+  Prefs,
+  Routine,
   UserSummary,
 } from "@sa/protocol";
 
@@ -107,3 +109,26 @@ export const removeAgentFromChat = (chatId: string, agentId: string) =>
     `/chats/${encodeURIComponent(chatId)}/agents/${encodeURIComponent(agentId)}`,
     json("DELETE"),
   );
+
+export const claimEpoch = (chatId: string, min: number) =>
+  api<{ epoch: number }>(`/chats/${encodeURIComponent(chatId)}/epoch`, json("POST", { min }));
+export const agentDm = (agentId: string) =>
+  api<Chat>(`/agents/${encodeURIComponent(agentId)}/dm`, json("POST", {}));
+export const stopTurn = (turnId: string) =>
+  api<{ stopped: true }>(`/turns/${encodeURIComponent(turnId)}/stop`, json("POST", {}));
+export const hello = () => api<{ catchup: boolean }>("/me/hello", json("POST", {}));
+export const getPrefs = () => api<Prefs>("/me/prefs");
+export const setPrefs = (p: Prefs) => api<Prefs>("/me/prefs", json("PUT", p));
+export const routines = (agentId?: string) =>
+  api<Routine[]>(`/routines${agentId ? `?agent_id=${encodeURIComponent(agentId)}` : ""}`);
+export const createRoutine = (r: {
+  agent_id: string;
+  chat_id: string;
+  days: number[];
+  time: string;
+  prompt: string;
+}) => api<Routine>("/routines", json("POST", r));
+export const updateRoutine = (id: string, paused: boolean) =>
+  api<Routine>(`/routines/${encodeURIComponent(id)}`, json("PATCH", { paused }));
+export const deleteRoutine = (id: string) =>
+  api<{ ok: true }>(`/routines/${encodeURIComponent(id)}`, json("DELETE"));
