@@ -1,0 +1,19 @@
+name: sovereign-agents
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: sa
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sa_dev_only}
+      POSTGRES_DB: sa
+    ports:
+      - "127.0.0.1:${SA_PG_PORT:-5433}:5432"
+    volumes:
+      - sa-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sa -d sa"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  sa-pg:
