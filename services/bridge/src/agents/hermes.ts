@@ -239,6 +239,75 @@ export class HermesRuntime implements AgentRuntime {
     return reasoning ? { content: split.content, reasoning } : { content: split.content };
   }
 
+  /**
+   * Streaming chat: SSE `data:` lines from `/v1/chat/completions` with `stream: true`. Content
+   * deltas go to `onDelta`; reasoning deltas are only collected. If the stream fails before the
+   * first delta, the non-streaming `chat` runs once instead.
+   */
+  async chatStream(
+    agent: RuntimeAgent,
+    chatId: string,
+    messages: ChatMessage[],
+    onDelta: (text: string) => void,
+  ): Promise<ChatResult> {
+    let gotDelta = false;
+    try {
+      const g = this.gateways.get(agent.id);
+      const port = g?.port ?? (await this.allocatePort(agent.id));
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${hermesApiKey(agent.id)}`,
+          "x-hermes-session-id": `${agent.id}:${chatId}`,
+        },
+        body: JSON.stringify({ model: "hermes-agent", messages, stream: true }),
+        signal: AbortSignal.timeout(180_000),
+      });
+      if (!res.ok || !res.body) throw new Error(`hermes stream failed: ${res.status}`);
+      let content = "";
+      let reasoning = "";
+      let buf = "";
+      let done = false;
+      const handle = (line: string) => {
+        if (!line.startsWith("data:")) return;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") {
+          done = true;
+          return;
+        }
+        let delta: { content?: string; reasoning_content?: string; reasoning?: string } | undefined;
+        try {
+          delta = JSON.parse(data)?.choices?.[0]?.delta;
+        } catch {
+          return;
+        }
+        const r = delta?.reasoning_content ?? delta?.reasoning;
+        if (r) reasoning += r;
+        if (delta?.content) {
+          gotDelta = true;
+          content += delta.content;
+          onDelta(delta.content);
+        }
+      };
+      const decoder = new TextDecoder();
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        buf += decoder.decode(chunk, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const l of lines) handle(l.trim());
+        if (done) break;
+      }
+      if (buf.trim()) handle(buf.trim());
+      const split = splitThink(content);
+      const all = [reasoning.trim(), split.reasoning].filter(Boolean).join("\n\n");
+      return all ? { content: split.content, reasoning: all } : { content: split.content };
+    } catch (e) {
+      if (gotDelta) throw e;
+      return this.chat(agent, chatId, messages);
+    }
+  }
+
   async stop(agent: RuntimeAgent): Promise<void> {
     const g = this.gateways.get(agent.id);
     this.status.set(agent.id, { status: "stopped" });
