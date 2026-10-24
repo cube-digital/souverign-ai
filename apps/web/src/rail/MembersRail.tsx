@@ -22,9 +22,18 @@ export function MembersRail({ chatId }: { chatId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [focusRow, setFocusRow] = useState<{ id: string; kind: "confirm" | "remove" } | null>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const isOwner = chat?.members.some((m) => m.member_id === user.id && m.role === "owner") ?? false;
   const canAddPeople = isOwner || chat?.kind === "room";
+
+  useEffect(() => {
+    if (!focusRow) return;
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-focus="${focusRow.kind}-${focusRow.id}"]`)
+      ?.focus();
+    setFocusRow(null);
+  }, [focusRow]);
 
   useEffect(() => {
     if (canAddPeople) fetchDirectory().then(setPeople, () => {});
@@ -40,15 +49,17 @@ export function MembersRail({ chatId }: { chatId: string }) {
     (a) => !ids.has(a.id) && (a.scope === "workspace" || isOwner),
   );
 
-  async function run(job: () => Promise<unknown>) {
+  async function run(job: () => Promise<unknown>): Promise<boolean> {
     setBusy(true);
     setError(null);
     try {
       await job();
       // the removed row is gone: park focus on the member list
       listRef.current?.focus();
+      return true;
     } catch {
       setError("Couldn't update the members. Try again.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -95,6 +106,7 @@ export function MembersRail({ chatId }: { chatId: string }) {
                       size="sm"
                       variant="danger"
                       disabled={busy}
+                      data-focus={`confirm-${m.member_id}`}
                       aria-label={`Confirm remove ${m.display_name}`}
                       onClick={() => {
                         setConfirming(null);
@@ -108,7 +120,9 @@ export function MembersRail({ chatId }: { chatId: string }) {
                               name: m.display_name,
                             },
                           }),
-                        );
+                        ).then((ok) => {
+                          if (!ok) setFocusRow({ id: m.member_id, kind: "remove" });
+                        });
                       }}
                     >
                       Remove?
@@ -117,7 +131,10 @@ export function MembersRail({ chatId }: { chatId: string }) {
                       size="sm"
                       variant="ghost"
                       aria-label={`Keep ${m.display_name}`}
-                      onClick={() => setConfirming(null)}
+                      onClick={() => {
+                        setConfirming(null);
+                        setFocusRow({ id: m.member_id, kind: "remove" });
+                      }}
                     >
                       Keep
                     </Button>
@@ -127,8 +144,12 @@ export function MembersRail({ chatId }: { chatId: string }) {
                     size="sm"
                     variant="ghost"
                     disabled={busy}
+                    data-focus={`remove-${m.member_id}`}
                     aria-label={`Remove ${m.display_name}`}
-                    onClick={() => setConfirming(m.member_id)}
+                    onClick={() => {
+                      setConfirming(m.member_id);
+                      setFocusRow({ id: m.member_id, kind: "confirm" });
+                    }}
                   >
                     Remove
                   </Button>
