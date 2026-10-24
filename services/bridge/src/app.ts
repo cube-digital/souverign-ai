@@ -203,6 +203,8 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
     }
     const chatId = randomBytes(12).toString("base64url");
     const kind = others.length === 1 ? "dm" : "group";
+    // Relay first: a relay failure leaves no chat row, so the client can simply retry.
+    for (const u of everyone) await relayFor(chatId, u, "add");
     await db.query("insert into sa.chats (id, title, kind, created_by) values ($1, $2, $3, $4)", [
       chatId,
       body.data.title,
@@ -215,7 +217,6 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
         [chatId, u, u === userId ? "owner" : "member"],
       );
     }
-    for (const u of everyone) await relayFor(chatId, u, "add");
     log("chat created", { chat: chatId, members: everyone.length });
     return loadChat(chatId);
   });
@@ -231,12 +232,13 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
     if ((await devicesOf([target])).get(target)?.length === 0) {
       return reply.code(409).send({ error: "missing_devices", missing_devices: [target] });
     }
+    // Relay first (idempotent): a failure leaves the DB untouched and a retry works.
+    await relayFor(g.chatId, target, "add");
     await db.query(
       `insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'member')
        on conflict (chat_id, member_type, member_id) do update set removed_at = null, joined_at = now()`,
       [g.chatId, target],
     );
-    await relayFor(g.chatId, target, "add");
     log("member added", { chat: g.chatId });
     return loadChat(g.chatId);
   });
@@ -245,13 +247,19 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
     const g = await memberGuard(req, reply, true);
     if (!g) return;
     const target = (req.params as { userId: string }).userId;
-    const updated = await db.query(
-      `update sa.chat_members set removed_at = now()
-       where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null returning member_id`,
+    const [active] = await db.query(
+      "select member_id from sa.chat_members where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null",
       [g.chatId, target],
     );
-    if (updated.length === 0) return reply.code(404).send({ error: "not_found" });
+    if (!active) return reply.code(404).send({ error: "not_found" });
+    // Relay first (idempotent): if the DB update fails afterwards the member is still active
+    // in the DB, so a retry re-sends the remove and completes.
     await relayFor(g.chatId, target, "remove");
+    await db.query(
+      `update sa.chat_members set removed_at = now()
+       where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null`,
+      [g.chatId, target],
+    );
     log("member removed", { chat: g.chatId });
     return loadChat(g.chatId);
   });

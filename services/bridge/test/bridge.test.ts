@@ -7,6 +7,7 @@ import { migrate } from "../src/migrate.js";
 
 let db: Db;
 let calls: RelayMemberChange[];
+let failRelay = false;
 let app: ReturnType<typeof buildApp>;
 
 const dev = (u: string) => ({ device_id: `${u}-device-1`, public_key: `${u}_pubkey` });
@@ -36,7 +37,16 @@ beforeEach(async () => {
     ]);
   }
   calls = [];
-  app = buildApp({ db, relayAdmin: { setMember: async (c) => void calls.push(c) } });
+  failRelay = false;
+  app = buildApp({
+    db,
+    relayAdmin: {
+      setMember: async (c) => {
+        if (failRelay) throw new Error("relay down");
+        calls.push(c);
+      },
+    },
+  });
 });
 afterEach(() => db.close());
 
@@ -115,6 +125,14 @@ describe("bridge", () => {
     });
     expect(denied.statusCode).toBe(403);
     expect(calls).toEqual([]);
+    failRelay = true;
+    const failed = await app.inject({
+      method: "DELETE",
+      url: `/api/chats/${chat.id}/members/vlad`,
+      headers: auth(ana),
+    });
+    expect(failed.statusCode).toBe(500);
+    failRelay = false;
     const ok = await app.inject({
       method: "DELETE",
       url: `/api/chats/${chat.id}/members/vlad`,
