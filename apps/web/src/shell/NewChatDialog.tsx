@@ -46,7 +46,7 @@ export function NewChatDialog({
   }
 
   return (
-    <Modal title="New chat" onClose={onClose}>
+    <Modal title="New chat" onClose={onClose} busy={busy}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <Input
           label="Title"

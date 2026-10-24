@@ -32,8 +32,9 @@ export function TopBar({
         <Button size="sm" variant="ghost" onClick={onToggleRelay}>
           Relay view
         </Button>
-        <Button size="sm" onClick={onOpenPalette} aria-label="Open command palette">
+        <Button size="sm" onClick={onOpenPalette}>
           <Icons.Search />
+          <span className="sr-only">Command palette</span>
           <Kbd>⌘K</Kbd>
         </Button>
         <Button

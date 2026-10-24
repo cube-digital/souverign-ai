@@ -7,7 +7,7 @@ import { Conversation } from "../chat/Conversation";
 import { MembersPanel } from "../chat/MembersPanel";
 import { NewChatDialog } from "../chat/NewChatDialog";
 import { RelayPanel } from "../chat/RelayPanel";
-import { useSession } from "../state/session";
+import { useActivity, useSession } from "../state/session";
 import { Shell } from "../ui/Shell";
 import { AgentsPage } from "./AgentsPage";
 
@@ -15,6 +15,7 @@ type FileBody = Extract<MessageBody, { type: "file" }>;
 
 export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
   const s = useSession();
+  const liveActivity = useActivity();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [newChat, setNewChat] = useState(false);
   const [members, setMembers] = useState(false);
@@ -73,7 +74,7 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
           messages={s.messages[active.id] ?? []}
           nameOf={(d) => names.get(d) ?? "Someone"}
           onDownload={download}
-          activity={s.activity[active.id] ?? {}}
+          activity={liveActivity[active.id] ?? {}}
           onOpenMembers={() => setMembers(true)}
         />
         <Composer
@@ -103,7 +104,7 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
           <ChatList
             chats={s.chats}
             unread={s.unread}
-            typing={Object.fromEntries(Object.keys(s.activity).map((id) => [id, true]))}
+            typing={Object.fromEntries(Object.keys(liveActivity).map((id) => [id, true]))}
             activeId={active?.id ?? null}
             publicKey={s.publicKey}
             onSelect={(id) => {

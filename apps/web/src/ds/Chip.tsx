@@ -13,8 +13,8 @@ export function Chip({
   const tones = {
     neutral: "border-border-soft text-text-2",
     ai: "border-ai-glow bg-ai-bg text-ai",
-    ok: "border-ok text-ok",
-    warn: "border-warn text-warn",
+    ok: "border-ok text-ok-ink",
+    warn: "border-warn text-warn-ink",
     danger: "border-danger text-danger",
   } as const;
   return <span className={cn(BASE, tones[tone], className)} {...rest} />;

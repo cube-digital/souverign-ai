@@ -42,12 +42,12 @@
 
   --text-0: oklch(0.24 0.035 285);
   --text-1: oklch(0.34 0.03 285);
-  --text-2: oklch(0.46 0.028 285);
-  --text-3: oklch(0.56 0.026 285);
+  --text-2: oklch(0.42 0.028 285);
+  --text-3: oklch(0.48 0.026 285);
   --text-4: oklch(0.66 0.024 285);
 
   --ai-h: 288;
-  --ai: oklch(0.52 0.21 var(--ai-h));
+  --ai: oklch(0.5 0.21 var(--ai-h));
   --ai-dim: oklch(0.62 0.17 var(--ai-h));
   --ai-deep: oklch(0.4 0.18 var(--ai-h));
   --ai-bg: oklch(0.52 0.21 var(--ai-h) / 0.1);
@@ -61,8 +61,13 @@
   --on-bright: oklch(0.22 0.04 285); /* text on bright sticker fills */
 
   --ok: oklch(0.66 0.18 150);
+  /* Text-grade variants (>= 4.5:1 on the paper surfaces); the plain colours stay for dots. */
+  --ok-ink: oklch(0.48 0.12 150);
+  --warn-ink: oklch(0.5 0.11 78);
+  /* Glyph lightness of agent avatars. */
+  --avatar-l: 0.4;
   --warn: oklch(0.78 0.16 78);
-  --danger: oklch(0.62 0.22 28);
+  --danger: oklch(0.52 0.2 28);
 
   /* Refined radii — still rounded and friendly, just not bubble-gum. */
   --r-sm: 6px;
@@ -97,13 +102,13 @@ body.theme-dark,
   --border-strong: oklch(0.86 0.025 92);
   --paper-dot: oklch(0.9 0.03 92 / 0.045);
 
-  --text-0: oklch(0.94 0.012 285);
-  --text-1: oklch(0.86 0.015 285);
-  --text-2: oklch(0.73 0.017 285);
-  --text-3: oklch(0.63 0.018 285);
+  --text-0: oklch(0.97 0.01 285);
+  --text-1: oklch(0.93 0.012 285);
+  --text-2: oklch(0.88 0.017 285);
+  --text-3: oklch(0.8 0.018 285);
   --text-4: oklch(0.55 0.02 285);
 
-  --ai: oklch(0.74 0.18 var(--ai-h));
+  --ai: oklch(0.82 0.14 var(--ai-h));
   --ai-dim: oklch(0.66 0.15 var(--ai-h));
   --ai-deep: oklch(0.84 0.14 var(--ai-h));
   --ai-bg: oklch(0.74 0.18 var(--ai-h) / 0.18);
@@ -116,7 +121,10 @@ body.theme-dark,
 
   --ok: oklch(0.76 0.16 150);
   --warn: oklch(0.83 0.14 78);
-  --danger: oklch(0.7 0.2 28);
+  --danger: oklch(0.84 0.15 28);
+  --ok-ink: var(--ok);
+  --warn-ink: var(--warn);
+  --avatar-l: 0.88;
 }
 
 /* Legacy alias — older code references `.theme-light` as the toggle.

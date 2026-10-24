@@ -10,6 +10,7 @@ export { Input, Textarea } from "./Input";
 export { Kbd } from "./Kbd";
 export { Menu, type MenuItem } from "./Menu";
 export { Modal } from "./Modal";
+export { Overlay } from "./Overlay";
 export { StatusDot } from "./StatusDot";
 export { Tabs } from "./Tabs";
 export { ToastProvider, useToast } from "./Toast";

@@ -3,7 +3,7 @@ import { type InputHTMLAttributes, type TextareaHTMLAttributes, useId } from "re
 import { cn } from "../lib/cn";
 
 const FIELD =
-  "rounded-md border border-border-soft bg-bg-1 px-2.5 text-[13px] text-text-0 outline-none placeholder:text-text-3 focus:border-border-strong";
+  "rounded-md border border-border-soft bg-bg-1 px-2.5 text-[13px] text-text-0 outline-none placeholder:text-text-3 focus:border-border-strong focus-visible:ring-2 focus-visible:ring-ai";
 
 type Common = { label: string; hideLabel?: boolean };
 

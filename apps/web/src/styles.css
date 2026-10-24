@@ -52,6 +52,8 @@
   --color-ai-glow: var(--ai-glow);
   --color-ok: var(--ok);
   --color-warn: var(--warn);
+  --color-ok-ink: var(--ok-ink);
+  --color-warn-ink: var(--warn-ink);
   --color-danger: var(--danger);
 }
 

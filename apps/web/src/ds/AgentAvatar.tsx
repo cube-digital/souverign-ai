@@ -35,7 +35,7 @@ export function AgentAvatar({
         fontSize: Math.max(9, Math.round(size * 0.38)),
         background: `oklch(0.6 0.15 ${hue} / 0.18)`,
         borderColor: `oklch(0.6 0.15 ${hue} / 0.5)`,
-        color: `oklch(0.55 0.17 ${hue})`,
+        color: `oklch(var(--avatar-l) 0.17 ${hue})`,
       }}
       className={cn(
         "inline-grid shrink-0 place-items-center rounded-md border font-semibold",

@@ -48,8 +48,6 @@ export type SessionValue = {
   chats: Chat[];
   messages: Record<string, ChatMessage[]>;
   unread: Record<string, number>;
-  /** Live agent activity: chat id, then sender device. */
-  activity: ActivityState;
   refreshChats(): Promise<Chat[]>;
   /** Threads and reactions of a chat, derived from its messages. */
   view(chatId: string): ChatView;
@@ -58,6 +56,13 @@ export type SessionValue = {
 };
 
 const Ctx = createContext<SessionValue | null>(null);
+// Live activity ticks often; it has its own context so message consumers do not re-render on it.
+const ActivityCtx = createContext<ActivityState>({});
+
+/** Live agent activity: chat id, then sender device. */
+export function useActivity(): ActivityState {
+  return useContext(ActivityCtx);
+}
 
 export function useSession(): SessionValue {
   const v = useContext(Ctx);
@@ -79,6 +84,7 @@ function loadDevice(userId: string, store: IdbKeyStore): Promise<StoredDevice> {
       return device;
     })();
     devices.set(userId, p);
+    p.catch(() => devices.delete(userId));
   }
   return p;
 }
@@ -88,6 +94,8 @@ function loadDevice(userId: string, store: IdbKeyStore): Promise<StoredDevice> {
 const registered = new Map<string, Promise<unknown>>();
 // The "hello" catch-up ping goes out once per page load per user.
 const greeted = new Set<string>();
+
+const EMPTY: ChatMessage[] = [];
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const RETRIES = 3;
@@ -144,8 +152,12 @@ export function SessionProvider({ session, children }: { session: Session; child
     });
   }, []);
 
+  const refreshSeq = useRef(0);
   const refreshChats = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     const list = await fetchChats();
+    // A newer refresh started while this one was in flight: its answer wins.
+    if (seq !== refreshSeq.current) return chatsRef.current;
     known.current = new Set(list.map((c) => c.id));
     chatsRef.current = list;
     setChats(list);
@@ -191,7 +203,10 @@ export function SessionProvider({ session, children }: { session: Session; child
               deviceId: dev.deviceId,
               getTicket: fresh,
             });
-            const off = c.onStatus(setRelayStatus);
+            const off = c.onStatus((st) => {
+              if (!cancelled) setRelayStatus(st);
+            });
+            offs.push(off);
             try {
               await Promise.race([
                 c.connect(),
@@ -204,7 +219,6 @@ export function SessionProvider({ session, children }: { session: Session; child
               c.close();
               throw e;
             }
-            offs.push(off);
             return c;
           },
           () => cancelled,
@@ -310,11 +324,11 @@ export function SessionProvider({ session, children }: { session: Session; child
   const views = useRef(new Map<string, { src: ChatMessage[]; dev: string; view: ChatView }>());
   const view = useCallback(
     (chatId: string) => {
-      const src = messages[chatId] ?? [];
+      const src = messages[chatId] ?? EMPTY;
       const dev = device?.deviceId ?? "";
       const hit = views.current.get(chatId);
       if (hit && hit.src === src && hit.dev === dev) return hit.view;
-      const next = buildView(src, dev);
+      const next = buildView(src, dev, hit?.view);
       views.current.set(chatId, { src, dev, view: next });
       return next;
     },
@@ -347,7 +361,6 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
-      activity,
       refreshChats,
       view,
       openChat,
@@ -364,11 +377,14 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
-      activity,
       refreshChats,
       view,
       openChat,
     ],
   );
-  return createElement(Ctx.Provider, { value }, children);
+  return createElement(
+    Ctx.Provider,
+    { value },
+    createElement(ActivityCtx.Provider, { value: activity }, children),
+  );
 }

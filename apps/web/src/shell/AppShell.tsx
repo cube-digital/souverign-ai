@@ -1,7 +1,7 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import { type ReactNode, useEffect, useState } from "react";
 import { Group, Panel, Separator, useDefaultLayout } from "react-resizable-panels";
-import { IconButton, Icons } from "../ds";
+import { IconButton, Icons, Overlay } from "../ds";
 
 const MOBILE = "(max-width: 767px)";
 
@@ -59,8 +59,13 @@ export function AppShell({
         </div>
         <div className="min-h-0 flex-1">{main}</div>
         {drawer && (
-          <div className="fixed inset-0 z-30 flex">
-            <div className="h-full w-72 max-w-[85%] border-r border-border-soft bg-bg-1">
+          <Overlay onEscape={() => setDrawer(false)} className="fixed inset-0 z-30 flex">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Menu"
+              className="h-full w-72 max-w-[85%] border-r border-border-soft bg-bg-1"
+            >
               {/* biome-ignore lint/a11y/noStaticElementInteractions: the drawer closes when a chat row is picked */}
               <div role="presentation" className="h-full" onClick={() => setDrawer(false)}>
                 {sidebar}
@@ -72,12 +77,14 @@ export function AppShell({
               className="flex-1 cursor-pointer bg-black/50"
               onClick={() => setDrawer(false)}
             />
-          </div>
+          </Overlay>
         )}
         {hasRail && (
-          <div className="fixed inset-0 z-30 bg-bg-1">
-            <RailBox onClose={onCloseRail}>{rail}</RailBox>
-          </div>
+          <Overlay onEscape={onCloseRail} className="fixed inset-0 z-30 bg-bg-1">
+            <div role="dialog" aria-modal="true" aria-label="Details panel" className="h-full">
+              <RailBox onClose={onCloseRail}>{rail}</RailBox>
+            </div>
+          </Overlay>
         )}
       </div>
     );

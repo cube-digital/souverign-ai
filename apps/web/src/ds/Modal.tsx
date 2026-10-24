@@ -1,26 +1,27 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
-import { type ReactNode, useEffect, useId } from "react";
+import { type ReactNode, useId } from "react";
 import { X } from "./Icons";
+import { Overlay } from "./Overlay";
 
 export function Modal({
   title,
   onClose,
+  busy = false,
   children,
 }: {
   title: string;
   onClose: () => void;
+  /** While busy, Escape does not close the dialog. */
+  busy?: boolean;
   children: ReactNode;
 }) {
   const titleId = useId();
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
-  }, [onClose]);
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
+    <Overlay
+      onEscape={onClose}
+      busy={busy}
+      className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4"
+    >
       <div
         role="dialog"
         aria-modal="true"
@@ -42,6 +43,6 @@ export function Modal({
         </div>
         {children}
       </div>
-    </div>
+    </Overlay>
   );
 }
