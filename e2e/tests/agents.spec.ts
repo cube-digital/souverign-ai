@@ -55,9 +55,10 @@ test("an invited agent answers when addressed, sees only what followed its invit
   // 4. Rareș addresses Nora; both see an agent reply that knows only the later message
   // The echo runtime can answer faster than a poll, so record when the live bubble and the final
   // reply first show up in Rareș's DOM.
-  await rares.evaluate(() => {
-    const seen: { live?: number; final?: number; sent: number } = { sent: performance.now() };
-    (window as unknown as { __seen: typeof seen }).__seen = seen;
+  // (browser code as a string: the e2e tsconfig has no DOM lib)
+  await rares.evaluate(`(() => {
+    const seen = { sent: performance.now() };
+    window.__seen = seen;
     const scan = () => {
       const text = document.body.textContent ?? "";
       const activity = document.querySelector('[data-testid="agent-activity"]');
@@ -70,7 +71,7 @@ test("an invited agent answers when addressed, sees only what followed its invit
       childList: true,
       characterData: true,
     });
-  });
+  })()`);
   await say(rares, "@Nora what do you see?");
   for (const p of [ana, rares]) {
     const reply = replies(p);
@@ -81,9 +82,11 @@ test("an invited agent answers when addressed, sees only what followed its invit
   }
 
   // the live bubble showed before the final message, and none remains after it
-  const seen = await rares.evaluate(
-    () => (window as unknown as { __seen: { live?: number; final?: number; sent: number } }).__seen,
-  );
+  const seen = (await rares.evaluate("window.__seen")) as {
+    live?: number;
+    final?: number;
+    sent: number;
+  };
   expect(seen.live, "live bubble appeared").toBeDefined();
   expect(seen.final, "final reply appeared").toBeDefined();
   expect(seen.live as number).toBeLessThanOrEqual(seen.final as number);
