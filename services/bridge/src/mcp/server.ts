@@ -7,7 +7,7 @@ import type { Db } from "../db.js";
 import { ToolLog } from "./tool-log.js";
 
 type Args = Record<string, unknown>;
-type Ctx = { db: Db; agentId: string; rtSimUrl: string };
+type Ctx = { db: Db; agentId: string; rtSimUrl: string; chatId?: string | undefined };
 type Tool = {
   name: string;
   description: string;
@@ -31,12 +31,14 @@ const chatRead: Tool = {
   name: "chat_read",
   description: "Read the latest messages of a chat you are a member of, oldest first.",
   properties: {
-    chat_id: { type: "string" },
+    chat_id: { type: "string", description: "must be the chat of the current conversation" },
     limit: { type: "number", description: "1-50, default 20" },
   },
   required: ["chat_id"],
-  async run({ db, agentId }, args) {
+  async run(ctx, args) {
+    const { db, agentId } = ctx;
     const chatId = String(args.chat_id ?? "");
+    if (!ctx.chatId || chatId !== ctx.chatId) return { error: "not_current_chat" };
     const [member] = await db.query(
       `select 1 from sa.chat_members
        where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null`,
@@ -206,7 +208,9 @@ export function registerMcp(
       let text: string;
       let isError = false;
       try {
-        text = JSON.stringify(await tool.run({ db: opts.db, agentId, rtSimUrl }, args));
+        text = JSON.stringify(
+          await tool.run({ db: opts.db, agentId, rtSimUrl, chatId: toolLog.chatId(agentId) }, args),
+        );
       } catch (e) {
         isError = true;
         text = JSON.stringify({ error: "tool_failed", message: (e as Error).message });

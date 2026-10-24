@@ -63,6 +63,19 @@ export class AgentHost {
     await dev?.engine.start([chatId]);
   }
 
+  /** Reloads the agent row and stops its gateway so the next turn writes the new SOUL.md. */
+  async onAgentUpdated(agentId: string): Promise<void> {
+    const dev = this.devices.get(agentId);
+    if (!dev) return;
+    const [row] = await this.opts.db.query<{ name: string; template: string; soul: string }>(
+      "select name, template, soul from sa.agents where id = $1",
+      [agentId],
+    );
+    if (!row) return;
+    dev.agent = { ...dev.agent, name: row.name, template: row.template, soul: row.soul };
+    await this.opts.runtime.stop(dev.agent);
+  }
+
   async onAgentRemoved(chatId: string, agentId: string): Promise<void> {
     // Membership is checked on every message, so a removed chat simply stops getting replies.
     this.devices.get(agentId)?.lastReply.delete(chatId);
@@ -150,7 +163,7 @@ export class AgentHost {
       isTrustedKeySender: async (chatId, sender) => {
         const rows = await db.query(
           `select d.id from sa.devices d
-           join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id
+           join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id and m.role = 'owner'
            where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null`,
           [sender, chatId],
         );
@@ -245,7 +258,7 @@ export class AgentHost {
         },
         { role: "user", content: text },
       ];
-      this.toolLog.begin(agent.id);
+      this.toolLog.begin(agent.id, chatId);
       let reply: Awaited<ReturnType<AgentRuntime["chat"]>>;
       let steps: TraceStep[];
       try {

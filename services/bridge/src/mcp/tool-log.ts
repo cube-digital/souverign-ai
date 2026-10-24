@@ -6,8 +6,16 @@ type ToolStep = Extract<TraceStep, { kind: "tool" }>;
 export class ToolLog {
   private steps = new Map<string, ToolStep[]>();
 
-  begin(agentId: string): void {
+  private chats = new Map<string, string>();
+
+  begin(agentId: string, chatId: string): void {
     this.steps.set(agentId, []);
+    this.chats.set(agentId, chatId);
+  }
+
+  /** The chat of the agent's turn in progress, if any. */
+  chatId(agentId: string): string | undefined {
+    return this.chats.get(agentId);
   }
 
   record(agentId: string, step: { name: string; args: unknown; result: string; ms: number }): void {
@@ -26,6 +34,7 @@ export class ToolLog {
   end(agentId: string): TraceStep[] {
     const list = this.steps.get(agentId) ?? [];
     this.steps.delete(agentId);
+    this.chats.delete(agentId);
     return list;
   }
 }

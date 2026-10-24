@@ -182,10 +182,13 @@ export function SessionProvider({ session, children }: { session: Session; child
           store,
           device: dev,
           isTrustedKeySender: async (chatId, senderDevice) => {
-            let chat = chatsRef.current.find((c) => c.id === chatId);
-            if (!chat) chat = (await refreshChats()).find((c) => c.id === chatId);
-            const owner = chat?.members.find((m) => m.role === "owner");
-            return owner?.devices.some((d) => d.device_id === senderDevice) ?? false;
+            const isOwnerDevice = (list: Chat[]) =>
+              list
+                .find((c) => c.id === chatId)
+                ?.members.find((m) => m.role === "owner")
+                ?.devices.some((d) => d.device_id === senderDevice) ?? false;
+            // A new owner device may postdate the cached chats: refresh once and recheck.
+            return isOwnerDevice(chatsRef.current) || isOwnerDevice(await refreshChats());
           },
         });
         offs.push(

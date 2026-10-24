@@ -15,6 +15,7 @@ import { encrypt } from "./secrets.js";
 export type AgentHost = {
   onAgentAdded(chatId: string, agentId: string): void | Promise<void>;
   onAgentRemoved(chatId: string, agentId: string): void | Promise<void>;
+  onAgentUpdated?(agentId: string): void | Promise<void>;
 };
 
 export type AgentRoutesDeps = {
@@ -88,6 +89,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
       return reply.code(404).send({ error: "not_found" });
     await db.query("update sa.agents set soul = $1 where id = $2", [body.data.soul, agent.id]);
     log("agent updated", { agent: agent.id });
+    await agentHost?.onAgentUpdated?.(agent.id);
     return agentById(agent.id);
   });
 

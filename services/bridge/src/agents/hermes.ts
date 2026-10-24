@@ -99,17 +99,15 @@ export class HermesRuntime implements AgentRuntime {
       [agentId],
     );
     if (own?.api_port) return own.api_port;
-    const used = new Set(
-      (
-        await this.deps.db.query<{ api_port: number }>(
-          "select api_port from sa.agents where api_port is not null",
-        )
-      ).map((r) => r.api_port),
-    );
+    const used = new Set([...this.gateways.values()].map((g) => g.port));
     const port = PORTS.find((p) => !used.has(p));
     if (!port) throw new Error("no free agent port");
     await this.deps.db.query("update sa.agents set api_port = $1 where id = $2", [port, agentId]);
     return port;
+  }
+
+  private releasePort(agentId: string): void {
+    void this.deps.db.query("update sa.agents set api_port = null where id = $1", [agentId]);
   }
 
   private setStatus(agent: RuntimeAgent, status: AgentStatus, lastLog?: string): void {
@@ -165,6 +163,7 @@ export class HermesRuntime implements AgentRuntime {
       this.gateways.set(agent.id, { child, port });
       child.once("exit", () => {
         this.gateways.delete(agent.id);
+        this.releasePort(agent.id);
         if (this.status.get(agent.id)?.status !== "stopped") {
           this.setStatus(agent, "error", lastLine(logFile));
         }
@@ -245,6 +244,7 @@ export class HermesRuntime implements AgentRuntime {
     this.status.set(agent.id, { status: "stopped" });
     if (!g) return;
     this.gateways.delete(agent.id);
+    this.releasePort(agent.id);
     try {
       process.kill(-(g.child.pid ?? 0), "SIGTERM");
     } catch {
@@ -263,6 +263,7 @@ export class HermesRuntime implements AgentRuntime {
       }
     }
     this.gateways.clear();
+    await this.deps.db.query("update sa.agents set api_port = null");
   }
 }
 

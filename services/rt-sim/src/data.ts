@@ -32,8 +32,8 @@ function statusOf(disk: number): string {
 
 export function buildSim(start: number) {
   const now = () => Date.now();
-  // Elapsed time since start drifts the scenario slightly; stays consistent across routes.
-  const drift = () => (now() - start) / HOUR;
+  // Elapsed time since start (modulo 1 hour, a rolling anchor so disk never passes ~90%) drifts the scenario; stays consistent across routes.
+  const drift = () => ((now() - start) % HOUR) / HOUR;
   const diskAt = (node: string, hoursAgo: number) =>
     round1(diskPct(node, hoursAgo) + (DISK_GROWTH[node] ?? 0) * drift());
 

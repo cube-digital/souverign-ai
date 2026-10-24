@@ -13,6 +13,7 @@ requireMasterKey();
 const relayAdmin = httpRelayAdmin();
 const db = await openDb();
 await migrate(db);
+await db.query("update sa.agents set api_port = null"); // no gateway survives a restart
 const runtime: AgentRuntime =
   process.env.AGENT_RUNTIME === "echo" ? new EchoRuntime() : new HermesRuntime({ db });
 const adminToken = process.env.RELAY_ADMIN_TOKEN;
