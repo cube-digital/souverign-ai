@@ -56,6 +56,7 @@ class DeleteIn(BaseModel):
     namespace: str = Field(pattern=NAMESPACE)
     source_type: str
     source_id: str
+    include_parts: bool = False
 
 
 def _log(event: str, **fields: int | float | str) -> None:
@@ -110,6 +111,7 @@ def create_app(store: MemoryStore, embedder: Embedder, token: str) -> FastAPI:
                         "ts": h.source_ts,
                     },
                     "chunk_idx": h.chunk_idx,
+                    "origin_chat_id": h.origin_chat_id,
                 }
                 for h in hits
             ]
@@ -122,6 +124,11 @@ def create_app(store: MemoryStore, embedder: Embedder, token: str) -> FastAPI:
 
     @app.delete("/sources", dependencies=guard)
     def delete_sources(body: DeleteIn) -> dict:
-        return {"deleted": store.delete_source(body.namespace, body.source_type, body.source_id)}
+        extra = {"include_parts": True} if body.include_parts else {}
+        return {
+            "deleted": store.delete_source(
+                body.namespace, body.source_type, body.source_id, **extra
+            )
+        }
 
     return app
