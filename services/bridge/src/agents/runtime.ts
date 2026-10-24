@@ -22,6 +22,8 @@ export interface AgentRuntime {
   ): Promise<ChatResult>;
   stop(agent: RuntimeAgent): Promise<void>;
   stopAll(): Promise<void>;
+  /** Stops gateways a dead bridge left behind; called once at startup. */
+  reapStale?(): Promise<void>;
 }
 
 /** Splits `<think>…</think>` blocks out of model content. */

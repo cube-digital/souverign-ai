@@ -9,6 +9,7 @@ import { type ActivityBody, TICKET_TTL_MS, type TraceStep } from "@sa/protocol";
 import { signTicket } from "@sa/protocol/ticket";
 import type { Db } from "../db.js";
 import { ToolLog } from "../mcp/tool-log.js";
+import type { AgentHostApi } from "./api.js";
 import { PgKeyStore } from "./pg-keystore.js";
 import type { AgentRuntime, ChatMessage, RuntimeAgent } from "./runtime.js";
 import { decrypt, encrypt } from "./secrets.js";
@@ -57,7 +58,7 @@ const formatSize = (n: number) =>
       ? `${(n / 1024).toFixed(1)} KB`
       : `${(n / 1048576).toFixed(1)} MB`;
 
-export class AgentHost {
+export class AgentHost implements AgentHostApi {
   private devices = new Map<string, Device>();
   private building = new Map<string, Promise<Device | null>>();
   private toolLog: ToolLog;
