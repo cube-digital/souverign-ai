@@ -17,11 +17,20 @@ export class RelayClient implements RelayLink {
   private statusCbs = new Set<(s: RelayStatus) => void>();
   private backoff = 500;
   private everReady = false;
+  private ticketRetried = false;
   private closed = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly Ws: typeof WebSocket;
 
-  constructor(private opts: { url: string; deviceId: string; WebSocketImpl?: typeof WebSocket }) {
+  constructor(
+    private opts: {
+      url: string;
+      deviceId: string;
+      /** Called before every hello (first connect and each reconnect). */
+      getTicket: () => Promise<string>;
+      WebSocketImpl?: typeof WebSocket;
+    },
+  ) {
     this.Ws = opts.WebSocketImpl ?? WebSocket;
   }
 
@@ -51,9 +60,7 @@ export class RelayClient implements RelayLink {
         this.setStatus("connecting");
         const ws = new this.Ws(this.opts.url);
         this.ws = ws;
-        ws.onopen = () =>
-          // TODO(sp2): real ticket (T3/T5)
-          this.raw({ op: "hello", device_id: this.opts.deviceId, ticket: "unsigned-placeholder" });
+        ws.onopen = () => void this.hello(ws);
         ws.onmessage = (ev: MessageEvent) => {
           let msg: RelayOp;
           try {
@@ -63,6 +70,7 @@ export class RelayClient implements RelayLink {
           }
           if (msg.op === "ready") {
             this.backoff = 500;
+            this.ticketRetried = false;
             this.setStatus("ready");
             this.everReady = true;
             if (first) {
@@ -71,6 +79,14 @@ export class RelayClient implements RelayLink {
             }
             // Fires on every ready (including the first) so syncs requested earlier are not lost.
             for (const cb of this.reconnectCbs) cb();
+            return;
+          }
+          if (msg.op === "error" && msg.code === "bad_ticket" && !msg.ref) {
+            // One immediate retry with a fresh ticket, then normal backoff.
+            if (!this.ticketRetried) {
+              this.ticketRetried = true;
+              void this.hello(ws);
+            }
             return;
           }
           this.handle(msg);
@@ -93,6 +109,18 @@ export class RelayClient implements RelayLink {
       };
       open();
     });
+  }
+
+  private async hello(ws: WebSocket): Promise<void> {
+    let ticket: string;
+    try {
+      ticket = await this.opts.getTicket();
+    } catch {
+      if (this.ws === ws) ws.close();
+      return;
+    }
+    if (this.ws !== ws || ws.readyState !== 1) return;
+    this.raw({ op: "hello", device_id: this.opts.deviceId, ticket });
   }
 
   close(): void {

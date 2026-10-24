@@ -99,6 +99,8 @@ export function SessionProvider({ session, children }: { session: Session; child
         client = new RelayClient({
           url: `${scheme}://${location.host}/relay/ws`,
           deviceId: dev.deviceId,
+          // TODO(sp2): fetch a signed ticket from the bridge once its endpoint lands.
+          getTicket: async () => "unsigned-placeholder",
         });
         offs.push(client.onStatus(setRelayStatus));
         await client.connect();
