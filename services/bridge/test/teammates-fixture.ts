@@ -74,6 +74,7 @@ export async function createWorld(
     },
     agentHost: host,
   });
+  let closed = false;
   return {
     db,
     relay,
@@ -81,6 +82,8 @@ export async function createWorld(
     app,
     toolLog,
     close: async () => {
+      if (closed) return;
+      closed = true;
       await host.stopAll();
       await db.close();
     },
