@@ -77,7 +77,7 @@ pipeline) will wait for the owner's approval (planned).
 | Memory | `services/memory` | Python, EmbeddingGemma 2, pgvector | service built, wiring next |
 | Audio API | `services/audio-api` | whisper.cpp, Kokoro, Piper | service built, voice in chat next |
 | Ops backend simulator | `services/ops-sim` | Node | stand-in for real systems |
-| Live agent activity | bridge + web | ephemeral encrypted signals | in progress |
+| Live agent activity | bridge + web | ephemeral encrypted signals | pre-warm, live status, streaming drafts |
 | Connectors, approvals, voice, calls | | MCP servers, LiveKit | planned |
 
 ## Measured on the demo Mac

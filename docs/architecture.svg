@@ -82,7 +82,6 @@ path.l { fill: none; stroke-width: 1.6; }
   <rect class="row" x="322" y="324" width="368" height="44" rx="8"/><text class="t3" x="338" y="343">Hermes client</text><text class="t2" x="338" y="359">one session per chat · streaming</text>
   <rect class="row" x="322" y="376" width="368" height="44" rx="8"/><text class="t3" x="338" y="395">MCP server</text><text class="t2" x="338" y="411">per-agent token · tool allowlist · trace</text>
   <rect class="row" x="322" y="428" width="368" height="44" rx="8"/><text class="t3" x="338" y="447">Live activity</text><text class="t2" x="338" y="463">thinking · using tool · draft (ephemeral)</text>
-  <text class="tag" x="676" y="447" text-anchor="end" style="fill:var(--gate)">IN PROGRESS</text>
   <rect class="planned" x="322" y="480" width="368" height="44" rx="8"/><text class="t3" x="338" y="499">Approvals · voice I/O</text><text class="t2" x="338" y="515">planned</text>
   <text class="t2" x="338" y="552">keys of agent devices: AES-GCM at rest</text>
 </g>
