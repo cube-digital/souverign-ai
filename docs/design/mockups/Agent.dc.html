@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>My agent: Nora</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0E1014}
+a{color:#2FD3B5}a:hover{color:#7BE8D3}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E8EAEE; font-family: Inter, system-ui, sans-serif; font-size: 14px; line-height: 1.45">
+
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid #262B35; background: #14171D">
+    <a href="Main.dc.html" style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; color: #E8EAEE; text-decoration: none">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2FD3B5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+      Sovereign Agents
+    </a>
+    <div style="flex: 1 1 420px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px">
+      <span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #10231F; color: #7BE8D3; font-size: 13px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #2FD3B5"></span>All AI runs on this Mac</span>
+    </div>
+    <span style="display: flex; align-items: center; gap: 10px; padding: 4px 12px 4px 4px; border: 1px solid #262B35; border-radius: 999px; background: #1A1E26">
+      <span style="width: 34px; height: 34px; border-radius: 50%; background: #2B3550; display: grid; place-items: center; font-weight: 600">A</span>Ana
+    </span>
+  </header>
+
+  <div style="flex: 1; display: flex; flex-wrap: wrap; min-height: 0">
+    <nav aria-label="My agents" style="flex: 1 1 240px; max-width: 280px; display: flex; flex-direction: column; gap: 6px; padding: 16px; border-right: 1px solid #262B35; background: #14171D">
+      <div style="font-size: 12px; color: #9BA3B1; padding: 0 8px 6px">My agents</div>
+      <a href="#" aria-current="page" style="display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 12px; border-radius: 10px; background: #1F2533; color: #E8EAEE; text-decoration: none">
+        <span style="width: 32px; height: 32px; border-radius: 10px; background: #10231F; border: 1px solid #2FD3B5; display: grid; place-items: center; color: #7BE8D3; font-weight: 600">N</span>
+        <span style="display: flex; flex-direction: column"><span style="font-weight: 500">Nora</span><span style="font-size: 12px; color: #9BA3B1">Contracts and suppliers</span></span>
+      </a>
+      <a href="#" style="display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 12px; border-radius: 10px; color: #C9CED8; text-decoration: none">
+        <span style="width: 32px; height: 32px; border-radius: 10px; background: #1A1E26; border: 1px solid #343B48; display: grid; place-items: center; font-weight: 600">I</span>
+        <span style="display: flex; flex-direction: column"><span style="font-weight: 500">Iris</span><span style="font-size: 12px; color: #9BA3B1">Meeting notes · idle</span></span>
+      </a>
+      <button type="button" style="min-height: 44px; margin-top: 6px; padding: 0 12px; border: 1px dashed #343B48; border-radius: 10px; background: transparent; color: #9BA3B1; font: inherit; text-align: left; cursor: pointer">+ New agent</button>
+      <p style="margin: auto 0 0; padding: 12px; border-radius: 10px; background: #0E1014; font-size: 12px; color: #9BA3B1">Your agents never read each other's memory. They share only through a chat they are both in.</p>
+    </nav>
+
+    <main style="flex: 999 1 640px; min-width: 0; padding: 20px 28px; display: flex; flex-direction: column; gap: 18px">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px">
+        <span style="width: 56px; height: 56px; border-radius: 16px; background: #10231F; border: 1px solid #2FD3B5; display: grid; place-items: center; color: #7BE8D3; font-size: 22px; font-weight: 600">N</span>
+        <div style="flex: 1 1 260px">
+          <h1 style="margin: 0; font-size: 22px; font-weight: 600">Nora</h1>
+          <div style="font-size: 13px; color: #9BA3B1">Ana's agent · own device key 9A0D…77 · Hermes profile agent_nora</div>
+        </div>
+        <span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #10231F; color: #7BE8D3; font-size: 13px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #2FD3B5"></span>Running on this Mac · Qwen3.5 9B</span>
+      </div>
+
+      <div role="tablist" aria-label="Agent sections" style="display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid #262B35">
+        <button type="button" role="tab" aria-selected="true" style="min-height: 44px; padding: 0 14px; border: none; border-bottom: 2px solid #2FD3B5; background: transparent; color: #E8EAEE; font: inherit; font-weight: 500; cursor: pointer">Teach and share</button>
+        <button type="button" role="tab" aria-selected="false" style="min-height: 44px; padding: 0 14px; border: none; background: transparent; color: #9BA3B1; font: inherit; cursor: pointer">Profile</button>
+        <button type="button" role="tab" aria-selected="false" style="min-height: 44px; padding: 0 14px; border: none; background: transparent; color: #9BA3B1; font: inherit; cursor: pointer">Tools</button>
+        <button type="button" role="tab" aria-selected="false" style="min-height: 44px; padding: 0 14px; border: none; background: transparent; color: #9BA3B1; font: inherit; cursor: pointer">Actions</button>
+      </div>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+        <section aria-label="What Nora knows" style="flex: 1 1 420px; min-width: 0; padding: 18px; border-radius: 14px; background: #14171D; border: 1px solid #262B35; display: flex; flex-direction: column; gap: 14px">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+            <h2 style="margin: 0; font-size: 15px; font-weight: 600">What Nora knows</h2>
+            <span style="font-size: 12px; color: #9BA3B1">private to Nora · 31 memory chunks</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="font-size: 12px; color: #9BA3B1">Documents</div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35"><span style="flex: 1">contract.pdf</span><span style="font-size: 12px; color: #9BA3B1">18 chunks · 09:40</span><button type="button" aria-label="Forget contract.pdf" style="width: 36px; height: 36px; border: none; border-radius: 8px; background: transparent; color: #9BA3B1; cursor: pointer">✕</button></div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35"><span style="flex: 1">supplier-prices.xlsx</span><span style="font-size: 12px; color: #9BA3B1">6 chunks · yesterday</span><button type="button" aria-label="Forget supplier-prices.xlsx" style="width: 36px; height: 36px; border: none; border-radius: 8px; background: transparent; color: #9BA3B1; cursor: pointer">✕</button></div>
+            <button type="button" style="min-height: 44px; border: 1px dashed #343B48; border-radius: 10px; background: transparent; color: #C9CED8; font: inherit; cursor: pointer">Upload a document · read on this Mac only</button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="font-size: 12px; color: #9BA3B1">Lessons</div>
+            <div style="padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35">Answer briefly and always cite the source.</div>
+            <div style="padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35">Dates in day month format, e.g. 15 March.</div>
+            <label for="lesson" class="sr">New lesson</label>
+            <input id="lesson" type="text" placeholder="Teach Nora something new…" style="min-height: 44px; padding: 0 12px; border: 1px solid #262B35; border-radius: 10px; background: #0E1014; color: #E8EAEE; font: inherit">
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="font-size: 12px; color: #9BA3B1">Corrections</div>
+            <div style="padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35">“Penalty is per week, not per day.” <span style="color: #9BA3B1">· from # Project</span></div>
+          </div>
+        </section>
+
+        <section aria-label="Sharing" style="flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+          <fieldset style="margin: 0; padding: 18px; border-radius: 14px; background: #14171D; border: 1px solid #262B35; display: flex; flex-direction: column; gap: 10px">
+            <legend style="padding: 0 6px; font-size: 15px; font-weight: 600">In chats you bring Nora into</legend>
+            <p style="margin: 0; font-size: 13px; color: #9BA3B1">Agents share only inside a chat they are both in. What Nora learns in a chat stays tied to that chat.</p>
+            <label style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: #10231F; border: 1px solid #1E3A35; cursor: pointer"><input type="radio" name="share" checked style="margin-top: 3px; accent-color: #2FD3B5"><span><span style="font-weight: 500">Use what I taught her</span><br><span style="font-size: 12px; color: #9BA3B1">Bringing her into the chat is my consent. Default.</span></span></label>
+            <label style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35; cursor: pointer"><input type="radio" name="share" style="margin-top: 3px; accent-color: #2FD3B5"><span><span style="font-weight: 500">Ask me first</span><br><span style="font-size: 12px; color: #9BA3B1">I approve each answer that uses my documents.</span></span></label>
+            <label style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35; cursor: pointer"><input type="radio" name="share" style="margin-top: 3px; accent-color: #2FD3B5"><span><span style="font-weight: 500">Never in shared chats</span><br><span style="font-size: 12px; color: #9BA3B1">Only in my private chat with Nora.</span></span></label>
+          </fieldset>
+
+          <div style="padding: 18px; border-radius: 14px; background: #14171D; border: 1px solid #262B35; display: flex; flex-direction: column; gap: 8px">
+            <h2 style="margin: 0; font-size: 15px; font-weight: 600">Where Nora is</h2>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35"><span style="flex: 1"># Project</span><span style="font-size: 12px; color: #9BA3B1">since 14:02 · no earlier messages</span><button type="button" style="min-height: 36px; padding: 0 10px; border: 1px solid #343B48; border-radius: 8px; background: transparent; color: #C9CED8; font: inherit; font-size: 12px; cursor: pointer">Remove</button></div>
+            <div style="display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35"><span style="flex: 1">Private chat with Ana</span><span style="font-size: 12px; color: #9BA3B1">sees all she knows</span></div>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; font-size: 12px; color: #9BA3B1">Voice <span style="padding: 2px 8px; border-radius: 999px; background: #1A1E26; color: #C9CED8">Kokoro · af_heart</span> Languages <span style="padding: 2px 8px; border-radius: 999px; background: #1A1E26; color: #C9CED8">EN · FR · DE</span></div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

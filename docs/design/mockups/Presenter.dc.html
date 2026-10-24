@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Presenter view: four users side by side</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0E1014}
+a{color:#2FD3B5}a:hover{color:#7BE8D3}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: #0B0D10; color: #E8EAEE; font-family: Inter, system-ui, sans-serif; font-size: 13px; line-height: 1.45">
+
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 20px; border-bottom: 1px solid #262B35; background: #14171D">
+    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2FD3B5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+    <h1 style="margin: 0; font-size: 15px; font-weight: 600">Presenter view</h1>
+    <span style="color: #9BA3B1">Four people, one Mac, scene 4 of 7: gated write</span>
+    <span style="flex: 1"></span>
+    <button type="button" style="min-height: 40px; padding: 0 14px; border: 1px solid #343B48; border-radius: 10px; background: #1A1E26; color: #E8EAEE; font: inherit; cursor: pointer">← Previous scene</button>
+    <button type="button" style="min-height: 40px; padding: 0 14px; border: none; border-radius: 10px; background: #2FD3B5; color: #06201B; font: inherit; font-weight: 600; cursor: pointer">Next scene →</button>
+  </header>
+
+  <main style="flex: 1; padding: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px">
+    <sc-for list="{{panes}}" as="p" hint-placeholder-count="4">
+      <section aria-label="{{p.name}}'s screen" style="display: flex; flex-direction: column; min-height: 0; border-radius: 14px; background: #14171D; border: 1px solid #262B35; overflow: hidden">
+        <div style="display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #262B35">
+          <span style="width: 30px; height: 30px; border-radius: 50%; background: {{p.color}}; display: grid; place-items: center; font-weight: 600">{{p.initial}}</span>
+          <div style="flex: 1"><div style="font-weight: 600">{{p.name}}</div><div style="font-size: 12px; color: #9BA3B1">{{p.chat}}</div></div>
+          <sc-if value="{{p.badge}}" hint-placeholder-val="{{ true }}"><span style="padding: 3px 10px; border-radius: 999px; background: #2A2111; color: #F7CD7E; font-size: 12px">{{p.badge}}</span></sc-if>
+        </div>
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px">
+          <sc-for list="{{p.msgs}}" as="m" hint-placeholder-count="3">
+            <sc-if value="{{m.agent}}" hint-placeholder-val="{{ false }}">
+              <div style="align-self: flex-start; max-width: 90%; padding: 8px 10px; border-radius: 10px; background: #131C1E; border: 1px solid #1E3A35"><span style="color: #7BE8D3; font-weight: 600">{{m.who}}</span> <span style="font-size: 12px; color: #9BA3B1">agent · Ana's</span><div>{{m.text}}</div></div>
+            </sc-if>
+            <sc-if value="{{m.human}}" hint-placeholder-val="{{ true }}">
+              <div style="align-self: flex-start; max-width: 90%; padding: 8px 10px; border-radius: 10px; background: #1A1E26"><span style="font-weight: 600">{{m.who}}</span><div>{{m.text}}</div></div>
+            </sc-if>
+            <sc-if value="{{m.approval}}" hint-placeholder-val="{{ false }}">
+              <div style="padding: 10px; border-radius: 10px; background: #1B1710; border: 1px solid #5A4520"><div style="font-weight: 600; color: #F7CD7E">{{m.who}}</div><div style="margin: 2px 0 8px; color: #DCE0E7">{{m.text}}</div><div style="display: flex; gap: 6px"><button type="button" style="min-height: 34px; padding: 0 12px; border: none; border-radius: 8px; background: #F2B44B; color: #1A1204; font: inherit; font-weight: 600; cursor: pointer">Approve</button><button type="button" style="min-height: 34px; padding: 0 12px; border: 1px solid #343B48; border-radius: 8px; background: transparent; color: #C9CED8; font: inherit; cursor: pointer">Deny</button></div></div>
+            </sc-if>
+            <sc-if value="{{m.system}}" hint-placeholder-val="{{ false }}">
+              <div style="align-self: center; padding: 4px 10px; border-radius: 8px; background: #0E1014; color: #9BA3B1; font-size: 12px">{{m.text}}</div>
+            </sc-if>
+          </sc-for>
+        </div>
+      </section>
+    </sc-for>
+  </main>
+
+  <footer style="display: flex; flex-wrap: wrap; gap: 14px; padding: 12px 20px; border-top: 1px solid #262B35; background: #14171D">
+    <div style="flex: 2 1 520px; min-width: 0">
+      <div style="font-size: 12px; color: #9BA3B1; margin-bottom: 4px">Relay, live: ciphertext only</div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #7C8597; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">14:08:22 msg 41ab…e2 a9d0…77 1.1 KB Tz8Kq1Lp6Rx3Ny9Bv2Hc7Js0Gf5DdWm4…</div>
+      <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #7C8597; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">14:08:20 msg 77c0…19 2f4b…0a 0.8 KB Qw9Rt4Zb1Nc8Vy5Hs0Jf3Dg6eApX7kLm2…</div>
+    </div>
+    <div style="flex: 1 1 320px; display: flex; flex-wrap: wrap; gap: 8px; align-content: center">
+      <span style="padding: 6px 12px; border-radius: 999px; background: #10231F; color: #7BE8D3">Egress 0 bytes</span>
+      <span style="padding: 6px 12px; border-radius: 999px; background: #1A1E26; color: #C9CED8">Memory 24.1 of 36 GB</span>
+      <span style="padding: 6px 12px; border-radius: 999px; background: #1A1E26; color: #C9CED8">LLM Qwen3.5 9B · local</span>
+    </div>
+  </footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const msg = (who, text, kind) => ({ who, text, human: kind === 'human', agent: kind === 'agent', approval: kind === 'approval', system: kind === 'system' });
+    return {
+      panes: [
+        { name: 'Ana', initial: 'A', color: '#2B3550', chat: '# Project', badge: '1 approval', msgs: [
+          msg('Ana', '@Nora send Janosch a short summary of the contract, privately.', 'human'),
+          msg('Nora', 'Drafted. It goes out when Ana approves.', 'agent'),
+          msg('Nora wants to send to Janosch', 'Delivery by 15 March; 2% per week late, capped at 10%. Source: contract.pdf.', 'approval')
+        ] },
+        { name: 'Vlad', initial: 'V', color: '#3A2E4D', chat: '# Project', badge: '', msgs: [
+          msg('Vlad', 'The supplier confirmed the draft. Who has the signed contract?', 'human'),
+          msg('Nora', 'Delivery is due by 15 March, with a 2% penalty for every week of delay. [contract.pdf · p.3]', 'agent'),
+          msg('Ana', '@Nora send Janosch a short summary of the contract, privately.', 'human')
+        ] },
+        { name: 'Rareș', initial: 'R', color: '#4A3426', chat: '# Project', badge: '', msgs: [
+          msg('Rareș', 'Voice · “Is there a cap on the penalty?”', 'human'),
+          msg('Nora', 'Voice reply · Yes. Penalties stop at 10% of the order value. 1.8 s', 'agent'),
+          msg('', 'Nora can read messages from 14:02 on, not earlier ones.', 'system')
+        ] },
+        { name: 'Janosch', initial: 'J', color: '#26403A', chat: 'Direct · waiting for Ana', badge: '', msgs: [
+          msg('', 'Nothing yet. The message arrives only after Ana approves.', 'system'),
+          msg('Janosch', 'Ready when you are.', 'human')
+        ] }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>

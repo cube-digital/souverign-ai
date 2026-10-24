@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Chat: Project (Ana's view)</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0E1014}
+a{color:#2FD3B5}a:hover{color:#7BE8D3}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; flex-direction: column; background: #0E1014; color: #E8EAEE; font-family: Inter, system-ui, sans-serif; font-size: 14px; line-height: 1.45">
+
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid #262B35; background: #14171D">
+    <div style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2FD3B5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6l7-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+      Sovereign Agents
+    </div>
+    <div style="flex: 1 1 420px; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px">
+      <span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #10231F; color: #7BE8D3; font-size: 13px"><span style="width: 8px; height: 8px; border-radius: 50%; background: #2FD3B5"></span>All AI runs on this Mac</span>
+      <span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #10231F; color: #7BE8D3; font-size: 13px">0 bytes left the device today</span>
+      <span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: #1A1E26; color: #C9CED8; font-size: 13px">End-to-end encrypted</span>
+    </div>
+    <button type="button" style="display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 12px 4px 4px; border: 1px solid #262B35; border-radius: 999px; background: #1A1E26; color: #E8EAEE; font: inherit; cursor: pointer">
+      <span style="width: 34px; height: 34px; border-radius: 50%; background: #2B3550; display: grid; place-items: center; font-weight: 600">A</span>
+      Ana · switch user
+    </button>
+  </header>
+
+  <div style="flex: 1; display: flex; flex-wrap: wrap; min-height: 0">
+
+    <nav aria-label="Chats and agents" style="flex: 1 1 260px; max-width: 300px; display: flex; flex-direction: column; gap: 20px; padding: 16px; border-right: 1px solid #262B35; background: #14171D">
+      <div>
+        <label for="search" class="sr">Search chats</label>
+        <input id="search" type="search" placeholder="Search" style="width: 100%; box-sizing: border-box; min-height: 40px; padding: 8px 12px; border: 1px solid #262B35; border-radius: 10px; background: #0E1014; color: #E8EAEE; font: inherit">
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <div style="font-size: 12px; color: #9BA3B1; padding: 0 8px 6px">Chats</div>
+        <a href="#" style="display: flex; justify-content: space-between; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; background: #1F2533; color: #E8EAEE; text-decoration: none; font-weight: 500"># Project <span style="font-size: 12px; color: #9BA3B1">5 members</span></a>
+        <a href="#" style="display: flex; justify-content: space-between; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #C9CED8; text-decoration: none"># Ops <span style="min-width: 20px; height: 20px; border-radius: 10px; background: #2FD3B5; color: #06201B; font-size: 12px; font-weight: 600; display: grid; place-items: center">2</span></a>
+        <a href="#" style="display: flex; align-items: center; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #C9CED8; text-decoration: none">Janosch</a>
+        <a href="#" style="display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; border-radius: 10px; color: #C9CED8; text-decoration: none">Nora <span style="font-size: 12px; color: #9BA3B1">· my agent</span></a>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <div style="font-size: 12px; color: #9BA3B1; padding: 0 8px 6px">My agents</div>
+        <a href="Agent.dc.html" style="display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 12px; border-radius: 10px; color: #E8EAEE; text-decoration: none">
+          <span style="width: 32px; height: 32px; border-radius: 10px; background: #10231F; border: 1px solid #2FD3B5; display: grid; place-items: center; color: #7BE8D3; font-weight: 600">N</span>
+          <span style="display: flex; flex-direction: column"><span style="font-weight: 500">Nora</span><span style="font-size: 12px; color: #9BA3B1">Running on this Mac</span></span>
+        </a>
+        <button type="button" style="min-height: 44px; padding: 0 12px; border: 1px dashed #343B48; border-radius: 10px; background: transparent; color: #9BA3B1; font: inherit; text-align: left; cursor: pointer">+ New agent</button>
+      </div>
+      <div style="margin-top: auto; padding: 12px; border-radius: 10px; background: #0E1014; font-size: 12px; color: #9BA3B1">
+        This device's key<br>
+        <span style="font-family: 'JetBrains Mono', monospace; color: #C9CED8">7F3A 91C2 · E0B4 4C21</span>
+      </div>
+    </nav>
+
+    <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 24px; border-bottom: 1px solid #262B35">
+        <div style="flex: 1 1 240px">
+          <h1 style="margin: 0; font-size: 17px; font-weight: 600"># Project</h1>
+          <div style="font-size: 12px; color: #9BA3B1">Ana, Vlad, Rareș, Janosch · agent Nora (Ana's)</div>
+        </div>
+        <a href="Call.dc.html" style="display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border-radius: 10px; background: #1A1E26; border: 1px solid #262B35; color: #E8EAEE; text-decoration: none">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2"></rect><path d="M16 10l5-3v10l-5-3"></path></svg>
+          Start call
+        </a>
+      </div>
+
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 18px; padding: 20px 24px; overflow: auto">
+        <div style="align-self: center; max-width: 560px; padding: 8px 14px; border-radius: 10px; background: #14171D; border: 1px solid #262B35; color: #9BA3B1; font-size: 13px; text-align: center">
+          Ana added <strong style="color: #C9CED8; font-weight: 500">Nora</strong> (Ana's agent). Nora can read messages from now on, not earlier ones.
+        </div>
+
+        <div style="display: flex; gap: 12px">
+          <span style="flex: none; width: 36px; height: 36px; border-radius: 50%; background: #3A2E4D; display: grid; place-items: center; font-weight: 600">V</span>
+          <div><div style="font-size: 13px"><strong style="font-weight: 600">Vlad</strong> <span style="color: #9BA3B1">14:03</span></div><p style="margin: 2px 0 0">The supplier confirmed the draft. Who has the signed contract?</p></div>
+        </div>
+        <div style="display: flex; gap: 12px">
+          <span style="flex: none; width: 36px; height: 36px; border-radius: 50%; background: #2B3550; display: grid; place-items: center; font-weight: 600">A</span>
+          <div><div style="font-size: 13px"><strong style="font-weight: 600">Ana</strong> <span style="color: #9BA3B1">14:04</span></div><p style="margin: 2px 0 0">I gave it to Nora this morning. Ask her.</p></div>
+        </div>
+        <div style="display: flex; gap: 12px">
+          <span style="flex: none; width: 36px; height: 36px; border-radius: 50%; background: #4A3426; display: grid; place-items: center; font-weight: 600">R</span>
+          <div><div style="font-size: 13px"><strong style="font-weight: 600">Rareș</strong> <span style="color: #9BA3B1">14:05</span></div><p style="margin: 2px 0 0"><span style="color: #7BE8D3">@Nora</span> what is the delivery deadline in the contract?</p></div>
+        </div>
+
+        <div style="display: flex; gap: 12px">
+          <span style="flex: none; width: 36px; height: 36px; border-radius: 10px; background: #10231F; border: 1px solid #2FD3B5; display: grid; place-items: center; color: #7BE8D3; font-weight: 600">N</span>
+          <div style="max-width: 620px; padding: 12px 14px; border-radius: 12px; background: #131C1E; border: 1px solid #1E3A35">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px"><strong style="font-weight: 600">Nora</strong><span style="padding: 1px 8px; border-radius: 999px; background: #10231F; color: #7BE8D3; font-size: 12px">agent · Ana's</span><span style="color: #9BA3B1">14:05</span></div>
+            <p style="margin: 6px 0 10px">Delivery is due by 15 March, with a 2% penalty for every week of delay.</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+              <a href="#" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; background: #1A1E26; border: 1px solid #262B35; color: #C9CED8; text-decoration: none; font-size: 12px">
+                <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>
+                contract.pdf · p.3
+              </a>
+              <button type="button" style="min-height: 32px; padding: 0 10px; border: none; border-radius: 8px; background: transparent; color: #9BA3B1; font: inherit; font-size: 12px; cursor: pointer">Used memory.recall · 1 source · 1.4 s ▾</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px">
+          <span style="flex: none; width: 36px; height: 36px; border-radius: 50%; background: #4A3426; display: grid; place-items: center; font-weight: 600">R</span>
+          <div style="max-width: 520px">
+            <div style="font-size: 13px"><strong style="font-weight: 600">Rareș</strong> <span style="color: #9BA3B1">14:06 · voice</span></div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 8px 12px; border-radius: 12px; background: #1A1E26">
+              <button type="button" aria-label="Play voice message" style="width: 36px; height: 36px; border-radius: 50%; border: none; background: #2FD3B5; color: #06201B; display: grid; place-items: center; cursor: pointer"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg></button>
+              <div aria-hidden="true" style="flex: 1; display: flex; align-items: center; gap: 3px; height: 28px"><span style="width: 3px; height: 10px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 18px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 26px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 14px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 22px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 8px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 20px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 12px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 24px; background: #5B6475; border-radius: 2px"></span><span style="width: 3px; height: 10px; background: #5B6475; border-radius: 2px"></span></div>
+              <span style="font-size: 12px; color: #9BA3B1">0:04</span>
+            </div>
+            <p style="margin: 6px 0 0; color: #C9CED8; font-size: 13px">“Is there a cap on the penalty?” <span style="color: #9BA3B1">· EN</span></p>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 12px">
+          <span style="flex: none; width: 36px; height: 36px; border-radius: 10px; background: #10231F; border: 1px solid #2FD3B5; display: grid; place-items: center; color: #7BE8D3; font-weight: 600">N</span>
+          <div style="max-width: 620px; padding: 12px 14px; border-radius: 12px; background: #131C1E; border: 1px solid #1E3A35">
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px"><strong style="font-weight: 600">Nora</strong><span style="padding: 1px 8px; border-radius: 999px; background: #10231F; color: #7BE8D3; font-size: 12px">agent · Ana's</span><span style="color: #9BA3B1">14:06 · voice reply</span></div>
+            <p style="margin: 6px 0 10px">Yes. Penalties stop at 10% of the order value.</p>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+              <a href="#" style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; background: #1A1E26; border: 1px solid #262B35; color: #C9CED8; text-decoration: none; font-size: 12px">contract.pdf · p.4</a>
+              <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; background: #10231F; color: #7BE8D3; font-size: 12px">voice to voice 1.8 s</span>
+              <span style="font-size: 12px; color: #9BA3B1">STT 0.4 · first token 0.6 · first audio 0.8</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <form style="display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-top: 1px solid #262B35">
+        <button type="button" aria-label="Attach a file" style="width: 44px; height: 44px; border-radius: 10px; border: 1px solid #262B35; background: #14171D; color: #C9CED8; display: grid; place-items: center; cursor: pointer"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12l-8.5 8.5a5 5 0 0 1-7-7L14 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 8"></path></svg></button>
+        <label for="msg" class="sr">Message Project</label>
+        <input id="msg" type="text" placeholder="Message # Project · type @ to ask an agent" style="flex: 1; min-width: 0; min-height: 44px; padding: 0 14px; border: 1px solid #262B35; border-radius: 10px; background: #14171D; color: #E8EAEE; font: inherit">
+        <button type="button" aria-label="Hold to talk" style="width: 44px; height: 44px; border-radius: 50%; border: none; background: #2FD3B5; color: #06201B; display: grid; place-items: center; cursor: pointer"><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0"></path><path d="M12 18v3"></path></svg></button>
+      </form>
+    </main>
+
+    <aside aria-label="What the relay sees" style="flex: 1 1 320px; max-width: 380px; display: flex; flex-direction: column; gap: 14px; padding: 16px; border-left: 1px solid #262B35; background: #14171D">
+      <div>
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">What the relay sees</h2>
+        <p style="margin: 4px 0 0; font-size: 12px; color: #9BA3B1">Ids, sizes and times. Never a key, never the text.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <sc-for list="{{envs}}" as="e" hint-placeholder-count="6">
+          <div style="padding: 10px 12px; border-radius: 10px; background: #0E1014; border: 1px solid #262B35">
+            <div style="display: flex; justify-content: space-between; font-size: 12px; color: #9BA3B1"><span>{{e.t}} · {{e.kind}}</span><span>{{e.size}}</span></div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #C9CED8; margin-top: 4px">chat {{e.chat}} · dev {{e.dev}}</div>
+            <div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #7C8597; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">{{e.ct}}</div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="margin-top: auto; padding: 12px; border-radius: 10px; background: #10231F; color: #7BE8D3; font-size: 13px">
+        Plaintext check on the relay store: 5 sentinel words, 0 found.
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {
+      envs: [
+        { t: '14:06:41', kind: 'msg', size: '1.2 KB', chat: '41ab…e2', dev: 'a9d0…77', ct: 'Hq3vT0pYw8Lz1nC4mKe9rB2xUf6sJd5aQ…' },
+        { t: '14:06:39', kind: 'blob_ref', size: '38 KB', chat: '41ab…e2', dev: 'a9d0…77', ct: 'pX7kLm2Qw9Rt4Zb1Nc8Vy5Hs0Jf3Dg6eA…' },
+        { t: '14:06:12', kind: 'blob_ref', size: '21 KB', chat: '41ab…e2', dev: 'c51e…04', ct: 'Wm4Tz8Kq1Lp6Rx3Ny9Bv2Hc7Js0Gf5Dd…' },
+        { t: '14:05:58', kind: 'msg', size: '0.9 KB', chat: '41ab…e2', dev: 'a9d0…77', ct: 'Zr2Nx7Vb4Lq9Tw1Km6Hp3Jc8Gs0Fd5Ae…' },
+        { t: '14:05:20', kind: 'msg', size: '0.6 KB', chat: '41ab…e2', dev: 'c51e…04', ct: 'Ld8Ks3Fq6Vz1Rw9Nt4Bm7Hy2Jp0Gc5Xe…' },
+        { t: '14:02:07', kind: 'key', size: '0.2 KB', chat: '41ab…e2', dev: '7f3a…c2', ct: 'sealed → device a9d0…77 (Nora), epoch 3' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
