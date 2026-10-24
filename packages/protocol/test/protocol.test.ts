@@ -47,7 +47,7 @@ describe("signal ops", () => {
 });
 
 describe("teammates protocol", () => {
-  it("fixes the wire shapes: reactions, replies, member history, agents, routines and the roster", () => {
+  it("fixes the wire shapes: reactions, replies, member history, agents, routines and the roster", async () => {
     expect(
       MessageBody.safeParse({ type: "reaction", target: "msg_0000001", emoji: "👍", op: "add" })
         .success,
