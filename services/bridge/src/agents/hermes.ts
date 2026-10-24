@@ -38,6 +38,13 @@ type ModelsConfig = {
   };
 };
 
+// One Hermes session per turn: Hermes keeps server-side history per session and applies only the
+// first turn's system prompt, which would hide newer chat context (new messages, image
+// descriptions). The bridge sends the compact context itself on every turn.
+function turnSession(agentId: string, chatId: string): string {
+  return `${agentId}:${chatId}:${Date.now().toString(36)}`;
+}
+
 export function llmTarget(): { baseUrl: string; model: string } {
   const cfg = parse(readFileSync(join(ROOT, "config", "models.yaml"), "utf8")) as ModelsConfig;
   const profile = process.env.LLM_PROFILE || cfg.llm.active_profile;
@@ -234,7 +241,7 @@ export class HermesRuntime implements AgentRuntime {
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${hermesApiKey(agent.id)}`,
-        "x-hermes-session-id": `${agent.id}:${chatId}`,
+        "x-hermes-session-id": turnSession(agent.id, chatId),
       },
       body: JSON.stringify({ model: "hermes-agent", messages }),
       signal: AbortSignal.timeout(180_000),
@@ -272,7 +279,7 @@ export class HermesRuntime implements AgentRuntime {
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${hermesApiKey(agent.id)}`,
-          "x-hermes-session-id": `${agent.id}:${chatId}`,
+          "x-hermes-session-id": turnSession(agent.id, chatId),
         },
         body: JSON.stringify({ model: "hermes-agent", messages, stream: true }),
         signal: AbortSignal.timeout(180_000),
