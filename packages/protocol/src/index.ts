@@ -228,6 +228,8 @@ export const Chat = z.object({
   members: z.array(ChatMember),
   topic: z.string().max(200).optional(),
   seed_key: z.string().max(40).optional(),
+  /** the newest epoch the bridge handed out; a key for a later epoch is not trusted */
+  key_epoch: z.number().int().nonnegative().optional(),
 });
 export type Chat = z.infer<typeof Chat>;
 export const CreateChatRequest = z.object({

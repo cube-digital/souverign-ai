@@ -146,14 +146,16 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
     );
     const agent = active ? await agentById(agentId) : undefined;
     if (!agent) return reply.code(404).send({ error: "not_found" });
-    // The chat owner may remove any agent; an agent's own owner may remove it; in a room any
-    // member may remove a workspace agent.
+    // The chat owner may remove any agent; an agent's own owner may remove it; in a room or a
+    // group any member may remove a workspace agent (symmetric with adding one, D-10).
     if (g.role !== "owner" && agent.owner_user_id !== g.userId) {
       const [chat] = await db.query<{ kind: string }>("select kind from sa.chats where id = $1", [
         g.chatId,
       ]);
       if (agent.scope === "personal") return reply.code(404).send({ error: "not_found" });
-      if (chat?.kind !== "room") return reply.code(403).send({ error: "forbidden" });
+      if (chat?.kind !== "room" && chat?.kind !== "group") {
+        return reply.code(403).send({ error: "forbidden" });
+      }
     }
     await relayAdmin.setMember({ chat_id: g.chatId, device_id: agent.device_id, op: "remove" });
     await db.query(
@@ -206,8 +208,9 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
           await relayAdmin.setMember({ chat_id: chatId, device_id: d.id, op: "add" });
         }
         await relayAdmin.setMember({ chat_id: chatId, device_id: agent.device_id, op: "add" });
+        // key_epoch 1: the user mints the DM's first key (epoch 1) without a claim.
         await db.query(
-          "insert into sa.chats (id, title, kind, created_by) values ($1, $2, 'dm', $3)",
+          "insert into sa.chats (id, title, kind, created_by, key_epoch) values ($1, $2, 'dm', $3, 1)",
           [chatId, agent.name, userId],
         );
         await db.query(

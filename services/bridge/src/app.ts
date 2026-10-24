@@ -82,7 +82,11 @@ export function buildApp({
       created_by: string;
       topic: string | null;
       seed_key: string | null;
-    }>("select id, title, kind, created_by, topic, seed_key from sa.chats where id = $1", [chatId]);
+      key_epoch: number;
+    }>(
+      "select id, title, kind, created_by, topic, seed_key, key_epoch from sa.chats where id = $1",
+      [chatId],
+    );
     if (!chat) return null;
     const members = await db.query<{
       member_type: "user" | "agent";
@@ -115,9 +119,10 @@ export function buildApp({
     const devices = await devicesOf(
       members.filter((m) => m.member_type === "user").map((m) => m.member_id),
     );
-    const { topic, seed_key, ...base } = chat;
+    const { topic, seed_key, key_epoch, ...base } = chat;
     return {
       ...base,
+      key_epoch: Number(key_epoch),
       ...(topic ? { topic } : {}),
       ...(seed_key ? { seed_key } : {}),
       members: members.map((m) => ({
@@ -322,12 +327,11 @@ export function buildApp({
     const kind = others.length === 1 ? "dm" : "group";
     // Relay first: a relay failure leaves no chat row, so the client can simply retry.
     for (const u of everyone) await relayFor(chatId, u, "add");
-    await db.query("insert into sa.chats (id, title, kind, created_by) values ($1, $2, $3, $4)", [
-      chatId,
-      body.data.title,
-      kind,
-      userId,
-    ]);
+    // key_epoch 1: the creator mints the chat's first key (epoch 1) without a claim.
+    await db.query(
+      "insert into sa.chats (id, title, kind, created_by, key_epoch) values ($1, $2, $3, $4, 1)",
+      [chatId, body.data.title, kind, userId],
+    );
     for (const u of everyone) {
       await db.query(
         "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, $3)",
