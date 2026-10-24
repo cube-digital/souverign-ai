@@ -7,6 +7,9 @@ import type {
   RecallHit,
 } from "../../src/memory/client.js";
 
+/** Must equal the separator in services/memory/src/sa_memory/store.py (delete_source). */
+export const PART_SEP = ".";
+
 type Entry = {
   namespace: string;
   kind: MemoryKind;
@@ -80,7 +83,7 @@ export class FakeMemory implements Memory {
       if (e.namespace !== req.namespace || e.source.type !== req.source_type) continue;
       const hit =
         e.source.id === req.source_id ||
-        (req.include_parts === true && e.source.id.startsWith(`${req.source_id}#`));
+        (req.include_parts === true && e.source.id.startsWith(`${req.source_id}${PART_SEP}`));
       if (hit) {
         this.entries.delete(key);
         n++;

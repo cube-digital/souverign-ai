@@ -11,13 +11,37 @@ export type ScopeChat = {
   kind: "dm" | "group" | "room";
   /** epoch ms of the agent's current membership; null when it is not an active member */
   agentJoinedAt: number | null;
+  /** epoch ms of the requester's (the 1:1 human's) join to this chat; absent = no extra bound */
+  requesterJoinedAt?: number | null | undefined;
+  /** the chat carries shared history (D-12): its early messages are visible to every member */
+  historyShared?: boolean | undefined;
   /** active human member ids */
   humans: string[];
   /** active agent member ids */
   agents: string[];
 };
 /** Chats where this agent and the 1:1 human are both active members, with the agent's joined_at. */
-export type SharedChat = { id: string; agentJoinedAt: number };
+export type SharedChat = {
+  id: string;
+  agentJoinedAt: number;
+  requesterJoinedAt?: number | null | undefined;
+  historyShared?: boolean | undefined;
+};
+
+/**
+ * Earliest message time the agent may recall from a chat for this requester: the later of the
+ * agent's join and the requester's join (mirrors chat_digest), except in D-12 shared history.
+ * Rounded up so it never lands before the real join.
+ */
+export function chatSince(c: {
+  agentJoinedAt: number;
+  requesterJoinedAt?: number | null | undefined;
+  historyShared?: boolean | undefined;
+}): number {
+  const agent = Math.ceil(c.agentJoinedAt);
+  if (c.historyShared || c.requesterJoinedAt == null) return agent;
+  return Math.max(agent, Math.ceil(c.requesterJoinedAt));
+}
 export type ScopeInput = {
   agent: ScopeAgent;
   chat: ScopeChat;
@@ -48,18 +72,29 @@ export function recallScopes(inp: ScopeInput): MemoryScope[] {
   const own = `agent:${agent.id}`;
   if (oneToOneHuman(agent, chat)) {
     const chats = [
-      { id: chat.id, agentJoinedAt: chat.agentJoinedAt },
+      {
+        id: chat.id,
+        agentJoinedAt: chat.agentJoinedAt,
+        requesterJoinedAt: chat.requesterJoinedAt,
+        historyShared: chat.historyShared,
+      },
       ...inp.shared.filter((s) => s.id !== chat.id),
     ];
-    const chatScopes = chats.map((c) => ({ namespace: `chat:${c.id}`, since_ts: c.agentJoinedAt }));
+    const chatScopes = chats.map((c) => ({ namespace: `chat:${c.id}`, since_ts: chatSince(c) }));
     const agentScope: MemoryScope =
       agent.scope === "personal"
         ? { namespace: own, origin_chat_ids: null }
-        : { namespace: own, origin_chat_ids: [null, ...chats.map((c) => c.id)] };
+        : // Workspace 1:1 (D-13): taught notes (null origin) are always readable here. A 1:1 is not
+          // a shared chat, so the `never`/`ask` rules of D-9 (which gate taught text in shared
+          // chats) do not apply; only notes from this DM and chats the person shares are added.
+          { namespace: own, origin_chat_ids: [null, ...chats.map((c) => c.id)] };
     return [agentScope, ...chatScopes];
   }
   return [
     { namespace: own, origin_chat_ids: taughtAllowed(inp) ? [chat.id, null] : [chat.id] },
-    { namespace: `chat:${chat.id}`, since_ts: chat.agentJoinedAt },
+    {
+      namespace: `chat:${chat.id}`,
+      since_ts: chatSince({ ...chat, agentJoinedAt: chat.agentJoinedAt }),
+    },
   ];
 }

@@ -40,7 +40,7 @@ def client(store: _FakeStore) -> TestClient:
     return TestClient(create_app(store, HashEmbedder(), TOKEN))
 
 
-RECALL = {"scopes": [{"namespace": "agent:nora"}], "query": "payment terms"}
+RECALL = {"scopes": [{"namespace": "agent:nora", "origin_chat_ids": None}], "query": "payment terms"}
 INGEST = {
     "namespace": "agent:nora",
     "kind": "knowledge",

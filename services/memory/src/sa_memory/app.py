@@ -89,6 +89,9 @@ def create_app(store: MemoryStore, embedder: Embedder, token: str) -> FastAPI:
     @app.post("/recall", dependencies=guard)
     def recall(body: RecallIn) -> dict:
         t0 = time.perf_counter()
+        for sc in body.scopes:
+            if sc.namespace.startswith("agent:") and "origin_chat_ids" not in sc.model_fields_set:
+                raise HTTPException(422, "agent scopes must state origin_chat_ids (null = all)")
         scopes = [Scope(s.namespace, s.origin_chat_ids, s.since_ts) for s in body.scopes]
         if not scopes:
             return {"results": []}
