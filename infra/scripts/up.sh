@@ -24,7 +24,7 @@ start() { # start <name> <cmd...>
 
 wait_http() { # wait_http <name> <url> <timeout_s>
   local name=$1 url=$2 timeout=$3 t=0
-  until curl -fsS -o /dev/null "$url"; do
+  until curl -fs -o /dev/null "$url"; do
     if ! alive "$name"; then
       echo "up: $name exited; last lines of .run/$name.log:" >&2
       tail -n 30 ".run/$name.log" >&2
@@ -49,7 +49,16 @@ wait_http whisper "http://127.0.0.1:$(uv run --quiet sa-models get stt.port)/" 6
 
 if command -v hermes >/dev/null 2>&1; then
   uv run --quiet python -m sa_infra.hermes_profile smoke
-  start hermes-smoke hermes -p sa-smoke gateway
+  # A running host gateway (the human's default profile) must rescan profiles/ (<=30 s) before
+  # it lets sa-smoke run standalone; until then `gateway run` exits at once. Retry.
+  for attempt in 1 2 3 4 5; do
+    start hermes-smoke hermes -p sa-smoke gateway run
+    sleep 3
+    alive hermes-smoke && break
+    if ((attempt == 5)); then break; fi
+    echo "up: hermes-smoke exited (attempt $attempt), retrying in 10s" >&2
+    sleep 10
+  done
   wait_http hermes-smoke "http://127.0.0.1:$HERMES_SMOKE_PORT/health" 60
 else
   echo "up: hermes not installed, smoke gateway skipped (see make prereqs)" >&2

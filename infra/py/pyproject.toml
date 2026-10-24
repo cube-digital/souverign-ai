@@ -20,6 +20,8 @@ live = [
   "mlx-audio",
   "misaki[en]",
   "piper-tts>=1.3",
+  "pillow", # EmbeddingGemma 2 processors import PIL and torchvision even for text-only use
+  "torchvision",
 ]
 
 [project.scripts]

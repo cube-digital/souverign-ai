@@ -19,3 +19,15 @@ disable:
   - homeassistant
   - todo
   - clarify
+  - video
+  - video_gen
+  - x_search
+  - stt
+  - kanban
+  - context_engine
+  - connections
+  - yuanbao
+  - computer_use
+  - a2a
+  - discord
+  - discord_admin

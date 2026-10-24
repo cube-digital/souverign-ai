@@ -7,9 +7,12 @@ import os
 import time
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+try:  # mcp 2.x renamed FastMCP to MCPServer
+    from mcp.server.mcpserver import MCPServer as _Server
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _Server
 
-mcp = FastMCP("sa-echo")
+mcp = _Server("sa-echo")
 LOG = Path(os.environ.get("SA_ECHO_LOG", ".run/mcp-echo.log"))
 
 
