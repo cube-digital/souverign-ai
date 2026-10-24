@@ -47,5 +47,5 @@ it("shows Wrong PIN for a bad PIN, then signs in with the right one", async () =
     token: "tok",
     user: ana,
   });
-  expect(await screen.findByText("Your chats appear here")).toBeTruthy();
+  expect(await screen.findByText("switch user")).toBeTruthy();
 });

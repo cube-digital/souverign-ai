@@ -39,14 +39,14 @@ export function Shell({
       <div className="flex min-h-0 flex-1 flex-wrap">
         <nav
           aria-label="Chats"
-          className="min-w-[260px] max-w-full flex-1 basis-[280px] border-r border-line bg-panel md:max-w-[300px] md:flex-none"
+          className="min-w-[260px] max-w-full flex min-h-0 flex-1 basis-[280px] flex-col overflow-hidden border-r border-line bg-panel md:max-w-[300px] md:flex-none md:basis-[280px]"
         >
           {nav}
         </nav>
-        <main className="min-w-0 flex-[3_1_360px]">{children}</main>
+        <main className="flex min-h-0 min-w-0 flex-[3_1_360px] flex-col">{children}</main>
         <aside
           aria-label="What the relay sees"
-          className="min-w-[320px] max-w-full flex-1 basis-[350px] border-l border-line bg-panel md:max-w-[380px] md:flex-none"
+          className="min-w-[320px] max-w-full flex min-h-0 flex-1 basis-[350px] flex-col overflow-hidden border-l border-line bg-panel md:max-w-[380px] md:flex-none md:basis-[350px]"
         >
           {aside}
         </aside>
