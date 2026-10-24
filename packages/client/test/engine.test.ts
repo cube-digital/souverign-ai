@@ -10,13 +10,21 @@ beforeAll(async () => {
   await cryptoReady();
 });
 
-async function makeDevice(relay: FakeRelay) {
+async function makeDevice(
+  relay: FakeRelay,
+  isTrustedKeySender?: (chatId: string, senderDevice: string) => Promise<boolean>,
+) {
   const keys = newDeviceKeys();
   const deviceId = deviceIdFor(keys.publicKey);
   const device = { deviceId, keys };
   const store = new MemoryKeyStore();
   await store.putDevice(device);
-  const engine = new ChatEngine({ link: relay.link(deviceId), store, device });
+  const engine = new ChatEngine({
+    link: relay.link(deviceId),
+    store,
+    device,
+    isTrustedKeySender,
+  });
   const seen: Msg[] = [];
   engine.onMessage((m) => seen.push(m as Msg));
   const pub: DevicePublic = { device_id: deviceId, public_key: keys.publicKey };
@@ -116,5 +124,38 @@ describe("ChatEngine", () => {
     expect(Array.from(uploaded)).not.toEqual(Array.from(bytes));
     const downloaded = await b.engine.downloadFile(body as never);
     expect(Array.from(downloaded)).toEqual(Array.from(bytes));
+  });
+
+  it("chat keys are accepted only from the chat owner's devices", async () => {
+    const relay = new FakeRelay();
+    const chatMine = randomId();
+    const chatOwned = randomId();
+    const owner = await makeDevice(relay);
+    const intruder = await makeDevice(relay);
+    const trusted = async (_chat: string, sender: string) => sender === owner.deviceId;
+    const me = await makeDevice(relay, trusted);
+    for (const c of [chatMine, chatOwned]) {
+      for (const d of [owner, intruder, me]) relay.addMember(c, d.deviceId);
+      await owner.engine.start([c]);
+      await intruder.engine.start([c]);
+      await me.engine.start([c]);
+    }
+
+    // a non-owner seals a key for this device: ignored, so its messages stay pending
+    await intruder.engine.createEpoch(chatMine, [intruder.pub, me.pub]);
+    await intruder.engine.sendText(chatMine, "from intruder");
+    // the owner's key is accepted: its messages decrypt
+    await owner.engine.createEpoch(chatOwned, [owner.pub, me.pub]);
+    await owner.engine.sendText(chatOwned, "from owner");
+
+    await expect.poll(() => me.seen.length).toBe(2);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const byChat = (chat: string) =>
+      me.seen.filter((m) => (m as Msg & { chatId: string }).chatId === chat);
+    expect(byChat(chatMine).map((m) => [m.status, m.body])).toEqual([["pending", null]]);
+    expect(byChat(chatOwned).map((m) => [m.status, m.body])).toEqual([
+      ["ok", { type: "text", text: "from owner" }],
+    ]);
   });
 });
