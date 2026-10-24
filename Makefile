@@ -44,4 +44,16 @@ seed: ## create the four demo users; prints their PINs once
 e2e: ## Playwright: four browsers chat end to end (self-contained, no docker)
 	pnpm --filter @sa/e2e run e2e
 
-.PHONY: help install check prereqs models up down smoke dev seed e2e
+demo: ## the whole demo: models, relay, bridge, simulated backend, built web app on http://127.0.0.1:5173
+	infra/scripts/demo.sh $(PROFILE)
+
+share: ## publish the demo on your tailnet over HTTPS (https://<mac>.<tailnet>.ts.net)
+	infra/scripts/share.sh on
+
+unshare: ## stop publishing the demo on the tailnet
+	infra/scripts/share.sh off
+
+agents-smoke: ## live: the DevOps bot answers on the local LLM through the app (needs make up + make dev)
+	pnpm --filter @sa/e2e run agents-smoke
+
+.PHONY: help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke

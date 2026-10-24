@@ -57,7 +57,8 @@ class Client {
       ws.once("open", res);
       ws.once("error", rej);
     });
-    c.send({ op: "hello", device_id: device });
+    // TODO(sp2): real ticket (T3/T5)
+    c.send({ op: "hello", device_id: device, ticket: "unsigned-placeholder" });
     await c.next((m) => m.op === "ready");
     return c;
   }
