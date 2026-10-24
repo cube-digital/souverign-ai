@@ -1,5 +1,5 @@
 import type { Agent, Prefs, Routine } from "@sa/protocol";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import {
   createRoutine,
   deleteRoutine,
@@ -17,7 +17,7 @@ const SELECT = "h-7 rounded-md border border-border-soft bg-bg-1 px-2 text-[13px
 
 export function RoutinesTab({ agent }: { agent: Agent }) {
   const { chats, user } = useSession();
-  const [list, setList] = useState<Routine[]>([]);
+  const [list, setList] = useState<Routine[] | null>(null);
   const [prefs, setPrefsState] = useState<Prefs>({ pause_all: false });
   const [error, setError] = useState<string | null>(null);
   const shared = chats.filter(
@@ -31,18 +31,20 @@ export function RoutinesTab({ agent }: { agent: Agent }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [r, p] = await Promise.all([fetchRoutines(agent.id), getPrefs()]);
-      setList(r);
-      setPrefsState(p);
-    } catch {
-      setError("Couldn't load routines.");
-    }
-  }, [agent.id]);
   useEffect(() => {
-    void load();
-  }, [load]);
+    let live = true;
+    setList(null);
+    Promise.all([fetchRoutines(agent.id), getPrefs()])
+      .then(([r, p]) => {
+        if (!live) return;
+        setList(r);
+        setPrefsState(p);
+      })
+      .catch(() => live && setError("Couldn't load routines."));
+    return () => {
+      live = false;
+    };
+  }, [agent.id]);
 
   const zone = prefs.time_zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const chatTitle = (id: string) => chats.find((c) => c.id === id)?.title ?? "";
@@ -50,11 +52,11 @@ export function RoutinesTab({ agent }: { agent: Agent }) {
 
   const pause = (r: Routine) =>
     updateRoutine(r.id, !r.paused)
-      .then((u) => setList((l) => l.map((x) => (x.id === r.id ? u : x))))
+      .then((u) => setList((l) => (l ?? []).map((x) => (x.id === r.id ? u : x))))
       .catch(fail("Couldn't update the routine."));
   const remove = (r: Routine) =>
     deleteRoutine(r.id)
-      .then(() => setList((l) => l.filter((x) => x.id !== r.id)))
+      .then(() => setList((l) => (l ?? []).filter((x) => x.id !== r.id)))
       .catch(fail("Couldn't delete the routine."));
   const pauseAll = (next: boolean) =>
     setPrefs({ ...prefs, pause_all: next })
@@ -74,7 +76,7 @@ export function RoutinesTab({ agent }: { agent: Agent }) {
         time,
         prompt: prompt.trim(),
       });
-      setList((l) => [...l, created]);
+      setList((l) => [...(l ?? []), created]);
       setPrompt("");
     } catch {
       setError("Couldn't create the routine.");
@@ -98,9 +100,10 @@ export function RoutinesTab({ agent }: { agent: Agent }) {
         />
         <span aria-hidden="true">Pause all my proactive posts</span>
       </div>
-      {list.length === 0 && <EmptyState>No routines yet.</EmptyState>}
+      {list === null && !error && <EmptyState>Loading routines…</EmptyState>}
+      {list?.length === 0 && <EmptyState>No routines yet.</EmptyState>}
       <ul className="flex flex-col gap-2">
-        {list.map((r) => (
+        {(list ?? []).map((r) => (
           <li
             key={r.id}
             className="flex items-center gap-3 rounded-lg border border-border-soft p-2 text-[13px]"
@@ -114,9 +117,18 @@ export function RoutinesTab({ agent }: { agent: Agent }) {
                 <p className="text-[12px] text-text-2">Workspace · anyone can pause</p>
               )}
             </div>
-            <Toggle checked={r.paused} onChange={() => void pause(r)} label="Pause routine" />
+            <Toggle
+              checked={r.paused}
+              onChange={() => void pause(r)}
+              label={`Pause routine: ${r.prompt}`}
+            />
             {r.kind === "routine" && (
-              <Button size="sm" variant="danger" onClick={() => void remove(r)}>
+              <Button
+                size="sm"
+                variant="danger"
+                aria-label={`Delete routine: ${r.prompt}`}
+                onClick={() => void remove(r)}
+              >
                 Delete
               </Button>
             )}

@@ -1,4 +1,5 @@
 import type { Agent } from "@sa/protocol";
+import { useMemo } from "react";
 import { EmptyState } from "../ds";
 import { useSession } from "../state/session";
 
@@ -8,13 +9,17 @@ const MAX = 20;
 export function ActivityTab({ agent }: { agent: Agent }) {
   const { chats, messages } = useSession();
   const title = (id: string) => chats.find((c) => c.id === id)?.title ?? "";
-  const rows = Object.values(messages)
-    .flat()
-    .filter(
-      (m) => m.senderDevice === agent.device_id && m.status === "ok" && m.body?.type === "text",
-    )
-    .sort((a, b) => b.ts - a.ts)
-    .slice(0, MAX);
+  const rows = useMemo(
+    () =>
+      Object.values(messages)
+        .flat()
+        .filter(
+          (m) => m.senderDevice === agent.device_id && m.status === "ok" && m.body?.type === "text",
+        )
+        .sort((a, b) => b.ts - a.ts)
+        .slice(0, MAX),
+    [messages, agent.device_id],
+  );
   if (rows.length === 0) return <EmptyState>No recent replies yet.</EmptyState>;
   return (
     <ul className="flex flex-col gap-2">

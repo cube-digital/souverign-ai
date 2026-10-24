@@ -29,7 +29,7 @@ function Overview({ agent }: { agent: Agent }) {
   });
   async function open(prompt: string) {
     const dm = await agentDm(agent.id);
-    navigate(`/c/${encodeURIComponent(dm.id)}`, { state: { prompt } });
+    navigate(`/c/${encodeURIComponent(dm.id)}`, { state: { compose: { text: prompt } } });
   }
   return (
     <div className="flex flex-col gap-4 text-[13px]">
@@ -103,9 +103,10 @@ export function AgentProfilePage() {
         value={tab}
         label="Agent"
         panelId="agent-panel"
-        onChange={(id) => setParams(id === "overview" ? {} : { tab: id })}
+        idPrefix="agent-tab"
+        onChange={(id) => setParams(id === "overview" ? {} : { tab: id }, { replace: true })}
       />
-      <div role="tabpanel" id="agent-panel">
+      <div role="tabpanel" id="agent-panel" aria-labelledby={`agent-tab-${tab}`} tabIndex={0}>
         {tab === "overview" && <Overview agent={agent} />}
         {tab === "activity" && <ActivityTab agent={agent} />}
         {tab === "routines" && <RoutinesTab agent={agent} />}

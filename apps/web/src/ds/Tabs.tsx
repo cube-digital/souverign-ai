@@ -9,14 +9,18 @@ export function Tabs<T extends string>({
   onChange,
   label,
   panelId,
+  idPrefix,
 }: {
   tabs: { id: T; label: string }[];
   value: T;
   onChange: (id: T) => void;
   label: string;
   panelId?: string;
+  /** stable id prefix so a panel can reference its tab with aria-labelledby */
+  idPrefix?: string;
 }) {
-  const base = useId();
+  const auto = useId();
+  const base = idPrefix ?? auto;
   const root = useRef<HTMLDivElement>(null);
   const onKey = (e: KeyboardEvent) => {
     const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;

@@ -38,7 +38,13 @@ export function CreateAgentDialog({
   return (
     <Modal title="New agent" onClose={onClose} busy={busy}>
       <form onSubmit={submit} className="flex flex-col gap-3">
-        <Input label="Name" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
+        <Input
+          label="Name"
+          data-autofocus
+          value={name}
+          maxLength={40}
+          onChange={(e) => setName(e.target.value)}
+        />
         <div className="flex flex-col gap-1">
           <label htmlFor="new-agent-template" className="text-[12px] text-text-2">
             Template

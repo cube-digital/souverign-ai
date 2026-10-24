@@ -1,6 +1,6 @@
 import type { Agent } from "@sa/protocol";
 import { ROSTER } from "@sa/protocol/roster";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { agentDm, agents as fetchAgents } from "../api";
 import { Button, EmptyState } from "../ds";
@@ -10,28 +10,28 @@ import { AgentCard } from "./AgentCard";
 import { CreateAgentDialog } from "./CreateAgentDialog";
 
 export function AgentsDirectoryPage() {
-  const { chats, engine, refreshChats } = useSession();
+  const { chats, engine, refreshChats, user } = useSession();
   const navigate = useNavigate();
-  const [list, setList] = useState<Agent[]>([]);
+  const [list, setList] = useState<Agent[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setList(await fetchAgents());
-    } catch {
-      setError("Couldn't load agents.");
-    }
-  }, []);
   useEffect(() => {
-    void load();
-  }, [load]);
+    let live = true;
+    fetchAgents()
+      .then((l) => live && setList(l))
+      .catch(() => live && setError("Couldn't load agents."));
+    return () => {
+      live = false;
+    };
+  }, []);
 
+  const loaded = list ?? [];
   const workspace = ROSTER.flatMap((r) => {
-    const a = list.find((x) => x.roster_id === r.id);
+    const a = loaded.find((x) => x.roster_id === r.id);
     return a ? [a] : [];
   });
-  const personal = list.filter((a) => a.owner_user_id !== null && !a.roster_id);
+  const personal = loaded.filter((a) => a.owner_user_id === user.id && !a.roster_id);
 
   const targets = (a: Agent) =>
     chats
@@ -48,10 +48,10 @@ export function AgentsDirectoryPage() {
   }
   async function add(a: Agent, chatId: string) {
     const chat = chats.find((c) => c.id === chatId);
-    if (!chat) return;
+    if (!chat || !engine) return;
     try {
       await addAgentWithKey({
-        engine: engine as never,
+        engine,
         chat,
         refresh: refreshChats,
         agent: a,
@@ -67,13 +67,14 @@ export function AgentsDirectoryPage() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 p-4">
+      <h1 className="text-[15px] font-semibold text-text-0">Agents</h1>
       {error && (
         <p role="alert" className="text-[12px] text-danger">
           {error}
         </p>
       )}
       <section aria-label="Workspace agents" className="flex flex-col gap-2">
-        <h1 className="text-[15px] font-semibold text-text-0">Workspace agents</h1>
+        <h2 className="text-[15px] font-semibold text-text-0">Workspace agents</h2>
         <div className="grid gap-3 sm:grid-cols-2">{workspace.map(card)}</div>
       </section>
       <section aria-label="Your agents" className="flex flex-col gap-2">
@@ -83,7 +84,8 @@ export function AgentsDirectoryPage() {
             + New agent
           </Button>
         </div>
-        {personal.length === 0 && <EmptyState>You have no agents yet.</EmptyState>}
+        {list === null && !error && <EmptyState>Loading agents…</EmptyState>}
+        {list !== null && personal.length === 0 && <EmptyState>You have no agents yet.</EmptyState>}
         <div className="grid gap-3 sm:grid-cols-2">{personal.map(card)}</div>
       </section>
       {creating && (
@@ -91,7 +93,7 @@ export function AgentsDirectoryPage() {
           onClose={() => setCreating(false)}
           onCreated={(a) => {
             setCreating(false);
-            setList((l) => [...l, a]);
+            setList((l) => [...(l ?? []), a]);
           }}
         />
       )}
