@@ -4,8 +4,10 @@ const trustedIn = (list: Chat[], chatId: string, senderDevice: string, epoch?: n
   const chat = list.find((c) => c.id === chatId);
   if (!chat) return false;
   // Only an epoch the bridge handed out (claimed) can carry a key: with first-key-wins a member
-  // could otherwise plant keys for future epochs.
-  if (epoch !== undefined && epoch > (chat.key_epoch ?? 0)) return false;
+  // could otherwise plant keys for future epochs. A key_epoch of 0 (or none) is a legacy chat that
+  // never saw a claim: no bound until its first claim.
+  const bound = chat.key_epoch ?? 0;
+  if (epoch !== undefined && bound > 0 && epoch > bound) return false;
   return chat.members.some(
     (m) => m.member_type === "user" && m.devices.some((d) => d.device_id === senderDevice),
   );

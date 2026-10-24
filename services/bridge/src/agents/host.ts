@@ -315,13 +315,14 @@ export class AgentHost implements AgentHostApi {
       store,
       device,
       isTrustedKeySender: async (chatId, sender, epoch) => {
-        // Only an epoch the bridge handed out (claimed) can carry a key.
+        // Only an epoch the bridge handed out (claimed) can carry a key; key_epoch 0 is a legacy
+        // chat that never saw a claim, so it is not bounded until its first claim.
         const rows = await db.query(
           `select d.id from sa.devices d
            join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id
            join sa.chats c on c.id = m.chat_id
            where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null
-             and ($3::int is null or $3::int <= c.key_epoch)`,
+             and ($3::int is null or c.key_epoch = 0 or $3::int <= c.key_epoch)`,
           [sender, chatId, epoch ?? null],
         );
         return rows.length > 0;

@@ -80,6 +80,7 @@ function heldLink(base: RelayLink) {
 /**
  * Key trust as everywhere else: the sender device belongs to an active human member of the chat,
  * and the epoch is one the bridge handed out (claimed), so no member can pre-send future keys.
+ * key_epoch 0 is a legacy chat that never saw a claim: unbounded until its first claim.
  */
 export const humanMemberDevice =
   (db: Db) =>
@@ -90,7 +91,7 @@ export const humanMemberDevice =
          join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id
          join sa.chats c on c.id = m.chat_id
          where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null
-           and ($3::int is null or $3::int <= c.key_epoch)`,
+           and ($3::int is null or c.key_epoch = 0 or $3::int <= c.key_epoch)`,
         [senderDevice, chatId, epoch ?? null],
       )
     ).length > 0;

@@ -1,6 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { EchoRuntime } from "../src/agents/echo.js";
 import { makeCatchup } from "../src/proactive/catchup.js";
+import { humanMemberDevice } from "../src/workspace/custodian.js";
 import {
   auth,
   createWorld,
@@ -100,4 +101,31 @@ it("a new human chat starts at key_epoch 1 and the next claim hands out epoch 2"
     payload: { min: 2 },
   });
   expect(claim.json()).toEqual({ epoch: 2 });
+}, 20000);
+
+it("a legacy chat that never saw a claim (key_epoch 0) still accepts an epoch-3 key", async () => {
+  w = await createWorld(new EchoRuntime(), ["ana"]);
+  const ana = await person(w, "ana");
+  const ops = await insertWorkspaceAgent(w, {
+    id: "ag-ops",
+    name: "Ops",
+    rosterId: "ops",
+    template: "ops",
+  });
+  const dm = await openDm(w, ana.token, ops.id);
+  await w.db.query("update sa.chats set key_epoch = 0 where id = $1", [dm.id]);
+  expect(await humanMemberDevice(w.db)(dm.id, ana.deviceId, 3)).toBe(true);
+
+  await ana.engine.start([dm.id]);
+  expect(
+    await ana.engine.createEpoch(
+      dm.id,
+      dm.members.flatMap((m) => m.devices),
+      3,
+    ),
+  ).toBe(3);
+  await ana.engine.sendText(dm.id, "still there?");
+
+  await until(() => textsFrom(ana, ops.device_id).length > 0);
+  expect(textsFrom(ana, ops.device_id).map(textOf).join(" ")).toContain("still there?");
 }, 20000);
