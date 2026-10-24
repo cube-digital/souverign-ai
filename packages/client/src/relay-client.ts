@@ -51,7 +51,9 @@ export class RelayClient implements RelayLink {
         this.setStatus("connecting");
         const ws = new this.Ws(this.opts.url);
         this.ws = ws;
-        ws.onopen = () => this.raw({ op: "hello", device_id: this.opts.deviceId });
+        ws.onopen = () =>
+          // TODO(sp2): real ticket (T3/T5)
+          this.raw({ op: "hello", device_id: this.opts.deviceId, ticket: "unsigned-placeholder" });
         ws.onmessage = (ev: MessageEvent) => {
           let msg: RelayOp;
           try {

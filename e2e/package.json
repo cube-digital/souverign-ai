@@ -4,9 +4,14 @@
   "type": "module",
   "scripts": {
     "e2e": "playwright test",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "agents-smoke": "tsx live/agents-smoke.ts"
   },
   "devDependencies": {
-    "@playwright/test": "^1.64.1"
+    "@playwright/test": "^1.64.1",
+    "@sa/client": "workspace:^",
+    "@sa/crypto": "workspace:^",
+    "@sa/protocol": "workspace:^",
+    "tsx": "^4.23.15"
   }
 }

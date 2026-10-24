@@ -28,7 +28,7 @@ export const Envelope = z
 export type Envelope = z.infer<typeof Envelope>;
 
 export const ClientOp = z.discriminatedUnion("op", [
-  z.object({ op: z.literal("hello"), device_id: Id }),
+  z.object({ op: z.literal("hello"), device_id: Id, ticket: z.string().min(10).max(512) }),
   z.object({ op: z.literal("send"), env: Envelope }),
   z.object({ op: z.literal("sync"), chat_id: Id, since: z.number().int().nonnegative() }),
   z.object({ op: z.literal("blob_put"), id: Id, chat_id: Id, data: B64 }),
@@ -42,8 +42,13 @@ export const ErrorCode = z.enum([
   "not_member",
   "too_large",
   "not_found",
+  "bad_ticket",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
+
+export const TICKET_TTL_MS = 12 * 60 * 60 * 1000;
+export const RelayTicketRequest = z.object({ device_id: Id });
+export const RelayTicketResponse = z.object({ ticket: z.string(), expires_at: z.number().int() });
 
 export const RelayOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("ready"), device_id: Id }),
@@ -87,9 +92,32 @@ export const RelayRecentRow = z.object({
 });
 export type RelayRecentRow = z.infer<typeof RelayRecentRow>;
 
+/** One step of an agent's reasoning trace, carried inside the encrypted message. */
+export const TraceStep = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("thinking"), text: z.string().max(4000) }),
+  z.object({
+    kind: z.literal("tool"),
+    name: z.string().max(64),
+    args: z.string().max(500),
+    result: z.string().max(1500),
+    ms: z.number().int().nonnegative(),
+  }),
+]);
+export type TraceStep = z.infer<typeof TraceStep>;
+
 /** The plaintext inside a "msg" envelope. */
 export const MessageBody = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), text: z.string().min(1).max(8000) }),
+  z.object({
+    type: z.literal("text"),
+    text: z.string().min(1).max(8000),
+    meta: z
+      .object({
+        tools: z.array(z.string().max(64)).max(20).optional(),
+        ms: z.number().int().nonnegative().optional(),
+        trace: z.array(TraceStep).max(30).optional(),
+      })
+      .optional(),
+  }),
   z.object({
     type: z.literal("file"),
     blob_id: Id,
@@ -121,6 +149,7 @@ export const ChatMember = z.object({
   member_type: z.enum(["user", "agent"]),
   member_id: z.string(),
   display_name: z.string(),
+  owner_display_name: z.string().optional(),
   role: z.enum(["owner", "member"]),
   devices: z.array(DevicePublic),
 });
@@ -138,6 +167,32 @@ export const CreateChatRequest = z.object({
   member_user_ids: z.array(z.string()).max(16),
 });
 export const AddMemberRequest = z.object({ user_id: z.string().min(1) });
+
+export const AgentTemplate = z.enum(["general", "devops", "qa"]);
+export type AgentTemplate = z.infer<typeof AgentTemplate>;
+export const AgentStatus = z.enum(["stopped", "starting", "running", "error"]);
+export const Agent = z.object({
+  id: z.string(),
+  name: z.string(),
+  template: AgentTemplate,
+  soul: z.string(),
+  owner_user_id: z.string(),
+  device_id: Id,
+  status: AgentStatus,
+});
+export type Agent = z.infer<typeof Agent>;
+export const CreateAgentRequest = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(40)
+    .regex(/^[\p{L}\p{N} _-]+$/u),
+  template: AgentTemplate,
+  soul: z.string().max(2000).default(""),
+});
+export const UpdateAgentRequest = z.object({ soul: z.string().max(2000) });
+export const AddAgentRequest = z.object({ agent_id: z.string().min(1) });
 export const ApiError = z.object({
   error: z.string(),
   missing_devices: z.array(z.string()).optional(),
