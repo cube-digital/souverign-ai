@@ -35,6 +35,8 @@ def migrate(dsn: str) -> None:
 
 
 def run() -> None:
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     token = os.environ.get("MEMORY_TOKEN")
     if not token:
         print("MEMORY_TOKEN is not set", file=sys.stderr)

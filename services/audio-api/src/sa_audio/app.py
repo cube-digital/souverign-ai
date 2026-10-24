@@ -86,6 +86,8 @@ def create_app(
 
     @app.post("/v1/audio/speech", dependencies=[Depends(auth)])
     async def speech(req: SpeechRequest) -> Response:
+        if req.voice is not None and req.voice not in router.allowed_voices():
+            raise HTTPException(status_code=422, detail="unknown voice")
         parts = sentences.split(req.input) or [req.input.strip()]
         engine = router.engine(req.language, req.voice)
 

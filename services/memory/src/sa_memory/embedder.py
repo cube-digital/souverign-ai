@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from typing import Literal, Protocol
 
 import numpy as np
@@ -49,6 +50,7 @@ class EmbeddingGemma:
     def __init__(self, cfg: EmbeddingConfig | None = None) -> None:
         self._cfg = cfg or load_embedding_config()
         self._model = None
+        self._lock = threading.Lock()
 
     @property
     def loaded(self) -> bool:
@@ -80,8 +82,9 @@ class EmbeddingGemma:
                 self._cfg.document_prompt.format(title=title or "none") + t
                 for t, title in zip(texts, ts, strict=True)
             ]
-        model = self._load()
-        # prompts are applied above, so no prompt_name is passed
-        raw = model.encode(inputs, convert_to_numpy=True, normalize_embeddings=False)
+        with self._lock:
+            model = self._load()
+            # prompts are applied above, so no prompt_name is passed
+            raw = model.encode(inputs, convert_to_numpy=True, normalize_embeddings=False)
         m = np.asarray(raw, dtype=np.float32)[:, : self._cfg.mrl_dim]
         return _normalize(m)

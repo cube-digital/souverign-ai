@@ -17,7 +17,7 @@ class TtsEngine(Protocol):
         ...
 
 
-_kokoro_lock = threading.Lock()
+_kokoro_lock = threading.RLock()  # one lock for the shared model: load and generate
 _kokoro_models: dict[str, Any] = {}
 
 
@@ -55,9 +55,9 @@ class KokoroEngine:
         self._lock = threading.Lock()
 
     def synth(self, text: str) -> np.ndarray:
-        model = _kokoro_model(self.repo)
         parts: list[np.ndarray] = []
-        with self._lock:
+        with _kokoro_lock:
+            model = _kokoro_model(self.repo)
             for result in model.generate(text=text, voice=self.voice, lang_code=self.lang_code):
                 parts.append(np.asarray(result.audio, dtype=np.float32).reshape(-1))
         if not parts:
@@ -114,6 +114,12 @@ class Router:
         if lang in PIPER_LANGS:
             return {"engine": "piper", "voice": Path(self.cfg["tts"]["piper"]["voices"][lang]).name}
         return {"engine": "kokoro", "voice": self.cfg["tts"]["kokoro"]["languages"][lang]["voice"]}
+
+    def allowed_voices(self) -> set[str]:
+        tts = self.cfg["tts"]
+        names = {e["voice"] for e in tts["kokoro"]["languages"].values()}
+        names |= {Path(v).name for v in tts["piper"]["voices"].values()}
+        return names
 
     def engine(self, language: str | None, voice: str | None = None) -> TtsEngine:
         lang = self.resolve(language)

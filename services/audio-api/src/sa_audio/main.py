@@ -11,6 +11,8 @@ from sa_audio.tts import Router
 
 
 def run() -> None:
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     token = os.environ.get("AUDIO_TOKEN")
     if not token:
         print('{"event": "startup_failed", "reason": "AUDIO_TOKEN unset"}', file=sys.stderr)

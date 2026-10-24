@@ -28,6 +28,9 @@ class FakeRouter:
     def voices(self) -> dict[str, Any]:
         return {}
 
+    def allowed_voices(self) -> set[str]:
+        return {"af_heart"}
+
 
 def _app(handler: Any) -> TestClient:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -78,3 +81,11 @@ def test_streaming_speech_sends_one_ndjson_line_per_sentence_in_order() -> None:
     ]
     data, rate = sf.read(io.BytesIO(base64.b64decode(lines[0]["wav_b64"])))
     assert rate == 8000 == lines[0]["sample_rate"] and len(data) == len("First one.") * 10
+
+
+def test_speech_rejects_voice_outside_the_configured_set() -> None:
+    app = _app(lambda r: httpx.Response(200))
+    bad = app.post("/v1/audio/speech", json={"input": "Hi.", "voice": "../x"}, headers=H)
+    assert bad.status_code == 422
+    ok = app.post("/v1/audio/speech", json={"input": "Hi.", "voice": "af_heart"}, headers=H)
+    assert ok.status_code == 200

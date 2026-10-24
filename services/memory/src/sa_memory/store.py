@@ -135,7 +135,8 @@ class PgVectorStore:
             f"select {_COLS}, 1 - (embedding <=> %s::vector) as score from sa.memory_chunks "
             f"where {where} order by embedding <=> %s::vector limit %s"
         )
-        with psycopg.connect(self._dsn) as conn:
+        with psycopg.connect(self._dsn) as conn, conn.transaction():
+            conn.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
             rows = conn.execute(sql, [q, *params, q, limit]).fetchall()
         return self._hits(rows)
 
