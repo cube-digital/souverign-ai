@@ -220,6 +220,7 @@ export class HermesRuntime implements AgentRuntime {
   private bin = (): string => process.env.HERMES_BIN ?? "hermes";
 
   private portLock: Promise<unknown> = Promise.resolve();
+  private startLock: Promise<unknown> = Promise.resolve();
 
   /** Serialized so concurrent pre-warms cannot pick the same port. */
   private allocatePort(agentId: string): Promise<number> {
@@ -256,9 +257,13 @@ export class HermesRuntime implements AgentRuntime {
   ensureStarted(agent: RuntimeAgent): Promise<void> {
     const running = this.starting.get(agent.id);
     if (running) return running;
-    const p = this.start(agent).finally(() => this.starting.delete(agent.id));
-    this.starting.set(agent.id, p);
-    return p;
+    // One gateway starts at a time: Hermes refuses a gateway while another is still starting on
+    // the host ("has not published its served set yet"), so six at once leave three in error.
+    const p = this.startLock.then(() => this.start(agent));
+    this.startLock = p.catch(() => undefined);
+    const tracked = p.finally(() => this.starting.delete(agent.id));
+    this.starting.set(agent.id, tracked);
+    return tracked;
   }
 
   private async start(agent: RuntimeAgent): Promise<void> {

@@ -1,4 +1,4 @@
-// Live smoke: the DevOps bot answers a monitoring question on the local LLM, through the app.
+// Live smoke: the workspace Ops agent answers a monitoring question on the local LLM, through the app.
 // Needs `make up` and `make dev` running, and the PIN of `ana` in .run/demo-pins.txt.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -59,9 +59,8 @@ await client.connect();
 const engine = new ChatEngine({ link: client, store, device: { deviceId, keys } });
 
 const mine = await api<Agent[]>("/agents");
-const ops =
-  mine.find((a) => a.name === "Ops") ??
-  (await api<Agent>("/agents", "POST", { name: "Ops", template: "devops", soul: "" }));
+const ops = mine.find((a) => a.name === "Ops" && a.scope === "workspace");
+if (!ops) fail("no workspace Ops agent (start `make dev` and let the roster seed)");
 
 const directory = await api<{ id: string }[]>("/directory");
 const other = directory.find((p) => p.id !== login.user.id);
@@ -74,14 +73,23 @@ chat = await api<Chat>(`/chats/${encodeURIComponent(chat.id)}/agents`, "POST", {
   agent_id: ops.id,
 });
 await engine.start([chat.id]);
+// The bridge only trusts keys of an epoch it handed out: claim one first.
+const claim = await api<{ epoch: number }>(`/chats/${encodeURIComponent(chat.id)}/epoch`, "POST", {
+  min: (await engine.latestEpoch(chat.id)) + 1,
+});
 await engine.createEpoch(
   chat.id,
   chat.members.flatMap((m) => m.devices),
+  claim.epoch,
 );
 
+let questionId = "";
 const reply = new Promise<ChatMessage>((resolve) => {
   engine.onMessage((m) => {
-    if (m.status === "ok" && m.body?.type === "text" && m.senderDevice !== deviceId) resolve(m);
+    if (m.status !== "ok" || m.body?.type !== "text") return;
+    if (m.senderDevice === deviceId) {
+      if (m.body.text === QUESTION) questionId = m.id;
+    } else if (questionId && m.body.reply_to === questionId) resolve(m);
   });
 });
 const started = Date.now();
@@ -102,5 +110,7 @@ if (!tools.some((t) => t.includes("cluster_health") || t.includes("metric_trend"
   fail("meta.tools has neither cluster_health nor metric_trend");
 }
 if (!got.body.text.includes("node-3")) fail("the reply does not mention node-3");
+if (got.body.reply_to !== questionId) fail("the reply is not in the question's thread");
+if (got.body.meta?.local !== true) fail("meta.local is not true");
 console.log("agents-smoke OK");
 process.exit(0);
