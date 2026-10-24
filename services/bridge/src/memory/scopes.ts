@@ -81,20 +81,21 @@ export function recallScopes(inp: ScopeInput): MemoryScope[] {
       ...inp.shared.filter((s) => s.id !== chat.id),
     ];
     const chatScopes = chats.map((c) => ({ namespace: `chat:${c.id}`, since_ts: chatSince(c) }));
-    const agentScope: MemoryScope =
-      agent.scope === "personal"
-        ? { namespace: own, origin_chat_ids: null }
-        : // Workspace 1:1 (D-13): taught notes (null origin) are always readable here. A 1:1 is not
-          // a shared chat, so the `never`/`ask` rules of D-9 (which gate taught text in shared
-          // chats) do not apply; only notes from this DM and chats the person shares are added.
-          { namespace: own, origin_chat_ids: [null, ...chats.map((c) => c.id)] };
-    return [agentScope, ...chatScopes];
+    if (agent.scope === "personal")
+      return [{ namespace: own, origin_chat_ids: null }, ...chatScopes];
+    // Workspace 1:1 (D-13): taught notes (null origin) are always readable here. A 1:1 is not a
+    // shared chat, so the `never`/`ask` rules of D-9 (which gate taught text in shared chats) do
+    // not apply; notes learned in this DM and in chats the person shares follow those chats' bounds.
+    return [
+      { namespace: own, origin_chat_ids: [null] },
+      ...chats.map((c) => ({ namespace: own, origin_chat_ids: [c.id], since_ts: chatSince(c) })),
+      ...chatScopes,
+    ];
   }
+  const since = chatSince({ ...chat, agentJoinedAt: chat.agentJoinedAt });
   return [
-    { namespace: own, origin_chat_ids: taughtAllowed(inp) ? [chat.id, null] : [chat.id] },
-    {
-      namespace: `chat:${chat.id}`,
-      since_ts: chatSince({ ...chat, agentJoinedAt: chat.agentJoinedAt }),
-    },
+    { namespace: own, origin_chat_ids: [chat.id], since_ts: since },
+    ...(taughtAllowed(inp) ? [{ namespace: own, origin_chat_ids: [null] }] : []),
+    { namespace: `chat:${chat.id}`, since_ts: since },
   ];
 }
