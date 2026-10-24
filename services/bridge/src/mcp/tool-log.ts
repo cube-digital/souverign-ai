@@ -1,9 +1,11 @@
+import { EventEmitter } from "node:events";
 import type { TraceStep } from "@sa/protocol";
 
 type ToolStep = Extract<TraceStep, { kind: "tool" }>;
 
 /** Per-agent record of MCP tool calls, so the reply can carry its trace. */
-export class ToolLog {
+export class ToolLog extends EventEmitter {
+  /** Emits `tool` (agentId, name) for every recorded call. */
   private steps = new Map<string, ToolStep[]>();
 
   private chats = new Map<string, string>();
@@ -29,6 +31,7 @@ export class ToolLog {
       result: step.result.slice(0, 1500),
       ms: Math.max(0, Math.round(step.ms)),
     });
+    this.emit("tool", agentId, step.name.slice(0, 64));
   }
 
   end(agentId: string): TraceStep[] {
