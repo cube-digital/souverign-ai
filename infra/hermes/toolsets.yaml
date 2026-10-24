@@ -1,0 +1,21 @@
+# Built-in Hermes toolsets disabled for every Sovereign Agents profile (spec amendment 8).
+# Agents get the bridge's MCP tools only. T6 checks this list against the pinned Hermes
+# version: any built-in toolset that version lists and this file misses must be added.
+disable:
+  - terminal
+  - file
+  - code_execution
+  - browser
+  - web
+  - vision
+  - image_gen
+  - tts
+  - memory
+  - session_search
+  - skills
+  - delegation
+  - cronjob
+  - messaging
+  - homeassistant
+  - todo
+  - clarify
