@@ -34,6 +34,29 @@ describe("hermes port allocation", () => {
   });
 });
 
+describe("hermes gateway start", () => {
+  it("starts gateways one at a time, and one failing start does not block the next", async () => {
+    const rt = new HermesRuntime({ db }) as unknown as {
+      start(a: { id: string }): Promise<void>;
+      ensureStarted(a: { id: string }): Promise<void>;
+    };
+    let active = 0;
+    let peak = 0;
+    rt.start = async (a) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+      if (a.id === "a1") throw new Error("boom");
+    };
+    const results = await Promise.allSettled(
+      ["a0", "a1", "a2"].map((id) => rt.ensureStarted({ id })),
+    );
+    expect(peak).toBe(1);
+    expect(results.map((r) => r.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+  });
+});
+
 describe("hermes stale gateways", () => {
   it("reapStale stops a gateway left by a dead bridge, with its children, and removes the pid file", async () => {
     const tmp = mkdtempSync(join(tmpdir(), "sa-fake-hermes-"));
