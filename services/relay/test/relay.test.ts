@@ -271,12 +271,12 @@ describe("relay", () => {
     const deviceA = deviceIdFor(newDeviceKeys().publicKey);
     const deviceB = deviceIdFor(newDeviceKeys().publicKey);
     const attempts = [
-      signTicket("some-other-secret", deviceA, 60_000).ticket, // forged
-      signTicket(ADMIN, deviceA, 60_000, Date.now() - 120_000).ticket, // expired
-      signTicket(ADMIN, deviceA, 60_000).ticket, // device A's ticket used as device B
+      { device: deviceA, ticket: signTicket("some-other-secret", deviceA, 60_000).ticket }, // forged
+      { device: deviceA, ticket: signTicket(ADMIN, deviceA, 60_000, Date.now() - 120_000).ticket }, // expired
+      { device: deviceB, ticket: signTicket(ADMIN, deviceA, 60_000).ticket }, // wrong device
     ];
     const outcomes: { msgs: RelayOp[]; closed: boolean }[] = [];
-    for (const ticket of attempts) {
+    for (const { device, ticket } of attempts) {
       const ws = new WebSocket(`${url.replace(/^http/, "ws")}/relay/ws`);
       sockets.push(ws);
       const msgs: RelayOp[] = [];
@@ -286,7 +286,7 @@ describe("relay", () => {
         ws.once("open", res);
         ws.once("error", rej);
       });
-      ws.send(JSON.stringify({ op: "hello", device_id: deviceB, ticket }));
+      ws.send(JSON.stringify({ op: "hello", device_id: device, ticket }));
       outcomes.push({
         msgs,
         closed: await Promise.race([closed, sleep(1500).then(() => false)]),
@@ -334,6 +334,6 @@ describe("relay", () => {
     expect(a.ws.readyState).toBe(WebSocket.OPEN);
     const good = env(chat, a.device);
     const ack = await a.ask({ op: "send", env: good }, (m) => m.op === "ack");
-    expect(ack.at(-1)).toMatchObject({ op: "ack" });
+    expect(ack.find((m) => m.op === "ack")).toMatchObject({ op: "ack" });
   });
 });

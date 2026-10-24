@@ -186,8 +186,8 @@ export async function createRelay(
               size: env.ciphertext.length,
               seq,
             });
-            fanOut(env, seq);
             out(ws, { op: "ack", id: env.id, seq });
+            fanOut(env, seq);
             return;
           }
           case "sync": {
