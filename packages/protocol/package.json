@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./ticket": "./src/ticket.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",

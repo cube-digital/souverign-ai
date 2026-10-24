@@ -17,11 +17,20 @@ export class RelayClient implements RelayLink {
   private statusCbs = new Set<(s: RelayStatus) => void>();
   private backoff = 500;
   private everReady = false;
+  private ticketRetried = false;
   private closed = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly Ws: typeof WebSocket;
 
-  constructor(private opts: { url: string; deviceId: string; WebSocketImpl?: typeof WebSocket }) {
+  constructor(
+    private opts: {
+      url: string;
+      deviceId: string;
+      /** Called before every hello (first connect and each reconnect). */
+      getTicket: () => Promise<string>;
+      WebSocketImpl?: typeof WebSocket;
+    },
+  ) {
     this.Ws = opts.WebSocketImpl ?? WebSocket;
   }
 
@@ -49,9 +58,10 @@ export class RelayClient implements RelayLink {
       let first = true;
       const open = () => {
         this.setStatus("connecting");
+        let immediateRetry = false;
         const ws = new this.Ws(this.opts.url);
         this.ws = ws;
-        ws.onopen = () => this.raw({ op: "hello", device_id: this.opts.deviceId });
+        ws.onopen = () => void this.hello(ws);
         ws.onmessage = (ev: MessageEvent) => {
           let msg: RelayOp;
           try {
@@ -61,6 +71,8 @@ export class RelayClient implements RelayLink {
           }
           if (msg.op === "ready") {
             this.backoff = 500;
+            this.ticketRetried = false;
+            immediateRetry = false;
             this.setStatus("ready");
             this.everReady = true;
             if (first) {
@@ -71,6 +83,15 @@ export class RelayClient implements RelayLink {
             for (const cb of this.reconnectCbs) cb();
             return;
           }
+          if (msg.op === "error" && msg.code === "bad_ticket" && !msg.ref) {
+            // The relay closes the socket after bad_ticket: flag the next onclose to
+            // reconnect at once (fresh ticket), a single time, then normal backoff.
+            if (!this.ticketRetried) {
+              this.ticketRetried = true;
+              immediateRetry = true;
+            }
+            return;
+          }
           this.handle(msg);
         };
         ws.onclose = () => {
@@ -78,8 +99,8 @@ export class RelayClient implements RelayLink {
           this.setStatus("offline");
           this.failAll(new Error("offline"));
           if (this.closed) return;
-          const delay = this.backoff;
-          this.backoff = Math.min(this.backoff * 2, 8000);
+          const delay = immediateRetry ? 0 : this.backoff;
+          if (!immediateRetry) this.backoff = Math.min(this.backoff * 2, 8000);
           this.retryTimer = setTimeout(() => {
             this.retryTimer = null;
             if (!this.closed) open();
@@ -91,6 +112,18 @@ export class RelayClient implements RelayLink {
       };
       open();
     });
+  }
+
+  private async hello(ws: WebSocket): Promise<void> {
+    let ticket: string;
+    try {
+      ticket = await this.opts.getTicket();
+    } catch {
+      if (this.ws === ws) ws.close();
+      return;
+    }
+    if (this.ws !== ws || ws.readyState !== 1) return;
+    this.raw({ op: "hello", device_id: this.opts.deviceId, ticket });
   }
 
   close(): void {

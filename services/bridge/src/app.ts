@@ -8,16 +8,45 @@ import {
   type DirectoryEntry,
   LoginRequest,
   type LoginResponse,
+  RelayTicketRequest,
+  TICKET_TTL_MS,
   type UserSummary,
 } from "@sa/protocol";
+import { signTicket } from "@sa/protocol/ticket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
+import { type AgentHost, registerAgentRoutes } from "./agents/routes.js";
 import { hashToken, newToken, SESSION_HOURS, verifyPin } from "./auth.js";
 import type { Db } from "./db.js";
+import { registerMcp } from "./mcp/server.js";
+import type { ToolLog } from "./mcp/tool-log.js";
 import type { RelayAdmin } from "./relay-admin.js";
 
 type DeviceRow = { id: string; owner_id: string; public_key: string };
 
-export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin }): FastifyInstance {
+const LOGIN_WINDOW_MS = 60_000;
+const LOGIN_MAX_FAILURES = 5;
+
+export function buildApp({
+  db,
+  relayAdmin,
+  agentHost,
+  toolLog,
+  rtSimUrl,
+}: {
+  db: Db;
+  relayAdmin: RelayAdmin;
+  agentHost?: AgentHost;
+  toolLog?: ToolLog;
+  rtSimUrl?: string;
+}): FastifyInstance {
+  const failedLogins = new Map<string, number[]>();
+  const recentFailures = (user: string): number[] => {
+    const cutoff = Date.now() - LOGIN_WINDOW_MS;
+    const live = (failedLogins.get(user) ?? []).filter((t) => t > cutoff);
+    if (live.length > 0) failedLogins.set(user, live);
+    else failedLogins.delete(user);
+    return live;
+  };
   const app = Fastify({ logger: false });
   const log = (msg: string, extra: Record<string, unknown> = {}) =>
     console.log(JSON.stringify({ level: "info", msg, ...extra }));
@@ -46,9 +75,20 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
       member_id: string;
       role: "owner" | "member";
       display_name: string | null;
+      owner_display_name: string | null;
+      agent_device_id: string | null;
+      agent_public_key: string | null;
     }>(
-      `select m.member_type, m.member_id, m.role, u.display_name
-       from sa.chat_members m left join sa.users u on m.member_type = 'user' and u.id = m.member_id
+      `select m.member_type, m.member_id, m.role,
+         coalesce(u.display_name, a.name) as display_name,
+         ou.display_name as owner_display_name,
+         ad.device_id as agent_device_id, dv.public_key as agent_public_key
+       from sa.chat_members m
+       left join sa.users u on m.member_type = 'user' and u.id = m.member_id
+       left join sa.agents a on m.member_type = 'agent' and a.id = m.member_id
+       left join sa.users ou on ou.id = a.owner_user_id
+       left join sa.agent_devices ad on ad.agent_id = a.id
+       left join sa.devices dv on dv.id = ad.device_id
        where m.chat_id = $1 and m.removed_at is null order by m.joined_at, m.member_id`,
       [chatId],
     );
@@ -61,8 +101,16 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
         member_type: m.member_type,
         member_id: m.member_id,
         display_name: m.display_name ?? m.member_id,
+        ...(m.member_type === "agent" && m.owner_display_name
+          ? { owner_display_name: m.owner_display_name }
+          : {}),
         role: m.role,
-        devices: m.member_type === "user" ? (devices.get(m.member_id) ?? []) : [],
+        devices:
+          m.member_type === "user"
+            ? (devices.get(m.member_id) ?? [])
+            : m.agent_device_id && m.agent_public_key
+              ? [{ device_id: m.agent_device_id, public_key: m.agent_public_key }]
+              : [],
       })),
     };
   };
@@ -125,9 +173,14 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
       "select id, display_name, pin_hash from sa.users where id = $1",
       [body.data.user_id],
     );
+    if (recentFailures(body.data.user_id).length >= LOGIN_MAX_FAILURES) {
+      return reply.code(429).send({ error: "too_many_attempts" });
+    }
     if (!u || !verifyPin(body.data.pin, u.pin_hash)) {
+      failedLogins.set(body.data.user_id, [...recentFailures(body.data.user_id), Date.now()]);
       return reply.code(401).send({ error: "wrong_pin" });
     }
+    failedLogins.delete(u.id);
     const token = newToken();
     await db.query(
       "insert into sa.sessions (token_hash, user_id, expires_at) values ($1, $2, now() + make_interval(hours => $3))",
@@ -159,12 +212,37 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
     for (const c of mine) {
       await relayAdmin.setMember({ chat_id: c.chat_id, device_id: body.data.device_id, op: "add" });
     }
+    // Concurrent registrations of the same device both reach here: the loser's insert is a no-op.
     await db.query(
-      "insert into sa.devices (id, owner_type, owner_id, public_key) values ($1, 'user', $2, $3)",
+      `insert into sa.devices (id, owner_type, owner_id, public_key) values ($1, 'user', $2, $3)
+       on conflict (id) do nothing`,
       [body.data.device_id, userId, body.data.public_key],
     );
+    const [owner] = await db.query<{ owner_type: string; owner_id: string }>(
+      "select owner_type, owner_id from sa.devices where id = $1",
+      [body.data.device_id],
+    );
+    if (owner?.owner_type !== "user" || owner.owner_id !== userId) {
+      return reply.code(409).send({ error: "device_taken" });
+    }
     log("device registered", { user: userId });
     return { ok: true };
+  });
+
+  app.post("/api/relay-ticket", async (req, reply) => {
+    const userId = await authenticate(req, reply);
+    if (!userId) return;
+    const body = RelayTicketRequest.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    const [d] = await db.query(
+      "select id from sa.devices where id = $1 and owner_type = 'user' and owner_id = $2",
+      [body.data.device_id, userId],
+    );
+    if (!d) return reply.code(404).send({ error: "not_found" });
+    const secret = process.env.RELAY_ADMIN_TOKEN;
+    if (!secret) return reply.code(500).send({ error: "server_misconfigured" });
+    const res = signTicket(secret, body.data.device_id, TICKET_TTL_MS);
+    return res;
   });
 
   app.get("/api/directory", async (req, reply): Promise<DirectoryEntry[] | undefined> => {
@@ -272,5 +350,16 @@ export function buildApp({ db, relayAdmin }: { db: Db; relayAdmin: RelayAdmin })
     return loadChat(g.chatId);
   });
 
+  registerAgentRoutes(app, {
+    db,
+    relayAdmin,
+    ...(agentHost ? { agentHost } : {}),
+    authenticate,
+    memberGuard,
+    loadChat,
+    log,
+  });
+
+  if (toolLog) registerMcp(app, { db, toolLog, rtSimUrl: rtSimUrl ?? "http://127.0.0.1:8649" });
   return app;
 }

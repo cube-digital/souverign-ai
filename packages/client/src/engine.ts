@@ -36,8 +36,15 @@ export class ChatEngine {
   private msgCbs = new Set<(m: ChatMessage) => void>();
   private keyCbs = new Set<(chatId: string, epoch: number) => void>();
   private queue: Promise<void> = Promise.resolve();
+  private isTrustedKeySender: (chatId: string, senderDevice: string) => Promise<boolean>;
 
-  constructor(opts: { link: RelayLink; store: KeyStore; device: StoredDevice }) {
+  constructor(opts: {
+    link: RelayLink;
+    store: KeyStore;
+    device: StoredDevice;
+    isTrustedKeySender?: ((chatId: string, senderDevice: string) => Promise<boolean>) | undefined;
+  }) {
+    this.isTrustedKeySender = opts.isTrustedKeySender ?? (async () => true);
     this.link = opts.link;
     this.store = opts.store;
     this.device = opts.device;
@@ -93,8 +100,12 @@ export class ChatEngine {
     return epoch;
   }
 
-  sendText(chatId: string, text: string): Promise<void> {
-    return this.sendBody(chatId, { type: "text", text });
+  sendText(
+    chatId: string,
+    text: string,
+    meta?: Extract<MessageBody, { type: "text" }>["meta"],
+  ): Promise<void> {
+    return this.sendBody(chatId, meta ? { type: "text", text, meta } : { type: "text", text });
   }
 
   sendSystem(chatId: string, text: string): Promise<void> {
@@ -185,6 +196,10 @@ export class ChatEngine {
     try {
       key = openKey(env.ciphertext, this.device.keys);
     } catch {
+      return;
+    }
+    if (!(await this.isTrustedKeySender(env.chat_id, env.sender_device))) {
+      console.warn("key_untrusted", env.chat_id, env.sender_device);
       return;
     }
     await this.store.putChatKey(env.chat_id, env.epoch, key);

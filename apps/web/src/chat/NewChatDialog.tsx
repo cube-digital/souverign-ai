@@ -95,7 +95,7 @@ export function NewChatDialog({
             variant="primary"
             disabled={busy || !engine || !title.trim() || picked.size === 0}
           >
-            Create
+            {engine ? "Create" : "Connecting…"}
           </Button>
         </div>
       </form>
