@@ -22,6 +22,7 @@
 10. **Vector DB / memory layer:** rămâne PostgreSQL + pgvector, în spatele unui port `MemoryStore` (SP3). Couchbase Lite a fost evaluat și amânat pentru memoria on-device din aplicația mobilă (vezi D-6).
 11. **Hardware confirmat:** Apple M4 Max, 36 GB, macOS 15.7.3. Node 23, pnpm 9.10, uv 0.12 și Docker sunt deja instalate.
 12. **Deploy pentru teste (D-8):** MacBook-ul e serverul. Testerii (3–4, fiecare pe laptopul lui) folosesc doar browserul și ajung la Mac prin Tailscale (node sharing: văd doar acest Mac), pe HTTPS dat de `tailscale serve`. Nimic nu e expus pe internet, nimic nu rulează în cloud. Sub-proiect nou **SP1.5**, imediat după SP1. De la SP1 încolo, clientul web ia adresele serviciilor din origine/config, niciodată `localhost` scris în cod.
+13. **Spații de memorie (D-9): agenții împart informația doar în chat-ul pe care îl au în comun, altfel nu.** Fiecare agent are un spațiu privat `agent:<id>` (chunk-urile poartă `origin_chat_id`), fiecare chat are spațiul `chat:<id>` (doar mesajele lui, citite de un agent de la momentul invitației). În chat-ul X, recall-ul întoarce doar `chat:X` și, din spațiul propriu, ce a aflat în X plus ce l-a învățat proprietarul (după `share_private_in_chats`: implicit `always`, opțional `ask`/`never`). Niciodată spațiul altui agent sau al altui chat. Lista de spații o calculează bridge-ul, nu agentul.
 
 ---
 
@@ -223,16 +224,19 @@ Doar coloanele care fixează decizii; tipurile exacte le decide planul SP-ului.
 | `chat_keys` | chat_id, epoch, device_id, sealed_key | cheia chat-ului sigilată per device |
 | `messages_plain` | id, chat_id, sender_device_id, epoch, kind (`text`\|`audio`\|`file`\|`system`), body, attachment_id, ts | **doar în bridge**, pentru device-urile de agent; relay-ul are tabela lui de ciphertext |
 | `attachments` | id, chat_id, mime, size, local_path, extracted_text_hash | blob-ul criptat stă în relay; textul extras stă în memory |
-| `agents` | id, owner_user_id, name, avatar, soul, hermes_profile, api_port, tools_allowlist (jsonb), capabilities (jsonb: chat, voice, join_calls, take_notes), voice_id, languages (text[]), status | `hermes_profile = 'agent_' + id` |
+| `agents` | id, owner_user_id, name, avatar, soul, hermes_profile, api_port, tools_allowlist (jsonb), capabilities (jsonb: chat, voice, join_calls, take_notes), voice_id, languages (text[]), share_private_in_chats (`always`\|`ask`\|`never`, implicit `always`), status | `hermes_profile = 'agent_' + id`; D-9 |
 | `agent_lessons` | id, agent_id, text, applied_to (`soul`\|`skill`), ts | |
-| `memory_chunks` | id, namespace, kind (`conversation`\|`knowledge`\|`correction`\|`meeting`), scope_chat_id, source (jsonb: type, id, title, ts), text, tsv (tsvector `english`/`simple`), embedding vector(512), created_at | HNSW cosine pe `embedding`; GIN pe `tsv` |
+| `memory_chunks` | id, namespace (`agent:<id>`\|`chat:<id>`), kind (`conversation`\|`knowledge`\|`correction`\|`meeting`), origin_chat_id (doar în `agent:`; gol = învățat direct de proprietar), source (jsonb: type, id, title, ts), text, tsv (tsvector `english`/`simple`), embedding vector(512), created_at | HNSW cosine pe `embedding`; GIN pe `tsv`; D-9 |
 | `approvals` | id, agent_id, owner_user_id, tool, args (jsonb), status (`pending`\|`approved`\|`denied`\|`executed`\|`failed`), hermes_session_id, decided_at, result (jsonb) | |
 | `meetings` | id, chat_id, livekit_room, started_by, started_at, ended_at, policy (`owner_only`\|`anyone_with_consent`) | |
 | `meeting_agents` | meeting_id, agent_id, status (`requested`\|`joined`\|`left`\|`refused`), consents (jsonb: user_id → bool) | |
 | `meeting_segments` | id, meeting_id, speaker_identity, t0, t1, text, lang | per track → fără diarizare |
 | `meeting_notes` | id, meeting_id, agent_id, body_md, version, published_message_id | |
 
-Controlul de acces la recall: un agent poate interoga `namespace = agent.id` și `scope_chat_id ∈ chat-urile în care device-ul lui e membru activ`. Nimic altceva.
+Controlul de acces la recall (D-9), calculat de bridge la fiecare cerere:
+- **în chat-ul X:** `chat:X` cu `source.ts ≥ joined_at` (agentul e membru activ în X); din `agent:<self>` chunk-urile cu `origin_chat_id = X` și, după `share_private_in_chats`, cele cu `origin_chat_id` gol;
+- **în chat-ul 1:1 cu proprietarul:** tot `agent:<self>` + `chat:<c>` pentru chat-urile în care sunt membri activi și agentul, și proprietarul.
+Nimic altceva: niciodată spațiul altui agent, al altui chat sau ce a aflat agentul în alt chat.
 
 ---
 
@@ -256,8 +260,8 @@ Relay-ul validează doar semnătura device-ului și apartenența (din `chat_memb
 | Tool | Gated | Semantică |
 |---|---|---|
 | `chat.read(chat_id, limit≤50, before?)` | nu | mesaje plaintext din chat-uri în care agentul e membru |
-| `memory.recall(query, chat_id?, k≤8)` | nu | hibrid (vector + full-text) peste namespace-ul propriu + chat-urile permise; răspuns `[{text, source, ts, score}]` |
-| `memory.remember(text, tags[])` | nu | scrie în namespace-ul propriu, `kind=conversation` |
+| `memory.recall(query, k≤8)` | nu (cu `ask`, răspunsul care urmează poate trece prin aprobare) | hibrid (vector + full-text) peste spațiile permise în chat-ul curent (§7, D-9); chat-ul îl știe bridge-ul din sesiune, nu îl alege agentul; răspuns `[{text, source, ts, score, space}]` |
+| `memory.remember(text, tags[])` | nu | scrie în `agent:<self>`, `kind=conversation`, cu `origin_chat_id` = chat-ul curent (gol în chat-ul 1:1 cu proprietarul) |
 | `documents.extract(attachment_id)` | nu | text extras local; fișierul nu părăsește bridge-ul |
 | `meeting.transcript(meeting_id)` | nu | doar dacă agentul a participat |
 | `chat.send(chat_id, text)` | **da** | `{status:"pending", approval_id}` |
@@ -278,7 +282,7 @@ interface AgentRuntime {
 
 ### 8.4 Memory API (Python, `services/memory`)
 - `POST /ingest {namespace, kind, scope_chat_id?, source, text}` → chunking + embed + upsert; idempotent pe `(source.type, source.id, chunk_idx)`.
-- `POST /recall {namespaces[], chat_ids[], query, k}` → RRF între HNSW cosine și `ts_rank` (`english` dacă limba detectată e en, altfel `simple`); întoarce citări.
+- `POST /recall {scopes[], query, k}` → RRF între HNSW cosine și `ts_rank` (`english` dacă limba detectată e en, altfel `simple`); întoarce citări. Fiecare scope = `{namespace, origin_chat_ids?, since?}`; scopes le calculează doar bridge-ul (§7, D-9), serviciul `memory` nu e accesibil agenților direct.
 - `POST /embed {texts[]}` → vectori 512-dim (MRL, re-normalizați).
 - Stocarea trece printr-un port `MemoryStore` (implementare: pgvector), ca un alt backend (ex. Couchbase Lite on-device) să poată fi adăugat (D-6).
 
@@ -304,6 +308,8 @@ interface AgentRuntime {
 **Învățare** (§5.2 F3): lecții, cunoștințe (documente), corecții. UI arată „What the agent knows”: lista documentelor, ultimele lecții, numărul de chunk-uri de memorie, cu butoane de ștergere (ștergerea = `DELETE memory_chunks WHERE source.id=…`; tombstones rămân în afara scopului).
 
 **Invitare în chat:** doar owner-ul agentului îl poate adăuga într-un chat din care face parte; ceilalți membri văd un mesaj de sistem „X added agent Y (it can read messages from now on)”. Cheia chat-ului se sigilează pentru device-ul agentului **de la epoca curentă**; agentul nu primește istoricul anterior (`chat.read` filtrează `epoch ≥ join_epoch`).
+
+**Spații de memorie și împărtășire (D-9):** agenții împart informația doar în chat-ul pe care îl au în comun, altfel nu. Ce i-a dat proprietarul (documente, corecții) agentul poate folosi în chat-urile în care l-a adus, pentru că invitația e acordul. Pe pagina agentului, proprietarul poate alege în schimb „Ask me first” (card de aprobare înainte de citare) sau „Never in shared chats”. Ce află agentul într-un chat rămâne legat de acel chat. Agenții aceluiași om nu își împart memoria.
 
 **Apeluri:** politica camerei (`owner_only` / `anyone_with_consent`) e setată la creare. Un agent apare în lista de participanți cu badge „🎙 taking notes · X's agent”. Orice participant poate cere oprirea (`meeting_agents.status=left`); decizia e a owner-ului camerei, iar refuzul se loghează ca mesaj de sistem.
 
@@ -383,15 +389,17 @@ Ordinea e strictă; fiecare SP livrează software funcțional și testabil singu
 - `services/memory`: EmbeddingGemma 2 (BF16, text-only), chunking, hibrid vector + full-text (`english`/`simple`), RRF, citări, port `MemoryStore`.
 - Migrații pgvector: `vector(512)`, HNSW cosine, GIN tsv.
 - Ingest asincron al mesajelor (bridge → memory) și al documentelor (extracție locală → chunks).
+- Spațiile din D-9: mesajele unui chat se ingerează o singură dată în `chat:<id>`; ce află sau notează agentul într-un chat intră în `agent:<id>` cu `origin_chat_id`; recall-ul e limitat la chat-ul curent, cu filtrul `joined_at`.
 - `memory.recall`, `memory.remember` în MCP; `applyLesson` în `HermesRuntime` (scrie `SOUL.md`/`skills/lessons.md`, restart soft).
 - UI: tab „Teach” (lecții, documente, corecții 👎), „What the agent knows”.
-- Teste: 30 de perechi întrebare→chunk în engleză + 10 în fr/de, recall@3 ≥ 0,8 (altfel se activează fallback-ul Qwen3-Embedding); test ACL: agentul B nu primește chunk-uri din namespace-ul agentului A.
+- Teste: 30 de perechi întrebare→chunk în engleză + 10 în fr/de, recall@3 ≥ 0,8 (altfel se activează fallback-ul Qwen3-Embedding); testele ACL (a)–(d) din D-9: agentul B nu primește nimic din `agent:A`; un agent nu primește mesaje de dinainte de invitație; ce a aflat în chat-ul A nu apare în chat-ul B; doi agenți ai aceluiași om nu își citesc spațiile.
 
 ### SP4 — Scrieri gated (≈ 1 zi)
 **Livrabil:** `chat.send` și `notes.create` trec prin aprobare; agentul continuă după decizie.
 - `approvals` flow complet, SSE `approval.*`, cardul în UI, expirare la 10 min (`denied` automat).
 - `hermesClient.continue()` cu nota de sistem; test că agentul confirmă trimiterea doar după `approved`.
 - Jurnal „Agent actions” per user.
+- `share_private_in_chats` pe pagina agentului (`always` implicit, `ask`, `never`) și poarta `ask`: un răspuns într-un chat comun după un recall din cunoștințele proprietarului așteaptă aprobarea. Testele (e)–(f) din D-9.
 
 ### SP5 — Voce în chat (≈ 1,5 zile)
 **Livrabil:** PTT în engleză și încă o limbă (fr/de), răspuns vocal, HUD de latență ≤ 2 s voice-to-voice pe profilul `fast`.
