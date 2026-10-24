@@ -1,0 +1,55 @@
+# Single source of truth for every model the demo runs. All inference is local.
+# Shell: `uv run --quiet sa-models llm repo` · Python: sa_infra.models_config.load()
+# Adding a model here means updating the memory table in the spec (§6).
+
+paths:
+  models_dir: ~/.cache/sovereign-agents/models # non-HF artifacts: ggml, piper voices, fixtures. Override: SA_MODELS_DIR
+
+llm:
+  active_profile: fast # D-1: fast while building, quality for the demo. Override: LLM_PROFILE / make up PROFILE=
+  host: 127.0.0.1
+  port: 8000
+  profiles:
+    fast:
+      repo: mlx-community/Qwen3.5-9B-8bit
+      tool_call_parser: qwen # fallback if tool calls do not parse: auto
+      reasoning_parser: qwen3
+      approx_gb: 10.0
+    quality:
+      repo: mlx-community/gemma-4-26b-a4b-it-4bit
+      tool_call_parser: auto # auto tries the Gemma 4 format first
+      reasoning_parser: ""
+      approx_gb: 14.5
+      requires_wired_limit_mb: 30000
+
+embeddings:
+  repo: google/embeddinggemma-2 # Apache-2.0
+  dim: 768
+  mrl_dim: 512 # store 512 dims, re-normalized (spec A5)
+  dtype: bfloat16 # never float16: NaN
+  device: mps
+  query_prompt: "task: search result | query: "
+  document_prompt: "title: {title} | text: "
+  fallback_repo: Qwen/Qwen3-Embedding-0.6B # SP3, if recall@3 < 0.8
+
+stt:
+  host: 127.0.0.1
+  port: 8081
+  model_repo: ggerganov/whisper.cpp
+  model_file: ggml-large-v3-turbo-q5_0.bin
+  meeting_fallback_repo: mlx-community/parakeet-tdt-0.6b-v3 # SP6, only if 3 tracks do not keep up
+
+tts:
+  kokoro:
+    repo: mlx-community/Kokoro-82M-bf16
+    sample_rate: 24000
+    languages:
+      en: { lang_code: a, voice: af_heart }
+      fr: { lang_code: f, voice: ff_siwis }
+      es: { lang_code: e, voice: ef_dora }
+      it: { lang_code: i, voice: if_sara }
+  piper:
+    repo: rhasspy/piper-voices
+    voices:
+      de: de/de_DE/thorsten/medium/de_DE-thorsten-medium
+      ro: ro/ro_RO/mihai/medium/ro_RO-mihai-medium
