@@ -63,7 +63,11 @@ def test_recall_results_carry_origin_chat_id() -> None:
     r = client.post(
         "/recall",
         headers=H,
-        json={"scopes": [{"namespace": "agent:nora", "origin_chat_ids": None}], "query": "anything", "k": 8},
+        json={
+            "scopes": [{"namespace": "agent:nora", "origin_chat_ids": None}],
+            "query": "anything",
+            "k": 8,
+        },
     )
 
     assert r.status_code == 200
