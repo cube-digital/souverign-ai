@@ -42,7 +42,8 @@ const input = (over: InputOver): ScopeInput => ({
 });
 
 const namespaces = (s: MemoryScope[]) => s.map((x) => x.namespace);
-const agentScope = (s: MemoryScope[]) => s.find((x) => x.namespace.startsWith("agent:"));
+const agentScopes = (s: MemoryScope[]) => s.filter((x) => x.namespace.startsWith("agent:"));
+const ownOps = { namespace: "agent:max", origin_chat_ids: ["ops"], since_ts: JOINED };
 
 const src = (id: string, ts: number) => ({ type: "message", id, ts });
 
@@ -74,10 +75,14 @@ describe("recallScopes (D-9)", () => {
 
   it("(c) in a shared chat own notes are limited to that chat and owner-taught", async () => {
     const scopes = recallScopes(input({ agent: max, chat: { id: "ops" } }));
-    expect(scopes).toEqual([
-      { namespace: "agent:max", origin_chat_ids: ["ops", null] },
-      { namespace: "chat:ops", since_ts: JOINED },
-    ]);
+    expect(scopes).toHaveLength(3);
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        { namespace: "agent:max", origin_chat_ids: ["ops"], since_ts: JOINED },
+        { namespace: "agent:max", origin_chat_ids: [null] },
+        { namespace: "chat:ops", since_ts: JOINED },
+      ]),
+    );
     const mem = new FakeMemory();
     const put = (ns: string, origin: string | null, id: string, ts = JOINED + 1) =>
       mem.ingest({
@@ -89,11 +94,13 @@ describe("recallScopes (D-9)", () => {
       });
     await put("agent:max", "ops", "learned-in-ops");
     await put("agent:max", null, "taught");
+    await put("agent:max", "ops", "pre-join-note", JOINED - 1);
+    await put("agent:max", null, "old-taught", JOINED - 1);
     await put("agent:max", "project", "learned-in-project");
     await put("chat:project", null, "project-message");
     await put("agent:nora", null, "nora-note");
     const hits = await mem.recall({ scopes, query: "budget", k: 8 });
-    expect(hits.map((h) => h.source.id).sort()).toEqual(["learned-in-ops", "taught"]);
+    expect(hits.map((h) => h.source.id).sort()).toEqual(["learned-in-ops", "old-taught", "taught"]);
   });
 
   it("a personal agent's 1:1 with its owner reads all of its own space plus shared chats", () => {
@@ -131,11 +138,14 @@ describe("recallScopes (D-9)", () => {
       input({ agent: { ...max, share: "ask" }, approverAvailable: false, ...base }),
     );
     const retry = recallScopes(input({ agent: max, noTaught: true, ...base }));
-    expect(agentScope(never)?.origin_chat_ids).toEqual(["ops"]);
-    expect(agentScope(askNoApprover)?.origin_chat_ids).toEqual(["ops"]);
-    expect(agentScope(retry)?.origin_chat_ids).toEqual(["ops"]);
+    expect(agentScopes(never)).toEqual([ownOps]);
+    expect(agentScopes(askNoApprover)).toEqual([ownOps]);
+    expect(agentScopes(retry)).toEqual([ownOps]);
     const askWithApprover = recallScopes(input({ agent: { ...max, share: "ask" }, ...base }));
-    expect(agentScope(askWithApprover)?.origin_chat_ids).toEqual(["ops", null]);
+    expect(agentScopes(askWithApprover)).toHaveLength(2);
+    expect(agentScopes(askWithApprover)).toEqual(
+      expect.arrayContaining([ownOps, { namespace: "agent:max", origin_chat_ids: [null] }]),
+    );
   });
 
   it("D-13: a workspace agent's DM reads only notes from the DM and chats shared with that person", () => {
@@ -146,11 +156,16 @@ describe("recallScopes (D-9)", () => {
         shared: [{ id: "project", agentJoinedAt: JOINED + 10 }],
       }),
     );
-    expect(scopes).toEqual([
-      { namespace: "agent:max", origin_chat_ids: [null, "dm", "project"] },
-      { namespace: "chat:dm", since_ts: JOINED },
-      { namespace: "chat:project", since_ts: JOINED + 10 },
-    ]);
+    expect(scopes).toHaveLength(6);
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        { namespace: "agent:max", origin_chat_ids: [null] },
+        { namespace: "agent:max", origin_chat_ids: ["dm"], since_ts: JOINED },
+        { namespace: "agent:max", origin_chat_ids: ["project"], since_ts: JOINED + 10 },
+        { namespace: "chat:dm", since_ts: JOINED },
+        { namespace: "chat:project", since_ts: JOINED + 10 },
+      ]),
+    );
   });
 
   it("an inactive agent gets no scopes", () => {
