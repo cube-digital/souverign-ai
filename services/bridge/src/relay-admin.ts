@@ -4,7 +4,7 @@ export type RelayAdmin = { setMember(change: RelayMemberChange): Promise<void> }
 
 export function httpRelayAdmin(
   token: string | undefined = process.env.RELAY_ADMIN_TOKEN,
-  baseUrl: string = process.env.RELAY_INTERNAL_URL ?? "http://127.0.0.1:8648",
+  baseUrl: string = process.env.RELAY_INTERNAL_URL || "http://127.0.0.1:8648",
 ): RelayAdmin {
   if (!token) {
     console.error(JSON.stringify({ level: "error", msg: "RELAY_ADMIN_TOKEN is required" }));

@@ -17,7 +17,7 @@ const db = await openDb();
 await migrate(db);
 
 const given = new Map(
-  (process.env.SA_DEMO_PINS ?? "")
+  (process.env.SA_DEMO_PINS || "")
     .split(",")
     .map((p) => p.trim().split(":") as [string, string])
     .filter(([id, pin]) => id && pin),

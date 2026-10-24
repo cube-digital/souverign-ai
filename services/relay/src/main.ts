@@ -8,8 +8,8 @@ if (!adminToken) {
 }
 const repoRoot = join(import.meta.dirname, "..", "..", "..");
 await createRelay({
-  dbPath: process.env.RELAY_DB ?? join(repoRoot, ".run", "relay.sqlite"),
+  dbPath: process.env.RELAY_DB || join(repoRoot, ".run", "relay.sqlite"),
   adminToken,
-  host: process.env.HOST ?? "127.0.0.1",
-  port: Number(process.env.PORT ?? 8648),
+  host: process.env.HOST || "127.0.0.1",
+  port: Number(process.env.PORT || 8648),
 });

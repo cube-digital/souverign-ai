@@ -7,7 +7,7 @@ export type Db = {
 };
 
 export async function openDb(
-  url: string = process.env.DATABASE_URL ?? "postgres://sa:sa_dev_only@127.0.0.1:5433/sa",
+  url: string = process.env.DATABASE_URL || "postgres://sa:sa_dev_only@127.0.0.1:5433/sa",
 ): Promise<Db> {
   if (url.startsWith("pglite://")) {
     const target = url.slice("pglite://".length);
