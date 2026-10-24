@@ -36,3 +36,22 @@ export function splitThink(content: string): ChatResult {
   const reasoning = parts.filter(Boolean).join("\n\n");
   return reasoning ? { content: clean, reasoning } : { content: clean };
 }
+
+/**
+ * The part of streamed `content` that is safe to show live: closed think blocks are dropped, an
+ * unclosed `<think>` hides everything after it, and a trailing partial `<think` tag is held back.
+ * Output only grows as content grows, so callers can emit the suffix they have not sent yet.
+ */
+export function visibleStream(content: string): string {
+  let out = content.replace(/<think>[\s\S]*?<\/think>/g, "");
+  const open = out.indexOf("<think>");
+  if (open >= 0) return out.slice(0, open);
+  const tag = "<think>";
+  for (let n = Math.min(tag.length - 1, out.length); n > 0; n--) {
+    if (out.endsWith(tag.slice(0, n))) {
+      out = out.slice(0, out.length - n);
+      break;
+    }
+  }
+  return out;
+}

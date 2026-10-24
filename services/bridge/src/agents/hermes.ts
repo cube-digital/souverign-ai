@@ -19,6 +19,7 @@ import {
   type ChatResult,
   type RuntimeAgent,
   splitThink,
+  visibleStream,
 } from "./runtime.js";
 import { hermesApiKey, mcpToken } from "./secrets.js";
 
@@ -267,6 +268,7 @@ export class HermesRuntime implements AgentRuntime {
       if (!res.ok || !res.body) throw new Error(`hermes stream failed: ${res.status}`);
       let content = "";
       let reasoning = "";
+      let shown = 0;
       let buf = "";
       let done = false;
       const handle = (line: string) => {
@@ -287,7 +289,11 @@ export class HermesRuntime implements AgentRuntime {
         if (delta?.content) {
           gotDelta = true;
           content += delta.content;
-          onDelta(delta.content);
+          const visible = visibleStream(content);
+          if (visible.length > shown) {
+            onDelta(visible.slice(shown));
+            shown = visible.length;
+          }
         }
       };
       const decoder = new TextDecoder();
