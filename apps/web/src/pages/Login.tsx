@@ -28,8 +28,13 @@ export function Login({ onSignedIn }: { onSignedIn: (s: Session) => void }) {
       setSession(session);
       onSignedIn(session);
     } catch (err) {
+      const status = err instanceof ApiFailure ? err.status : 0;
       setError(
-        err instanceof ApiFailure && err.status === 401 ? "Wrong PIN" : "Cannot reach the server",
+        status === 401
+          ? "Wrong PIN"
+          : status === 429
+            ? "Too many wrong PINs. Wait a minute, then try again."
+            : "Cannot reach the server",
       );
     } finally {
       setBusy(false);
