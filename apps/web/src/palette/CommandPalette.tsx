@@ -1,5 +1,5 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { useMatch, useNavigate } from "react-router";
 import { agentDm, agents as fetchAgents } from "../api";
 import { Input, Kbd, Overlay, useToast } from "../ds";
 import { getTheme, setTheme } from "../shell/theme";
@@ -50,6 +50,7 @@ function Palette({ onClose }: { onClose: () => void }) {
   const s = useSession();
   const toast = useToast();
   const navigate = useNavigate();
+  const current = useMatch("/c/:chatId/*")?.params.chatId;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [agentList, setAgentList] = useState<{ id: string; name: string }[]>([]);
@@ -85,6 +86,18 @@ function Palette({ onClose }: { onClose: () => void }) {
           run: () => navigate(`/agents/${encodeURIComponent(a.id)}`),
         },
         {
+          id: `ask:${a.id}`,
+          group: "Agents" as const,
+          label: `Ask ${a.name}…`,
+          run: () => {
+            const general = s.chats.find((c) => c.seed_key === "general")?.id;
+            const target = current ?? general;
+            navigate(target ? `/c/${encodeURIComponent(target)}` : "/", {
+              state: { prompt: `@${a.name} ` },
+            });
+          },
+        },
+        {
           id: `dm:${a.id}`,
           group: "Agents" as const,
           label: `Message ${a.name}`,
@@ -117,7 +130,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       .filter((x): x is { i: Item; score: number } => x.score !== null)
       .sort((a, b) => a.score - b.score)
       .map((x) => x.i);
-  }, [s.chats, agentList, query, navigate, toast]);
+  }, [s.chats, agentList, query, navigate, toast, current]);
 
   const sel = Math.min(active, Math.max(0, items.length - 1));
   useEffect(() => {
@@ -153,7 +166,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       <div
         role="dialog"
         aria-label="Command palette"
-        className="w-[min(560px,92vw)] overflow-hidden rounded-lg border border-border-soft bg-bg-1 shadow-[var(--shadow-2)]"
+        className="w-[min(560px,92vw)] overflow-hidden rounded-lg border border-border-soft bg-bg-1 shadow-lg"
       >
         <div className="border-border-soft border-b p-2">
           <Input
