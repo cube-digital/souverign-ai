@@ -1,5 +1,5 @@
 import type { ChatMessage } from "@sa/client";
-import type { Chat, MessageBody, TraceStep } from "@sa/protocol";
+import type { ActivityBody, Chat, MessageBody, TraceStep } from "@sa/protocol";
 import { useEffect, useRef, useState } from "react";
 import { formatSize, timeOf } from "../lib/format";
 import { Avatar } from "../ui/Avatar";
@@ -123,25 +123,84 @@ function Reasoning({ meta }: { meta: Meta }) {
   );
 }
 
+function ActivityBubble({
+  name,
+  owner,
+  body,
+}: {
+  name: string;
+  owner: string;
+  body: ActivityBody;
+}) {
+  let content: React.ReactNode;
+  if (body.phase === "thinking") {
+    content = (
+      <span className="text-muted">
+        {name} is thinking
+        <span aria-hidden="true" className="ml-1 inline-flex gap-0.5">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="inline-block h-1 w-1 rounded-full bg-teal motion-safe:animate-pulse"
+              style={{ animationDelay: `${i * 200}ms` }}
+            />
+          ))}
+        </span>
+      </span>
+    );
+  } else if (body.phase === "tool") {
+    content = <span className="text-muted">{`Using ${body.tool ?? "a tool"}…`}</span>;
+  } else if (body.phase === "writing") {
+    content = (
+      <p className="whitespace-pre-wrap break-words">
+        {body.draft}
+        <span
+          aria-hidden="true"
+          className="ml-0.5 inline-block h-4 w-[2px] translate-y-0.5 bg-teal motion-safe:animate-pulse"
+        />
+      </p>
+    );
+  } else {
+    content = <span className="text-muted">Couldn't answer</span>;
+  }
+  return (
+    <div data-testid="agent-activity" className="flex gap-3">
+      <Avatar name={name} agent />
+      <div className="min-w-0 max-w-[620px] rounded-[12px] border border-agent-line bg-agent px-3.5 py-3">
+        <div className="flex flex-wrap items-center gap-2 text-[13px]">
+          <strong className="font-semibold">{name}</strong>
+          <Pill tone="teal">{`agent · ${owner}'s`}</Pill>
+        </div>
+        <div className="mt-1.5" role="status">
+          {content}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Conversation({
   chat,
   messages,
   nameOf,
   onDownload,
   onOpenMembers,
+  activity = {},
 }: {
   chat: Chat;
   messages: ChatMessage[];
   nameOf: (deviceId: string) => string;
   onDownload: (body: FileBody) => Promise<void>;
   onOpenMembers?: () => void;
+  /** Live activity of the agents in this chat, by sender device. */
+  activity?: Record<string, { body: ActivityBody; ts: number }>;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll whenever the list grows
   useEffect(() => {
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length]);
+  }, [messages.length, activity]);
 
   let prev: ChatMessage | null = null;
   const rows = messages.map((m) => {
@@ -216,6 +275,20 @@ export function Conversation({
         className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-auto px-6 py-5"
       >
         {rows}
+        {Object.entries(activity).map(([device, a]) => {
+          const agent = chat.members.find(
+            (c) => c.member_type === "agent" && c.devices.some((d) => d.device_id === device),
+          );
+          if (!agent) return null;
+          return (
+            <ActivityBubble
+              key={device}
+              name={nameOf(device)}
+              owner={agent.owner_display_name ?? "someone"}
+              body={a.body}
+            />
+          );
+        })}
       </div>
     </div>
   );

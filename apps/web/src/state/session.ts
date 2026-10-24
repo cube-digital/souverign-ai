@@ -6,7 +6,7 @@ import {
   type StoredDevice,
 } from "@sa/client";
 import { cryptoReady, deviceIdFor, newDeviceKeys } from "@sa/crypto";
-import type { Chat, UserSummary } from "@sa/protocol";
+import type { ActivityBody, Chat, UserSummary } from "@sa/protocol";
 import {
   createContext,
   createElement,
@@ -27,6 +27,9 @@ import {
 } from "../api";
 import { IdbKeyStore } from "../lib/idb-keystore";
 
+export type ActivityState = Record<string, Record<string, { body: ActivityBody; ts: number }>>;
+const ACTIVITY_TTL_MS = 90_000;
+
 export type SessionValue = {
   user: UserSummary;
   phase: "starting" | "ready" | "error";
@@ -43,6 +46,8 @@ export type SessionValue = {
   chats: Chat[];
   messages: Record<string, ChatMessage[]>;
   unread: Record<string, number>;
+  /** Live agent activity: chat id, then sender device. */
+  activity: ActivityState;
   refreshChats(): Promise<Chat[]>;
   /** Marks a chat as the one on screen (clears its unread count). */
   openChat(chatId: string | null): void;
@@ -108,11 +113,26 @@ export function SessionProvider({ session, children }: { session: Session; child
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
+  const [activity, setActivity] = useState<ActivityState>({});
+  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const engineRef = useRef<ChatEngine | null>(null);
   const known = useRef(new Set<string>());
   const chatsRef = useRef<Chat[]>([]);
   const counted = useRef(new Set<string>());
   const active = useRef<string | null>(null);
+
+  const clearActivity = useCallback((chatId: string, senderDevice: string) => {
+    const key = `${chatId}|${senderDevice}`;
+    const t = timers.current.get(key);
+    if (t) clearTimeout(t);
+    timers.current.delete(key);
+    setActivity((prev) => {
+      if (!prev[chatId]?.[senderDevice]) return prev;
+      const { [senderDevice]: _gone, ...rest } = prev[chatId];
+      const { [chatId]: _chat, ...others } = prev;
+      return Object.keys(rest).length > 0 ? { ...others, [chatId]: rest } : others;
+    });
+  }, []);
 
   const refreshChats = useCallback(async () => {
     const list = await fetchChats();
@@ -202,6 +222,7 @@ export function SessionProvider({ session, children }: { session: Session; child
                   : [...list, m].sort((a, b) => a.seq - b.seq);
               return { ...prev, [m.chatId]: next };
             });
+            if (m.status === "ok") clearActivity(m.chatId, m.senderDevice);
             const isSystem = m.body?.type === "system";
             if (
               !isSystem &&
@@ -213,6 +234,23 @@ export function SessionProvider({ session, children }: { session: Session; child
               setUnread((u) => ({ ...u, [m.chatId]: (u[m.chatId] ?? 0) + 1 }));
             }
             if (m.status === "ok" && isSystem) void refreshChats().catch(() => {});
+          }),
+          eng.onActivity((a) => {
+            if (a.body.phase === "done") {
+              clearActivity(a.chatId, a.senderDevice);
+              return;
+            }
+            const key = `${a.chatId}|${a.senderDevice}`;
+            const old = timers.current.get(key);
+            if (old) clearTimeout(old);
+            timers.current.set(
+              key,
+              setTimeout(() => clearActivity(a.chatId, a.senderDevice), ACTIVITY_TTL_MS),
+            );
+            setActivity((prev) => ({
+              ...prev,
+              [a.chatId]: { ...prev[a.chatId], [a.senderDevice]: { body: a.body, ts: a.ts } },
+            }));
           }),
           eng.onKey((chatId) => {
             if (!known.current.has(chatId)) void refreshChats().catch(() => {});
@@ -233,10 +271,12 @@ export function SessionProvider({ session, children }: { session: Session; child
     return () => {
       cancelled = true;
       for (const off of offs) off();
+      for (const t of timers.current.values()) clearTimeout(t);
+      timers.current.clear();
       client?.close();
       engineRef.current = null;
     };
-  }, [userId, refreshChats, attempt]);
+  }, [userId, refreshChats, clearActivity, attempt]);
 
   const openChat = useCallback((chatId: string | null) => {
     active.current = chatId;
@@ -269,6 +309,7 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
+      activity,
       refreshChats,
       openChat,
     }),
@@ -284,6 +325,7 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
+      activity,
       refreshChats,
       openChat,
     ],
