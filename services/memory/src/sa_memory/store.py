@@ -36,6 +36,7 @@ class Hit:
     source_title: str | None
     source_ts: float
     chunk_idx: int
+    origin_chat_id: str | None = None
 
 
 class MemoryStore(Protocol):
@@ -53,7 +54,9 @@ class MemoryStore(Protocol):
 
     def search_text(self, scopes: list[Scope], query: str, limit: int) -> list[Hit]: ...
 
-    def delete_source(self, namespace: str, source_type: str, source_id: str) -> int: ...
+    def delete_source(
+        self, namespace: str, source_type: str, source_id: str, include_parts: bool = False
+    ) -> int: ...
 
 
 def _vec(v: Any) -> str:
@@ -78,7 +81,10 @@ def _scope_sql(scopes: list[Scope]) -> tuple[str, list[Any]]:
     return " or ".join(parts), params
 
 
-_COLS = "id, text, namespace, kind, source_type, source_id, source_title, source_ts, chunk_idx"
+_COLS = (
+    "id, text, namespace, kind, source_type, source_id, source_title, source_ts, chunk_idx, "
+    "origin_chat_id"
+)
 
 
 class PgVectorStore:
@@ -89,7 +95,8 @@ class PgVectorStore:
         return [
             Hit(
                 id=r[0], text=r[1], namespace=r[2], kind=r[3], source_type=r[4], source_id=r[5],
-                source_title=r[6], source_ts=r[7], chunk_idx=r[8], score=float(r[9]),
+                source_title=r[6], source_ts=r[7], chunk_idx=r[8], origin_chat_id=r[9],
+                score=float(r[10]),
             )
             for r in rows
         ]  # fmt: skip
@@ -154,11 +161,16 @@ class PgVectorStore:
             rows = conn.execute(sql, [query, query, *params, query, query, limit]).fetchall()
         return self._hits(rows)
 
-    def delete_source(self, namespace: str, source_type: str, source_id: str) -> int:
+    def delete_source(
+        self, namespace: str, source_type: str, source_id: str, include_parts: bool = False
+    ) -> int:
+        sql = (
+            "delete from sa.memory_chunks where namespace = %s and source_type = %s "
+            "and (source_id = %s"
+        )
+        params: list[Any] = [namespace, source_type, source_id]
+        if include_parts:
+            sql += " or starts_with(source_id, %s)"
+            params.append(f"{source_id}.")
         with psycopg.connect(self._dsn) as conn:
-            cur = conn.execute(
-                "delete from sa.memory_chunks where namespace = %s and source_type = %s "
-                "and source_id = %s",
-                [namespace, source_type, source_id],
-            )
-            return cur.rowcount
+            return conn.execute(sql + ")", params).rowcount
