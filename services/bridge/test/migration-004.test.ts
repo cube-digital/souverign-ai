@@ -30,8 +30,10 @@ const insertApproval = (
 describe("migration 004", () => {
   it("defaults share_private_in_chats to always and rejects other values", async () => {
     const db = await fixture();
-    const r = await db.query("select share_private_in_chats as p from sa.agents where id = 'ag'");
-    expect(r.rows[0]).toEqual({ p: "always" });
+    const [row] = await db.query(
+      "select share_private_in_chats as p from sa.agents where id = 'ag'",
+    );
+    expect(row).toEqual({ p: "always" });
     await expect(
       db.query("update sa.agents set share_private_in_chats = 'sometimes' where id = 'ag'"),
     ).rejects.toThrow(/check/i);
@@ -41,8 +43,8 @@ describe("migration 004", () => {
     const db = await fixture();
     await expect(insertApproval(db, "notes_publish", "pending", "now()")).rejects.toThrow(/check/i);
     await insertApproval(db, "call_notes_publish", "pending", "null");
-    const r = await db.query("select tool, status from sa.approvals where id = 'a1'");
-    expect(r.rows[0]).toEqual({ tool: "call_notes_publish", status: "pending" });
+    const [row] = await db.query("select tool, status from sa.approvals where id = 'a1'");
+    expect(row).toEqual({ tool: "call_notes_publish", status: "pending" });
   });
 
   it("stores ask_user questions with a bounded status", async () => {
@@ -55,7 +57,7 @@ describe("migration 004", () => {
       );
     await expect(ins("maybe")).rejects.toThrow(/check/i);
     await ins("open");
-    const r = await db.query("select status, options from sa.questions where id = 'q1'");
-    expect(r.rows[0]).toEqual({ status: "open", options: [] });
+    const [row] = await db.query("select status, options from sa.questions where id = 'q1'");
+    expect(row).toEqual({ status: "open", options: [] });
   });
 });
