@@ -158,4 +158,30 @@ describe("ChatEngine", () => {
       ["ok", { type: "text", text: "from owner" }],
     ]);
   });
+
+  it("members exchange encrypted activity that never shows up as a message", async () => {
+    const relay = new FakeRelay();
+    const chat = randomId();
+    const a = await makeDevice(relay);
+    const b = await makeDevice(relay);
+    relay.addMember(chat, a.deviceId);
+    relay.addMember(chat, b.deviceId);
+    await a.engine.start([chat]);
+    await b.engine.start([chat]);
+    await a.engine.createEpoch(chat, [a.pub, b.pub]);
+    await new Promise((r) => setTimeout(r, 20));
+
+    const got: unknown[] = [];
+    b.engine.onActivity((x) => got.push(x));
+    await a.engine.sendActivity(chat, { type: "activity", phase: "tool", tool: "search" });
+
+    await expect.poll(() => got.length).toBe(1);
+    expect(got[0]).toMatchObject({
+      chatId: chat,
+      senderDevice: a.deviceId,
+      body: { type: "activity", phase: "tool", tool: "search" },
+    });
+    expect(b.seen).toEqual([]);
+    expect(relay.log.every((s) => s.env.kind !== "status")).toBe(true);
+  });
 });
