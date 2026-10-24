@@ -111,7 +111,7 @@ describe("recallScopes (D-9)", () => {
     expect(hits.map((h) => h.source.id).sort()).toEqual(["learned-in-ops", "old-taught", "taught"]);
   });
 
-  it("a personal agent's 1:1 with its owner reads all of its own space plus shared chats", () => {
+  it("a personal agent's 1:1 with its owner reads taught knowledge plus notes and messages of shared chats, each bounded", () => {
     const scopes = recallScopes(
       input({
         agent: nora,
@@ -119,11 +119,17 @@ describe("recallScopes (D-9)", () => {
         shared: [{ id: "project", agentJoinedAt: JOINED + 10 }],
       }),
     );
-    expect(scopes).toEqual([
-      { namespace: "agent:nora", origin_chat_ids: null },
-      { namespace: "chat:dm", since_ts: JOINED },
-      { namespace: "chat:project", since_ts: JOINED + 10 },
-    ]);
+    expect(scopes).toHaveLength(5);
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        { namespace: "agent:nora", origin_chat_ids: [null] },
+        { namespace: "agent:nora", origin_chat_ids: ["dm"], since_ts: JOINED },
+        { namespace: "agent:nora", origin_chat_ids: ["project"], since_ts: JOINED + 10 },
+        { namespace: "chat:dm", since_ts: JOINED },
+        { namespace: "chat:project", since_ts: JOINED + 10 },
+      ]),
+    );
+    expect(scopes.filter((x) => x.origin_chat_ids === null)).toEqual([]);
   });
 
   it("(d) a second agent of the same owner in a DM gets only its own space", () => {
