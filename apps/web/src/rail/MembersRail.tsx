@@ -1,6 +1,6 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { Agent, ChatMember, DirectoryEntry } from "@sa/protocol";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { agents as fetchAgents, directory as fetchDirectory } from "../api";
 import { AgentAvatar, Avatar, Button, StatusDot } from "../ds";
 import { timeOf } from "../lib/format";
@@ -21,6 +21,8 @@ export function MembersRail({ chatId }: { chatId: string }) {
   const [roster, setRoster] = useState<Agent[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const isOwner = chat?.members.some((m) => m.member_id === user.id && m.role === "owner") ?? false;
   const canAddPeople = isOwner || chat?.kind === "room";
 
@@ -43,6 +45,8 @@ export function MembersRail({ chatId }: { chatId: string }) {
     setError(null);
     try {
       await job();
+      // the removed row is gone: park focus on the member list
+      listRef.current?.focus();
     } catch {
       setError("Couldn't update the members. Try again.");
     } finally {
@@ -55,7 +59,12 @@ export function MembersRail({ chatId }: { chatId: string }) {
 
   return (
     <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-3">
-      <ul className="flex flex-col gap-1">
+      <ul
+        ref={listRef}
+        tabIndex={-1}
+        aria-label="Members"
+        className="flex flex-col gap-1 outline-none"
+      >
         {chat.members.map((m) => {
           const isAgent = m.member_type === "agent";
           return (
@@ -79,36 +88,58 @@ export function MembersRail({ chatId }: { chatId: string }) {
                 )}
                 {m.role === "owner" && <div className="text-[12px] text-text-3">Owner</div>}
               </div>
-              {canRemove(m) && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  aria-label={`Remove ${m.display_name}`}
-                  onClick={() =>
-                    run(() =>
-                      removeWithKey({
-                        ...ctx,
-                        actor: user.display_name,
-                        target: {
-                          kind: isAgent ? "agent" : "user",
-                          id: m.member_id,
-                          name: m.display_name,
-                        },
-                      }),
-                    )
-                  }
-                >
-                  Remove
-                </Button>
-              )}
+              {canRemove(m) &&
+                (confirming === m.member_id ? (
+                  <span className="flex gap-1">
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={busy}
+                      aria-label={`Confirm remove ${m.display_name}`}
+                      onClick={() => {
+                        setConfirming(null);
+                        void run(() =>
+                          removeWithKey({
+                            ...ctx,
+                            actor: user.display_name,
+                            target: {
+                              kind: isAgent ? "agent" : "user",
+                              id: m.member_id,
+                              name: m.display_name,
+                            },
+                          }),
+                        );
+                      }}
+                    >
+                      Remove?
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Keep ${m.display_name}`}
+                      onClick={() => setConfirming(null)}
+                    >
+                      Keep
+                    </Button>
+                  </span>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy}
+                    aria-label={`Remove ${m.display_name}`}
+                    onClick={() => setConfirming(m.member_id)}
+                  >
+                    Remove
+                  </Button>
+                ))}
             </li>
           );
         })}
       </ul>
       {addablePeople.length > 0 && (
         <section className="flex flex-col gap-1">
-          <div className="text-[12px] text-text-2">Add to this chat</div>
+          <h3 className="text-[12px] font-normal text-text-2">Add to this chat</h3>
           {addablePeople.map((p) => (
             <div key={p.id} className="flex min-h-9 items-center gap-2 text-[13px]">
               <span className="flex-1 truncate">{p.display_name}</span>
@@ -129,7 +160,7 @@ export function MembersRail({ chatId }: { chatId: string }) {
       )}
       {addableAgents.length > 0 && (
         <section className="flex flex-col gap-1">
-          <div className="text-[12px] text-text-2">Add an agent</div>
+          <h3 className="text-[12px] font-normal text-text-2">Add an agent</h3>
           {addableAgents.map((a) => (
             <div key={a.id} className="flex min-h-9 items-center gap-2 text-[13px]">
               <AgentAvatar name={a.name} id={a.id} rosterId={a.roster_id} size={20} />

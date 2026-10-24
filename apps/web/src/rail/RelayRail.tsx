@@ -13,6 +13,7 @@ export function RelayRail({ chatId }: { chatId: string }) {
     if (!deviceId) return;
     let alive = true;
     const poll = async () => {
+      if (document.hidden) return;
       try {
         const res = await fetch("/relay/debug/recent?limit=50", {
           headers: { Authorization: `Bearer ${await ticket()}` },
@@ -24,9 +25,14 @@ export function RelayRail({ chatId }: { chatId: string }) {
     };
     void poll();
     const t = setInterval(poll, 2000);
+    const onVisible = () => {
+      if (!document.hidden) void poll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       alive = false;
       clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [ticket, deviceId]);
 
