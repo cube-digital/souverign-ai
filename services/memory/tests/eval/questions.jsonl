@@ -1,0 +1,40 @@
+{"question": "How many days does Harbor & Pine have to pay an invoice?", "expected_id": "c01", "lang": "en"}
+{"question": "What is the late fee on overdue payments?", "expected_id": "c01", "lang": "en"}
+{"question": "How long is the initial term of the supply agreement?", "expected_id": "c02", "lang": "en"}
+{"question": "How much notice stops the automatic renewal?", "expected_id": "c02", "lang": "en"}
+{"question": "What is the maximum amount Veltrin can be liable for?", "expected_id": "c03", "lang": "en"}
+{"question": "Is there any case where the liability cap does not apply?", "expected_id": "c03", "lang": "en"}
+{"question": "How long is the cure period before termination for cause?", "expected_id": "c04", "lang": "en"}
+{"question": "When can a party end the contract because of a material breach?", "expected_id": "c04", "lang": "en"}
+{"question": "By how much can unit prices increase each year?", "expected_id": "c05", "lang": "en"}
+{"question": "Is the annual price rise tied to the consumer price index?", "expected_id": "c05", "lang": "en"}
+{"question": "How many years does confidentiality last after the agreement ends?", "expected_id": "c06", "lang": "en"}
+{"question": "Which information is kept confidential, the pricing schedule and what else?", "expected_id": "c06", "lang": "en"}
+{"question": "How many business days does standard delivery to Rotterdam take?", "expected_id": "c07", "lang": "en"}
+{"question": "When do I get the tracking number for a standard order?", "expected_id": "c07", "lang": "en"}
+{"question": "What does express delivery cost on top of the order value?", "expected_id": "c08", "lang": "en"}
+{"question": "By what time must express orders be placed?", "expected_id": "c08", "lang": "en"}
+{"question": "Within how many hours must damaged goods be reported?", "expected_id": "c09", "lang": "en"}
+{"question": "Who pays for the replacement of a damaged pallet?", "expected_id": "c09", "lang": "en"}
+{"question": "What is the minimum order quantity per SKU?", "expected_id": "c10", "lang": "en"}
+{"question": "How much is the handling fee for small orders?", "expected_id": "c10", "lang": "en"}
+{"question": "On which days does the warehouse accept deliveries?", "expected_id": "c11", "lang": "en"}
+{"question": "Why can nothing be delivered on Fridays?", "expected_id": "c11", "lang": "en"}
+{"question": "Which store will host the retail pilot?", "expected_id": "c12", "lang": "en"}
+{"question": "Who is responsible for the pilot rollout?", "expected_id": "c12", "lang": "en"}
+{"question": "Who is renegotiating the volume discount?", "expected_id": "c13", "lang": "en"}
+{"question": "By when is the draft proposal for orders above 10,000 units due?", "expected_id": "c13", "lang": "en"}
+{"question": "What packaging defect rate did the audit find?", "expected_id": "c14", "lang": "en"}
+{"question": "What is the year-end target for packaging defects?", "expected_id": "c14", "lang": "en"}
+{"question": "Who is drafting the customs checklist?", "expected_id": "c15", "lang": "en"}
+{"question": "When is the next meeting after 15 October?", "expected_id": "c15", "lang": "en"}
+{"question": "Quelle est la durée de la garantie sur les pièces ?", "expected_id": "c16", "lang": "fr"}
+{"question": "Le fournisseur remplace-t-il gratuitement une pièce défectueuse ?", "expected_id": "c16", "lang": "fr"}
+{"question": "Dans quel délai faut-il demander un retour de marchandises ?", "expected_id": "c17", "lang": "fr"}
+{"question": "Qui paie le transport d'un retour en cas de défaut ?", "expected_id": "c17", "lang": "fr"}
+{"question": "Quel entrepôt a été choisi pour la distribution régionale ?", "expected_id": "c18", "lang": "fr"}
+{"question": "Qui est responsable de la mise en place de l'entrepôt de Lyon ?", "expected_id": "c18", "lang": "fr"}
+{"question": "Wie hoch ist die Vertragsstrafe bei Lieferverzug?", "expected_id": "c19", "lang": "de"}
+{"question": "Ab wie vielen Tagen Verspätung gilt die Vertragsstrafe?", "expected_id": "c19", "lang": "de"}
+{"question": "Wie oft wird die Verpackung künftig geprüft?", "expected_id": "c20", "lang": "de"}
+{"question": "Wer ist für die Qualitätsprüfung verantwortlich?", "expected_id": "c20", "lang": "de"}
