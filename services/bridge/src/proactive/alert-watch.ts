@@ -32,15 +32,18 @@ export async function startAlertWatch(
     );
     const [room] = await db.query<{ id: string }>("select id from sa.chats where seed_key = 'ops'");
     if (!ops || !room) return false;
+    // no baseline without a sim answer: retry next tick and post nothing meanwhile
+    const alerts = await fetchAlerts(ctx);
+    if (!alerts) return false;
     await db.query(
       `insert into sa.routines (id, kind, agent_id, chat_id, prompt)
        values ($1, 'alert_watch', $2, $3, 'Watch alerts') on conflict (id) do nothing`,
       [ROW_ID, ops.id, room.id],
     );
-    const alerts = await fetchAlerts(ctx);
-    for (const a of alerts ?? []) {
+    for (const a of alerts) {
       await db.query(
-        "insert into sa.alert_posts values ($1, now()) on conflict (alert_key) do nothing",
+        `insert into sa.alert_posts values ($1, now())
+         on conflict (alert_key) do update set posted_at = now()`,
         [alertKey(a)],
       );
     }
