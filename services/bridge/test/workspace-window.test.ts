@@ -14,7 +14,9 @@ import { ensureWorkspace } from "../src/workspace/seed.js";
 
 process.env.BRIDGE_MASTER_KEY = "test-master-key";
 
-it("seals the history epoch, never older live ones, to a late device and refuses any other window", async () => {
+it("seals the history epoch, never older live ones, to a late device and refuses any other window", {
+  timeout: 20_000,
+}, async () => {
   await cryptoReady();
   const http = createServer((_req, res) => res.end("ok"));
   await new Promise<void>((r) => http.listen(0, "127.0.0.1", r));

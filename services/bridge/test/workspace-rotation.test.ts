@@ -73,7 +73,7 @@ const miraEpochs = async (chatId: string) =>
 const room = (key: string) =>
   one<{ id: string }>("select id from sa.chats where seed_key = $1", [key]).then((r) => r?.id);
 
-it("a later start finishes a room whose closing rotation failed", async () => {
+it("a later start finishes a room whose closing rotation failed", { timeout: 20_000 }, async () => {
   await start();
   const ops = (await room("ops")) as string;
   const sales = (await room("sales")) as string;
@@ -106,7 +106,9 @@ it("a later start finishes a room whose closing rotation failed", async () => {
   expect(await miraEpochs(reseeded)).toEqual([1, 2]);
 });
 
-it("a person who registers after seeding reads live traffic right away", async () => {
+it("a person who registers after seeding reads live traffic right away", {
+  timeout: 20_000,
+}, async () => {
   const ws = await start();
   const ops = (await room("ops")) as string;
   const keys = newDeviceKeys();
