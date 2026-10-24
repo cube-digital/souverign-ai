@@ -1,6 +1,6 @@
 # Sovereign Agents
 
-On-prem demo for client: end-to-end encrypted chat and video calls where every user brings their
+On-prem demo: end-to-end encrypted chat and video calls where every user brings their
 own AI agents. Every model (LLM, speech-to-text, text-to-speech, embeddings) runs locally on one Mac
 (M4 Max, 36 GB). Nothing calls an external AI service.
 

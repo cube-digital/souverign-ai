@@ -9,9 +9,9 @@ Data: 2026-10-24. Răspunsurile la §2 și §14 din
 | D-2 | Vocea / limba | **Engleza e limba principală** (UI, demo, voci). Kokoro pentru en/fr/es/it, Piper pentru de/ro. XTTS-ro iese din scop. |
 | D-3 | Vizibilitatea notițelor din apel | Private la owner-ul agentului; ajung în chat doar după „Approve” (gated, ca `chat.send`). |
 | D-4 | Agenți care vorbesc în apel | Nu acum. Se decide la SP7 (stretch). |
-| D-5 | `client SDK` + sandbox the messaging server | Nu avem acces (A-1). Relay-ul propriu simulează the messaging server și rămâne înlocuibil. |
+| D-5 | SDK-ul de mesagerie al clientului + sandbox | Nu avem acces (A-1). Relay-ul propriu simulează serverul și rămâne înlocuibil. |
 | D-6 | Vector DB / memory layer (Couchbase Lite?) | Rămâne **PostgreSQL + pgvector** pentru demo, în spatele unui port `MemoryStore`. Detalii mai jos. |
-| D-7 | Locația codului | Repo nou `~/Workspaces/sovereign-agents`, separat de edge-ai; remote `github.com/cube-digital/souverign-ai`. |
+| D-7 | Locația codului | Repo nou `sovereign-agents`, separat de edge-ai; remote `github.com/cube-digital/souverign-ai`. |
 | D-8 | Cum testăm cu 3–4 oameni | **MacBook-ul e serverul**, testerii folosesc doar browserul și intră prin **Tailscale** (node sharing, HTTPS prin `tailscale serve`). Nu fiecare pe laptopul lui: modelele cer un M4 Max cu 36 GB, iar 4 instanțe separate nu s-ar vedea între ele. Fără cloud: un VPS n-are GPU pentru modele, iar Cloudflare Tunnel nu duce UDP pentru apeluri și decriptează TLS-ul. Comunicarea dintre testeri se face chiar prin aplicație; Slack/WhatsApp rămân rezervă pentru coordonare și bug-uri. Sub-proiect nou SP1.5. |
 | D-9 | Cum își are fiecare spațiul lui de memorie și cum împarte | Fiecare agent are un spațiu privat (`agent:<id>`); fiecare chat are spațiul lui (`chat:<id>`). **Agenții împart informația doar în chat-ul pe care îl au în comun, altfel nu.** Într-un chat, un agent folosește doar memoria acelui chat și ce știe el, nu ce a aflat în alte chat-uri. Proprietarul aduce agentul în chat; asta e acordul (setarea `share_private_in_chats`, implicit `always`, opțional `ask`/`never`). Agenții aceluiași om nu își împart memoria. Detalii mai jos. |
 
@@ -27,7 +27,7 @@ prin Sync Gateway. Pentru demo nu se potrivește:
 - **Ce ne trebuie e într-un singur SQL în pgvector:** hibridul vector + full-text (RRF), plus ACL-ul
   pe `namespace` și pe chat-urile în care agentul e membru.
 
-Unde are sens: memoria **on-device** din aplicația mobilă client (SDK-ul edge-ai), unde contează
+Unde are sens: memoria **on-device** din aplicația mobilă a clientului (SDK-ul edge-ai), unde contează
 E2E + sync + offline. Ca să rămână drumul deschis, serviciul `memory` scrie printr-un port
 `MemoryStore`; un backend Couchbase Lite se poate adăuga fără să schimbe API-ul.
 

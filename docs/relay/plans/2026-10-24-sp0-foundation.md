@@ -6,7 +6,7 @@
 
 ## Global Constraints
 
-- Repo: `~/Workspaces/sovereign-agents` (this repo). Read `AGENTS.md` once T1 lands.
+- Repo: this repository. Read `AGENTS.md` once T1 lands.
 - Inference is local. Runtime processes run with `HF_HUB_OFFLINE=1` (`TRANSFORMERS_OFFLINE=1` for smoke). Network is used only by `pnpm install`, `uv sync`/`uv lock` and `make models`.
 - Never run system installers: no `brew`, no `uv tool install`, no `curl … | bash`. If a check needs a missing tool, stop and report the `make prereqs` output as BLOCKED.
 - Never start an LLM outside T6. Only T6 runs `make up` / `make smoke`; it runs alone in the last wave. Never start a second vllm-mlx.
@@ -422,7 +422,7 @@ HERMES_SMOKE_API_KEY=   # empty = generated into .run/hermes-smoke.key
 ````markdown
 # Sovereign Agents
 
-On-prem demo for client: end-to-end encrypted chat and video calls where every user brings their
+On-prem demo: end-to-end encrypted chat and video calls where every user brings their
 own AI agents. Every model (LLM, speech-to-text, text-to-speech, embeddings) runs locally on one Mac
 (M4 Max, 36 GB). Nothing calls an external AI service.
 

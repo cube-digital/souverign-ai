@@ -4,7 +4,7 @@
 > **Pentru Claude Code:** brainstorming-ul (superpowers:brainstorming) e făcut în acest document. Pasul următor este câte un plan relay **per sub-proiect** (§11), în ordinea SP0 → SP7, în `docs/relay/plans/`. Nu scrie cod înainte de planul sub-proiectului curent.
 > **Decizii:** `docs/superpowers/specs/decisions.md`. **Amendamentele de mai jos au prioritate față de restul documentului.**
 
-**Un paragraf:** o aplicație de chat + apeluri video pentru 3–4 utilizatori, în stil client (E2E, relay care vede doar ciphertext), în care fiecare utilizator își creează și „învață” agenți proprii (Hermes Agent, un profil izolat per agent), îi invită în chat-uri și în apeluri (cu consimțământ explicit), iar toate modelele (LLM, STT, TTS, embeddings) rulează local pe un Mac M4 Pro/Max 36 GB.
+**Un paragraf:** o aplicație de chat + apeluri video pentru 3–4 utilizatori, în stilul unei aplicații de mesagerie securizată (E2E, relay care vede doar ciphertext), în care fiecare utilizator își creează și „învață” agenți proprii (Hermes Agent, un profil izolat per agent), îi invită în chat-uri și în apeluri (cu consimțământ explicit), iar toate modelele (LLM, STT, TTS, embeddings) rulează local pe un Mac M4 Pro/Max 36 GB.
 
 ---
 
@@ -59,7 +59,7 @@
 **Spus de tine:** React + backend, 3–4 useri, chat, fiecare își cheamă agenți pe care îi pregătește/învață, apel video cu agent (cineva decide să aducă un agent care înregistrează / fiecare poate veni cu agentul lui pentru meeting notes), „totul e suveran”, folosim și embeddings Gemma, demo pe M4 Pro/Max 36 GB, limbi europene (engleza principală — amendamentul 1), ștacheta funcțională = Viktor.
 
 **Presupuneri (corectează-mă în repo dacă greșesc):**
-- A-1. Nu avem un mediu client real; simulăm the messaging server cu un relay propriu. Dacă apare `client SDK` + sandbox, înlocuiește `packages/crypto` + `services/relay`, restul rămâne.
+- A-1. Nu avem acces la infrastructura reală a clientului; simulăm serverul de mesagerie cu un relay propriu. Dacă primim SDK-ul clientului + un sandbox, înlocuiește `packages/crypto` + `services/relay`, restul rămâne.
 - A-2. „Suveran” înseamnă: (i) agentul aparține unui user și rulează ca identitate separată (device + chei proprii), (ii) primește cheia unui chat/apel doar când e invitat, (iii) memoria lui e în namespace-ul lui, (iv) orice acțiune cu efect extern e gated de owner, (v) toți participanții văd când un agent e prezent și ce captează.
 - A-3. 1–2 agenți per user, max 6 agenți activi.
 - A-4. Demo-ul rulează pe un singur Mac; separarea relay/bridge e logică (procese separate, baze de date separate), nu fizică.
