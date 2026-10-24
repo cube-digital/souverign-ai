@@ -2,11 +2,11 @@ export type SlashAgent = { name: string; inChat: boolean };
 export type SlashCtx = { inThread: boolean; agents: SlashAgent[] };
 
 export const SLASH_COMMANDS = [
-  { name: "/summarize", hint: "Scribe summarizes this chat or thread" },
-  { name: "/catchup", hint: "Scribe tells you what you missed" },
-  { name: "/standup", hint: "Scribe writes today's standup" },
-  { name: "/ask", hint: "/ask <agent> <question>" },
-  { name: "/access", hint: "/access [agent] · what an agent can see here" },
+  { name: "/summarize", arg: false, hint: "Scribe summarizes this chat or thread" },
+  { name: "/catchup", arg: false, hint: "Scribe tells you what you missed" },
+  { name: "/standup", arg: false, hint: "Scribe writes today's standup" },
+  { name: "/ask", arg: true, hint: "/ask <agent> <question>" },
+  { name: "/access", arg: true, hint: "/access [agent] · what an agent can see here" },
 ] as const;
 
 const find = (ctx: SlashCtx, name: string) =>

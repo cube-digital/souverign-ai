@@ -1,5 +1,6 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { Agent, Chat } from "@sa/protocol";
+import { Fragment } from "react";
 import { agentsOutside } from "../channel/shared";
 import { StatusDot } from "../ds";
 import { cn } from "../lib/cn";
@@ -37,40 +38,49 @@ export function mentionOptions(
 export function MentionPopover({
   options,
   index,
+  listId,
   onPick,
 }: {
   options: MentionOption[];
   index: number;
+  listId: string;
   onPick: (o: MentionOption) => void;
 }) {
   if (options.length === 0) return null;
   const firstOutside = options.findIndex((o) => o.kind === "outside");
   return (
-    <ul
+    <div
+      id={listId}
+      role="listbox"
       aria-label="Mention"
       className="mb-1 max-h-56 overflow-auto rounded-lg border border-border-soft bg-bg-1 p-1 shadow-[var(--shadow-2)]"
     >
       {options.map((o, i) => (
-        <li key={`${o.kind}-${o.name}`}>
+        <Fragment key={`${o.kind}-${o.name}`}>
           {i === firstOutside && (
-            <div className="px-2 pt-1 text-[11px] text-text-2">not in this chat</div>
+            <div role="presentation" className="px-2 pt-1 text-[11px] text-text-2">
+              not in this chat
+            </div>
           )}
-          <button
-            type="button"
+          <div
+            id={`${listId}-${i}`}
+            role="option"
             tabIndex={-1}
-            aria-current={i === index}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onPick(o)}
+            aria-selected={i === index}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              onPick(o);
+            }}
             className={cn(
-              "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-left",
-              i === index && "bg-bg-2",
+              "flex cursor-pointer items-center gap-2 rounded-md border-l-2 border-transparent px-2 py-1",
+              i === index && "border-ai bg-bg-3 ring-1 ring-inset ring-border-strong",
             )}
           >
             {o.status && <StatusDot status={o.status} />}
             <span className="text-text-0">{o.name}</span>
-          </button>
-        </li>
+          </div>
+        </Fragment>
       ))}
-    </ul>
+    </div>
   );
 }

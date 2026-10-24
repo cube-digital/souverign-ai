@@ -5,41 +5,47 @@ import { SLASH_COMMANDS } from "./slash";
 export const slashOptions = (query: string) =>
   SLASH_COMMANDS.filter((c) => c.name.startsWith(`/${query.toLowerCase()}`));
 
-/** The five slash commands with hints; the composer drives the selection. */
+/** The five slash commands with hints; the composer drives the selection (combobox pattern). */
 export function SlashMenu({
   query,
   index,
+  listId,
   onPick,
 }: {
   query: string;
   index: number;
+  listId: string;
   onPick: (name: string) => void;
 }) {
   const items = slashOptions(query);
   if (items.length === 0) return null;
   return (
-    <ul
+    <div
+      id={listId}
+      role="listbox"
       aria-label="Commands"
       className="mb-1 rounded-lg border border-border-soft bg-bg-1 p-1 shadow-[var(--shadow-2)]"
     >
       {items.map((c, i) => (
-        <li key={c.name}>
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-current={i === index}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onPick(c.name)}
-            className={cn(
-              "flex w-full cursor-pointer items-baseline gap-2 rounded-md px-2 py-1 text-left",
-              i === index && "bg-bg-2",
-            )}
-          >
-            <span className="font-mono text-text-0">{c.name}</span>
-            <span className="text-[12px] text-text-2">{c.hint}</span>
-          </button>
-        </li>
+        <div
+          key={c.name}
+          id={`${listId}-${i}`}
+          role="option"
+          tabIndex={-1}
+          aria-selected={i === index}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onPick(c.name);
+          }}
+          className={cn(
+            "flex cursor-pointer items-baseline gap-2 rounded-md border-l-2 border-transparent px-2 py-1",
+            i === index && "border-ai bg-bg-3 ring-1 ring-inset ring-border-strong",
+          )}
+        >
+          <span className="font-mono text-text-0">{c.name}</span>
+          <span className="text-[12px] text-text-2">{c.hint}</span>
+        </div>
       ))}
-    </ul>
+    </div>
   );
 }

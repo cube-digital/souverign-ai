@@ -14,10 +14,22 @@ export function canAddAgent(chat: Chat, agent: Agent, userId: string): boolean {
   return agent.owner_user_id === userId && me?.role === "owner";
 }
 
-/** Inline offer shown when a message tags an agent that is not in the chat. */
+/** Why the user cannot add this agent, or null when they can. */
+export function cannotAddNote(chat: Chat, agent: Agent, userId: string): string | null {
+  if (canAddAgent(chat, agent, userId)) return null;
+  if (agent.owner_user_id !== userId) {
+    const owner = chat.members.find(
+      (m) => m.member_type === "user" && m.member_id === agent.owner_user_id,
+    );
+    return `Only ${owner?.display_name ?? "its owner"} can add ${agent.name}, a personal agent.`;
+  }
+  return "Only the chat owner can add personal agents.";
+}
+
+/** Inline offer shown when a message tags agents that are not in the chat. */
 export function AddAgentPrompt({
   chat,
-  agent,
+  agents,
   userId,
   busy,
   onAddAndSend,
@@ -25,27 +37,32 @@ export function AddAgentPrompt({
   onCancel,
 }: {
   chat: Chat;
-  agent: Agent;
+  agents: Agent[];
   userId: string;
   busy: boolean;
   onAddAndSend: () => void;
   onSendWithout: () => void;
   onCancel: () => void;
 }) {
-  const allowed = canAddAgent(chat, agent, userId);
-  const warning = rosterEntry(agent.roster_id)?.warning;
-  const warn = warning && chat.seed_key !== warning.outside ? warning.text : null;
+  const addable = agents.filter((a) => canAddAgent(chat, a, userId));
   return (
-    <Card ai className="mb-2 flex flex-col gap-1.5">
-      {allowed ? (
-        <p className="text-text-0">{`Add ${agent.name} to this chat? It will see messages from now on.`}</p>
-      ) : (
-        <p className="text-text-0">Only the chat owner can add personal agents.</p>
-      )}
-      <p className="text-[12px] text-text-2">{`It can use: ${agentTools(agent).join(", ")}`}</p>
-      {allowed && warn && <p className="text-[12px] text-warn-ink">{warn}</p>}
+    <Card ai className="mb-2 flex flex-col gap-2">
+      {agents.map((agent) => {
+        const note = cannotAddNote(chat, agent, userId);
+        const warning = rosterEntry(agent.roster_id)?.warning;
+        const warn = warning && chat.seed_key !== warning.outside ? warning.text : null;
+        return (
+          <div key={agent.id} className="flex flex-col gap-1">
+            <p className="text-text-0">
+              {note ?? `Add ${agent.name} to this chat? It will see messages from now on.`}
+            </p>
+            <p className="text-[12px] text-text-2">{`It can use: ${agentTools(agent).join(", ")}`}</p>
+            {!note && warn && <p className="text-[12px] text-warn-ink">{warn}</p>}
+          </div>
+        );
+      })}
       <div className="flex gap-2">
-        {allowed && (
+        {addable.length > 0 && (
           <Button size="sm" variant="primary" disabled={busy} onClick={onAddAndSend}>
             Add and send
           </Button>
