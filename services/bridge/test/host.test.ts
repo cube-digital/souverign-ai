@@ -178,8 +178,8 @@ describe("agent host", () => {
     const two = ana.seen.find((m) => (m.body as { text?: string }).text === "@SCOUT ping two");
     expect(textOf(replies[0] as Seen).endsWith("| @scout ping one")).toBe(true);
     expect(textOf(replies[1] as Seen).endsWith("| @SCOUT ping two")).toBe(true);
-    expect((replies[0]?.body as { reply_to?: string }).reply_to).toBe(one?.id);
-    expect((replies[1]?.body as { reply_to?: string }).reply_to).toBe(two?.id);
+    expect((replies[0]!.body as { reply_to?: string }).reply_to).toBe(one?.id);
+    expect((replies[1]!.body as { reply_to?: string }).reply_to).toBe(two?.id);
     expect((replies[1]?.ts ?? 0) - (replies[0]?.ts ?? 0)).toBeGreaterThanOrEqual(2900);
     expect(metaOf(replies[0] as Seen)?.tools).toEqual([]);
     expect(metaOf(replies[0] as Seen)?.trace?.[0]).toEqual({

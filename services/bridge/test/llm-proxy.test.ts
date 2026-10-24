@@ -19,7 +19,7 @@ process.env.RELAY_ADMIN_TOKEN = "t";
 
 const SSE = ['data: {"a":1}\n\n', 'data: {"b":"é"}\n\n', "data: [DONE]\n\n"];
 let server: Server;
-let seen: { url?: string; body: unknown }[];
+let seen: { url: string; body: unknown }[];
 let db: Db;
 let app: ReturnType<typeof buildApp>;
 
@@ -30,7 +30,7 @@ beforeAll(async () => {
       raw += c;
     });
     req.on("end", async () => {
-      seen.push({ url: req.url, body: raw ? JSON.parse(raw) : null });
+      seen.push({ url: req.url ?? "", body: raw ? JSON.parse(raw) : null });
       if (req.url?.endsWith("/models")) {
         res.setHeader("content-type", "application/json");
         return res.end('{"data":[]}');
