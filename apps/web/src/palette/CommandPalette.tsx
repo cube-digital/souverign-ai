@@ -67,11 +67,11 @@ function Palette({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  const items = useMemo<Item[]>(() => {
+  const all = useMemo<Item[]>(() => {
     const act = (a: PaletteAction) => () => {
       window.dispatchEvent(new CustomEvent(PALETTE_ACTION_EVENT, { detail: a }));
     };
-    const all: Item[] = [
+    return [
       ...s.chats.map((c) => ({
         id: `chat:${c.id}`,
         group: "Chats" as const,
@@ -93,7 +93,7 @@ function Palette({ onClose }: { onClose: () => void }) {
             const general = s.chats.find((c) => c.seed_key === "general")?.id;
             const target = current ?? general;
             navigate(target ? `/c/${encodeURIComponent(target)}` : "/", {
-              state: { prompt: `@${a.name} ` },
+              state: { compose: { text: `@${a.name} ` } },
             });
           },
         },
@@ -125,12 +125,16 @@ function Palette({ onClose }: { onClose: () => void }) {
       },
       { id: "act:agents", group: "Actions", label: "Open agents", run: () => navigate("/agents") },
     ];
-    return all
-      .map((i) => ({ i, score: fuzzyScore(query, i.label) }))
-      .filter((x): x is { i: Item; score: number } => x.score !== null)
-      .sort((a, b) => a.score - b.score)
-      .map((x) => x.i);
-  }, [s.chats, agentList, query, navigate, toast, current]);
+  }, [s.chats, agentList, navigate, toast, current]);
+  const items = useMemo(
+    () =>
+      all
+        .map((i) => ({ i, score: fuzzyScore(query, i.label) }))
+        .filter((x): x is { i: Item; score: number } => x.score !== null)
+        .sort((a, b) => a.score - b.score)
+        .map((x) => x.i),
+    [all, query],
+  );
 
   const sel = Math.min(active, Math.max(0, items.length - 1));
   useEffect(() => {
@@ -151,6 +155,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       e.preventDefault();
       setActive(items.length ? (sel - 1 + items.length) % items.length : 0);
     } else if (e.key === "Enter") {
+      if (e.nativeEvent.isComposing) return;
       e.preventDefault();
       run(items[sel]);
     }
@@ -165,6 +170,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       <div className="fixed inset-0 -z-10" onMouseDown={onClose} />
       <div
         role="dialog"
+        aria-modal="true"
         aria-label="Command palette"
         className="w-[min(560px,92vw)] overflow-hidden rounded-lg border border-border-soft bg-bg-1 shadow-lg"
       >
@@ -175,7 +181,9 @@ function Palette({ onClose }: { onClose: () => void }) {
             hideLabel
             placeholder="Search chats, agents and actions…"
             role="textbox"
+            aria-expanded={items.length > 0}
             aria-controls="palette-list"
+            aria-autocomplete="list"
             aria-activedescendant={items[sel] ? `pal-${items[sel].id}` : undefined}
             value={query}
             onChange={(e) => {
@@ -209,7 +217,10 @@ function Palette({ onClose }: { onClose: () => void }) {
               <span className="text-[11px] text-text-3">{it.group}</span>
             </div>
           ))}
-          {items.length === 0 && <div className="px-2 py-1.5 text-text-2">No matches</div>}
+        </div>
+        {items.length === 0 && <div className="px-3 py-1.5 text-text-2">No matches</div>}
+        <div role="status" aria-live="polite" className="sr-only">
+          {items.length === 1 ? "1 result" : `${items.length} results`}
         </div>
         <div className="flex gap-3 border-border-soft border-t px-3 py-1.5 text-[11px] text-text-3">
           <span>

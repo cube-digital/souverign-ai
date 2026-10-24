@@ -6,6 +6,8 @@ import { useSession } from "../state/session";
 import { markWelcomed } from "./firstRun";
 import { ensureScribeDm } from "./scribeDm";
 
+const COUNT_WORD: Record<number, string> = { 4: "Four", 5: "Five", 6: "Six", 7: "Seven" };
+
 export function WelcomePage() {
   const s = useSession();
   const toast = useToast();
@@ -33,11 +35,12 @@ export function WelcomePage() {
   }
 
   return (
-    <main className="mx-auto flex max-w-4xl flex-col gap-4 p-6 text-[13px] text-text-0">
+    <div className="mx-auto flex max-w-4xl flex-col gap-4 p-6 text-[13px] text-text-0">
       <header className="flex flex-col gap-1">
         <h1 className="text-[18px] font-semibold">Meet your team</h1>
         <p className="text-text-2">
-          Six agent teammates live in your chats. Tag one in any message to ask for help.
+          {COUNT_WORD[ROSTER.length] ?? ROSTER.length} agent teammates live in your chats. Tag one
+          in any message to ask for help.
         </p>
       </header>
       <ul className="grid list-none grid-cols-1 gap-3 p-0 md:grid-cols-2">
@@ -63,13 +66,13 @@ export function WelcomePage() {
       </ul>
       <p className="text-text-2">Every model runs on this Mac · the relay sees ciphertext only</p>
       <div className="flex gap-2">
-        <Button variant="primary" size="lg" disabled={busy} onClick={start}>
+        <Button variant="primary" size="lg" aria-busy={busy} onClick={busy ? undefined : start}>
           Get started
         </Button>
-        <Button variant="ghost" size="lg" disabled={busy} onClick={skip}>
+        <Button variant="ghost" size="lg" aria-busy={busy} onClick={busy ? undefined : skip}>
           Skip
         </Button>
       </div>
-    </main>
+    </div>
   );
 }
