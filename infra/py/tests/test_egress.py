@@ -36,8 +36,7 @@ def test_collect_includes_child_processes() -> None:
         [
             sys.executable,
             "-c",
-            "import socket,time;"
-            f"s=socket.create_connection(('127.0.0.1',{port}));time.sleep(30)",
+            f"import socket,time;s=socket.create_connection(('127.0.0.1',{port}));time.sleep(30)",
         ]
     )
     try:
