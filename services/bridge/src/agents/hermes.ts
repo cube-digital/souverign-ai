@@ -19,6 +19,7 @@ import {
   type ChatResult,
   type RuntimeAgent,
   splitThink,
+  visibleStream,
 } from "./runtime.js";
 import { hermesApiKey, mcpToken } from "./secrets.js";
 
@@ -93,13 +94,25 @@ export class HermesRuntime implements AgentRuntime {
 
   private bin = (): string => process.env.HERMES_BIN ?? "hermes";
 
-  private async allocatePort(agentId: string): Promise<number> {
-    const [own] = await this.deps.db.query<{ api_port: number | null }>(
-      "select api_port from sa.agents where id = $1",
-      [agentId],
+  private portLock: Promise<unknown> = Promise.resolve();
+
+  /** Serialized so concurrent pre-warms cannot pick the same port. */
+  private allocatePort(agentId: string): Promise<number> {
+    const run = this.portLock.then(() => this.pickPort(agentId));
+    this.portLock = run.catch(() => undefined);
+    return run;
+  }
+
+  private async pickPort(agentId: string): Promise<number> {
+    const rows = await this.deps.db.query<{ id: string; api_port: number | null }>(
+      "select id, api_port from sa.agents where api_port is not null",
     );
+    const own = rows.find((r) => r.id === agentId);
     if (own?.api_port) return own.api_port;
-    const used = new Set([...this.gateways.values()].map((g) => g.port));
+    const used = new Set([
+      ...[...this.gateways.values()].map((g) => g.port),
+      ...rows.map((r) => r.api_port),
+    ]);
     const port = PORTS.find((p) => !used.has(p));
     if (!port) throw new Error("no free agent port");
     await this.deps.db.query("update sa.agents set api_port = $1 where id = $2", [port, agentId]);
@@ -237,6 +250,80 @@ export class HermesRuntime implements AgentRuntime {
     const field = (msg.reasoning_content ?? msg.reasoning ?? "").trim();
     const reasoning = [field, split.reasoning].filter(Boolean).join("\n\n");
     return reasoning ? { content: split.content, reasoning } : { content: split.content };
+  }
+
+  /**
+   * Streaming chat: SSE `data:` lines from `/v1/chat/completions` with `stream: true`. Content
+   * deltas go to `onDelta`; reasoning deltas are only collected. If the stream fails before the
+   * first delta, the non-streaming `chat` runs once instead.
+   */
+  async chatStream(
+    agent: RuntimeAgent,
+    chatId: string,
+    messages: ChatMessage[],
+    onDelta: (text: string) => void,
+  ): Promise<ChatResult> {
+    let gotDelta = false;
+    try {
+      const g = this.gateways.get(agent.id);
+      const port = g?.port ?? (await this.allocatePort(agent.id));
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${hermesApiKey(agent.id)}`,
+          "x-hermes-session-id": `${agent.id}:${chatId}`,
+        },
+        body: JSON.stringify({ model: "hermes-agent", messages, stream: true }),
+        signal: AbortSignal.timeout(180_000),
+      });
+      if (!res.ok || !res.body) throw new Error(`hermes stream failed: ${res.status}`);
+      let content = "";
+      let reasoning = "";
+      let shown = 0;
+      let buf = "";
+      let done = false;
+      const handle = (line: string) => {
+        if (!line.startsWith("data:")) return;
+        const data = line.slice(5).trim();
+        if (data === "[DONE]") {
+          done = true;
+          return;
+        }
+        let delta: { content?: string; reasoning_content?: string; reasoning?: string } | undefined;
+        try {
+          delta = JSON.parse(data)?.choices?.[0]?.delta;
+        } catch {
+          return;
+        }
+        const r = delta?.reasoning_content ?? delta?.reasoning;
+        if (r) reasoning += r;
+        if (delta?.content) {
+          gotDelta = true;
+          content += delta.content;
+          const visible = visibleStream(content);
+          if (visible.length > shown) {
+            onDelta(visible.slice(shown));
+            shown = visible.length;
+          }
+        }
+      };
+      const decoder = new TextDecoder();
+      for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+        buf += decoder.decode(chunk, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const l of lines) handle(l.trim());
+        if (done) break;
+      }
+      if (buf.trim()) handle(buf.trim());
+      const split = splitThink(content);
+      const all = [reasoning.trim(), split.reasoning].filter(Boolean).join("\n\n");
+      return all ? { content: split.content, reasoning: all } : { content: split.content };
+    } catch (e) {
+      if (gotDelta) throw e;
+      return this.chat(agent, chatId, messages);
+    }
   }
 
   async stop(agent: RuntimeAgent): Promise<void> {

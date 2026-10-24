@@ -13,6 +13,7 @@ export class RelayClient implements RelayLink {
   private ws: WebSocket | null = null;
   private pending = new Map<string, Pending>();
   private deliverCbs = new Set<(seq: number, env: Envelope) => void>();
+  private signalCbs = new Set<(env: Envelope) => void>();
   private reconnectCbs = new Set<() => void>();
   private statusCbs = new Set<(s: RelayStatus) => void>();
   private backoff = 500;
@@ -45,6 +46,14 @@ export class RelayClient implements RelayLink {
   onDeliver(cb: (seq: number, env: Envelope) => void): () => void {
     this.deliverCbs.add(cb);
     return () => this.deliverCbs.delete(cb);
+  }
+
+  onSignal(cb: (env: Envelope) => void): () => void {
+    this.signalCbs.add(cb);
+    return () => this.signalCbs.delete(cb);
+  }
+  signal(env: Envelope): void {
+    if (this.ws?.readyState === 1) this.raw({ op: "signal", env });
   }
 
   private setStatus(s: RelayStatus): void {
@@ -149,6 +158,9 @@ export class RelayClient implements RelayLink {
     switch (msg.op) {
       case "deliver":
         for (const cb of this.deliverCbs) cb(msg.seq, msg.env);
+        return;
+      case "signal":
+        for (const cb of this.signalCbs) cb(msg.env);
         return;
       case "synced":
         if (msg.more) this.sync(msg.chat_id, msg.seq);

@@ -336,4 +336,73 @@ describe("relay", () => {
     const ack = await a.ask({ op: "send", env: good }, (m) => m.op === "ack");
     expect(ack.find((m) => m.op === "ack")).toMatchObject({ op: "ack" });
   });
+
+  it("forwards a member's signal to the other members only and never stores it", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const alice = await Client.connect(url);
+    const bob = await Client.connect(url);
+    await member(url, chat, alice.device, "add");
+    await member(url, chat, bob.device, "add");
+    const rowCount = () => {
+      const db = new Database(join(dir, "relay.sqlite"), { readonly: true });
+      try {
+        const tables = db
+          .prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%'")
+          .all() as { name: string }[];
+        return Object.fromEntries(
+          tables.map((t) => [
+            t.name,
+            (db.prepare(`select count(*) as n from "${t.name}"`).get() as { n: number }).n,
+          ]),
+        );
+      } finally {
+        db.close();
+      }
+    };
+    const before = rowCount();
+
+    const sig = env(chat, alice.device, { kind: "status" });
+    alice.send({ op: "signal", env: sig });
+    const got = await bob.next((m) => (m.op as string) === "signal");
+    await sleep(150);
+
+    expect(got).toEqual({ op: "signal", env: sig });
+    expect(alice.msgs.filter((m) => m.op !== "ready")).toEqual([]);
+    expect(rowCount()).toEqual(before);
+    expect(await recent(url)).toEqual([]);
+  });
+
+  it("refuses a signal from a non-member and forwards nothing", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const alice = await Client.connect(url);
+    const mallory = await Client.connect(url);
+    await member(url, chat, alice.device, "add");
+
+    const sig = env(chat, mallory.device, { kind: "status" });
+    const reply = await mallory.ask({ op: "signal", env: sig }, (m) => m.op === "error");
+    await sleep(150);
+
+    expect(reply).toEqual([
+      { op: "error", code: "not_member", message: expect.any(String), ref: sig.id },
+    ]);
+    expect(alice.msgs.filter((m) => m.op !== "ready")).toEqual([]);
+  });
+
+  it("rejects a status envelope sent via send and does not store it", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const alice = await Client.connect(url);
+    await member(url, chat, alice.device, "add");
+
+    const st = env(chat, alice.device, { kind: "status" });
+    const reply = await alice.ask({ op: "send", env: st }, (m) => m.op === "error");
+
+    expect(reply.find((m) => m.op === "error")).toMatchObject({
+      code: "bad_request",
+      ref: st.id,
+    });
+    expect(await recent(url)).toEqual([]);
+  });
 });

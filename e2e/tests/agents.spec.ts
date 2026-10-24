@@ -53,6 +53,25 @@ test("an invited agent answers when addressed, sees only what followed its invit
   await expect(rares.getByText("AFTER-OSPREY")).toBeVisible();
 
   // 4. Rareș addresses Nora; both see an agent reply that knows only the later message
+  // The echo runtime can answer faster than a poll, so record when the live bubble and the final
+  // reply first show up in Rareș's DOM.
+  // (browser code as a string: the e2e tsconfig has no DOM lib)
+  await rares.evaluate(`(() => {
+    const seen = { sent: performance.now() };
+    window.__seen = seen;
+    const scan = () => {
+      const text = document.body.textContent ?? "";
+      const activity = document.querySelector('[data-testid="agent-activity"]');
+      if (seen.live === undefined && activity) seen.live = performance.now();
+      if (seen.final === undefined && text.includes("echo:") && !activity)
+        seen.final = performance.now();
+    };
+    new MutationObserver(scan).observe(document.body, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+    });
+  })()`);
   await say(rares, "@Nora what do you see?");
   for (const p of [ana, rares]) {
     const reply = replies(p);
@@ -61,6 +80,20 @@ test("an invited agent answers when addressed, sees only what followed its invit
     await expect(reply).toContainText("AFTER-OSPREY");
     await expect(reply).not.toContainText("BEFORE-KESTREL");
   }
+
+  // the live bubble showed before the final message, and none remains after it
+  const seen = (await rares.evaluate("window.__seen")) as {
+    live?: number;
+    final?: number;
+    sent: number;
+  };
+  expect(seen.live, "live bubble appeared").toBeDefined();
+  expect(seen.final, "final reply appeared").toBeDefined();
+  expect(seen.live as number).toBeLessThanOrEqual(seen.final as number);
+  console.log(
+    `live bubble ${Math.round((seen.live as number) - seen.sent)} ms, final ${Math.round((seen.final as number) - seen.sent)} ms after send`,
+  );
+  for (const p of [ana, rares]) await expect(p.getByTestId("agent-activity")).toHaveCount(0);
 
   // 5. no mention, no reply
   await say(rares, "just talking among ourselves");

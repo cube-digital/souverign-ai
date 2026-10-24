@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Envelope } from "../src/index.js";
+import { ClientOp, Envelope, RelayOp } from "../src/index.js";
 
 const base = {
   v: 1,
@@ -20,6 +20,17 @@ describe("Envelope", () => {
     );
     expect(Envelope.safeParse({ ...base, kind: "key" }).success).toBe(false);
     expect(Envelope.safeParse({ ...base, kind: "msg", to_device: "dev_00000002" }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("signal ops", () => {
+  it("carry ephemeral status envelopes that never target a single device", () => {
+    const status = { ...base, kind: "status" } as const;
+    expect(ClientOp.safeParse({ op: "signal", env: status }).success).toBe(true);
+    expect(RelayOp.safeParse({ op: "signal", env: status }).success).toBe(true);
+    expect(Envelope.safeParse({ ...base, kind: "status", to_device: "dev_00000002" }).success).toBe(
       false,
     );
   });

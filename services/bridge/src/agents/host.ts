@@ -5,7 +5,7 @@ import {
   type RelayLink,
 } from "@sa/client";
 import { cryptoReady } from "@sa/crypto";
-import { TICKET_TTL_MS, type TraceStep } from "@sa/protocol";
+import { type ActivityBody, TICKET_TTL_MS, type TraceStep } from "@sa/protocol";
 import { signTicket } from "@sa/protocol/ticket";
 import type { Db } from "../db.js";
 import { ToolLog } from "../mcp/tool-log.js";
@@ -15,6 +15,8 @@ import { decrypt, encrypt } from "./secrets.js";
 
 const MIN_GAP_MS = 3000;
 const CONTEXT_MESSAGES = 20;
+const WRITING_GAP_MS = 400;
+const DRAFT_MAX = 8000;
 const DOWN = "I can't answer right now (the local model is not available).";
 
 export type AgentHostOptions = {
@@ -55,12 +57,21 @@ export class AgentHost {
     const rows = await this.opts.db.query<{ agent_id: string }>(
       "select distinct member_id as agent_id from sa.chat_members where member_type = 'agent' and removed_at is null",
     );
-    for (const r of rows) await this.deviceFor(r.agent_id);
+    for (const r of rows) this.prewarm(await this.deviceFor(r.agent_id));
+  }
+
+  /** Starts the agent's runtime in the background so the first question does not wait for it. */
+  private prewarm(dev: Device | null): void {
+    if (!dev) return;
+    this.opts.runtime.ensureStarted(dev.agent).catch((e) => {
+      log("agent prewarm failed", { agent: dev.agent.id, error: (e as Error).name });
+    });
   }
 
   async onAgentAdded(chatId: string, agentId: string): Promise<void> {
     const dev = await this.deviceFor(agentId);
     await dev?.engine.start([chatId]);
+    this.prewarm(dev);
   }
 
   /** Reloads the agent row and stops its gateway so the next turn writes the new SOUL.md. */
@@ -231,6 +242,18 @@ export class AgentHost {
     if (Date.now() - (dev.lastReply.get(chatId) ?? 0) < MIN_GAP_MS) return;
 
     const started = Date.now();
+    // Live signals are sent in order, never block the turn and are safe to lose.
+    let signals: Promise<void> = Promise.resolve();
+    const signal = (body: ActivityBody) => {
+      signals = signals.then(() => dev.engine.sendActivity(chatId, body)).catch(() => {});
+    };
+    signal({ type: "activity", phase: "thinking" });
+    const onTool = (agentId: string, name: string) => {
+      if (agentId === agent.id)
+        signal({ type: "activity", phase: "tool", tool: name.slice(0, 64) });
+    };
+    this.toolLog.on("tool", onTool);
+    let failed = false;
     let body: { text: string; meta: { tools: string[]; ms: number; trace?: TraceStep[] } };
     try {
       await runtime.ensureStarted(agent);
@@ -262,7 +285,24 @@ export class AgentHost {
       let reply: Awaited<ReturnType<AgentRuntime["chat"]>>;
       let steps: TraceStep[];
       try {
-        reply = await runtime.chat(agent, chatId, messages);
+        let draft = "";
+        let sent = "";
+        let lastSent = 0;
+        const flush = () => {
+          if (draft === sent) return;
+          sent = draft;
+          lastSent = Date.now();
+          signal({ type: "activity", phase: "writing", draft });
+        };
+        const streamed = runtime.chatStream?.bind(runtime);
+        if (!streamed) {
+          reply = await runtime.chat(agent, chatId, messages);
+        } else
+          reply = await streamed(agent, chatId, messages, (t) => {
+            draft = (draft + t).slice(0, DRAFT_MAX);
+            if (Date.now() - lastSent >= WRITING_GAP_MS) flush();
+          });
+        flush();
       } finally {
         steps = this.toolLog.end(agent.id);
       }
@@ -284,10 +324,15 @@ export class AgentHost {
         error: (e as Error).name,
         status: (e as { status?: unknown }).status,
       });
+      failed = true;
       await db.query("update sa.agents set status = 'error' where id = $1", [agent.id]);
       body = { text: DOWN, meta: { tools: [], ms: Date.now() - started } };
     }
+    this.toolLog.off("tool", onTool);
+    if (failed) signal({ type: "activity", phase: "error" });
+    await signals;
     dev.lastReply.set(chatId, Date.now());
+    let sent = true;
     try {
       await dev.engine.sendText(chatId, body.text, body.meta);
       log("agent replied", {
@@ -297,7 +342,10 @@ export class AgentHost {
         size: body.text.length,
       });
     } catch (e) {
+      sent = false;
       log("agent send failed", { agent: agent.id, error: (e as Error).message });
     }
+    if (!failed) signal({ type: "activity", phase: sent ? "done" : "error" });
+    await signals;
   }
 }

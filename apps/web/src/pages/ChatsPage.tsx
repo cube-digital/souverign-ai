@@ -72,6 +72,7 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
           messages={s.messages[active.id] ?? []}
           nameOf={(d) => names.get(d) ?? "Someone"}
           onDownload={download}
+          activity={s.activity[active.id] ?? {}}
           onOpenMembers={() => setMembers(true)}
         />
         <Composer
@@ -101,6 +102,7 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
           <ChatList
             chats={s.chats}
             unread={s.unread}
+            typing={Object.fromEntries(Object.keys(s.activity).map((id) => [id, true]))}
             activeId={active?.id ?? null}
             publicKey={s.publicKey}
             onSelect={(id) => {

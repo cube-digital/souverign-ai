@@ -169,6 +169,8 @@ export async function createRelay(
             return fail(ws, "bad_request", "already said hello");
           case "send": {
             const env = msg.env;
+            if (env.kind === "status")
+              return fail(ws, "bad_request", "status must use signal", env.id);
             const ok =
               env.sender_device === device &&
               db.isActive(env.chat_id, device) &&
@@ -188,6 +190,25 @@ export async function createRelay(
             });
             out(ws, { op: "ack", id: env.id, seq });
             fanOut(env, seq);
+            return;
+          }
+          case "signal": {
+            const env = msg.env;
+            if (env.kind !== "status")
+              return fail(ws, "bad_request", "signal must be status", env.id);
+            if (env.sender_device !== device || !db.isActive(env.chat_id, device)) {
+              return fail(ws, "not_member", "not a member of this chat", env.id);
+            }
+            log({
+              level: "debug",
+              msg: "signal",
+              chat_id: env.chat_id,
+              size: env.ciphertext.length,
+            });
+            for (const d of new Set(db.activeDevices(env.chat_id))) {
+              if (d === device) continue;
+              for (const s of sockets.get(d) ?? []) out(s, { op: "signal", env });
+            }
             return;
           }
           case "sync": {
@@ -231,7 +252,7 @@ export async function createRelay(
       } catch {
         log({ level: "error", msg: "op_failed", op: msg.op });
         const ref =
-          msg.op === "send"
+          msg.op === "send" || msg.op === "signal"
             ? msg.env.id
             : msg.op === "blob_put" || msg.op === "blob_get"
               ? msg.id
