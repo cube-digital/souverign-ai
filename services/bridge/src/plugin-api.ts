@@ -19,7 +19,7 @@ export type PluginContext = {
   relayAdmin: RelayAdmin;
   relayInternalUrl: string;
   /** A relay ticket for one of the bridge's own devices; the admin token itself is not shared. */
-  ticketFor(deviceId: string): string;
+  ticketFor(deviceId: string): Promise<string>;
   opsSimUrl: string;
   agentHost: AgentHostApi;
   log: Log;

@@ -35,7 +35,16 @@ const ctx: PluginContext = {
   db,
   relayAdmin,
   relayInternalUrl,
-  ticketFor: (deviceId) => signTicket(adminToken, deviceId, TICKET_TTL_MS).ticket,
+  ticketFor: async (deviceId) => {
+    // Only the bridge's own devices (agents and seeded people), never a user's device.
+    const own = await db.query(
+      `select 1 from sa.agent_devices where device_id = $1
+       union all select 1 from sa.seed_devices where device_id = $1`,
+      [deviceId],
+    );
+    if (own.length === 0) throw new Error("not a bridge device");
+    return signTicket(adminToken, deviceId, TICKET_TTL_MS).ticket;
+  },
   opsSimUrl,
   agentHost,
   log: (msg, extra) => logLine("info", msg, extra),

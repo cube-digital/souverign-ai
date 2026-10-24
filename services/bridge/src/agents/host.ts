@@ -22,13 +22,7 @@ import type { AgentHostApi, ProactiveRequest, StopResult } from "./api.js";
 import { postIntro } from "./intro.js";
 import { markReask, recordTurn, setFeedback, type TurnOutcome } from "./metrics.js";
 import { PgKeyStore } from "./pg-keystore.js";
-import {
-  type AgentRuntime,
-  abortableSleep,
-  abortError,
-  type ChatMessage,
-  type RuntimeAgent,
-} from "./runtime.js";
+import { type AgentRuntime, abortError, type ChatMessage, type RuntimeAgent } from "./runtime.js";
 import { decrypt, encrypt } from "./secrets.js";
 import { setForceFirstTool } from "./turn-policy.js";
 import { type Priority, TurnQueue } from "./turn-queue.js";
@@ -67,8 +61,6 @@ type Device = {
   deviceId: string;
   engine: ChatEngine;
   close: () => void;
-  lastReply: Map<string, number>;
-  turns: Promise<void>;
   /** the relay link, for the health check */
   link: RelayLink;
   /** last time the link was seen `ready` (or the device was built) */
@@ -140,6 +132,8 @@ export class AgentHost implements AgentHostApi {
   private threadOwner = new Map<string, { agentId: string; userId: string; until: number }>();
   /** One queue for every agent: the model can only serve a few turns at once. */
   private queue = new TurnQueue();
+  /** "agent|chat" → when the agent last replied there; kept here so a device rebuild keeps it. */
+  private lastReplyAt = new Map<string, number>();
 
   constructor(private opts: AgentHostOptions) {
     this.toolLog = opts.toolLog ?? new ToolLog();
@@ -173,14 +167,8 @@ export class AgentHost implements AgentHostApi {
         agent: dev.agent,
         chatId,
         alive: () => this.devices.get(agentId) === dev,
-        afterTurns: (post) => {
-          const run = dev.turns.then(post);
-          dev.turns = run.then(
-            () => {},
-            () => {},
-          );
-          return run;
-        },
+        afterTurns: (post) =>
+          this.queue.enqueue(post, "proactive", undefined, { agentId, requester: "intro" }),
       }).catch((e) => {
         log("agent intro failed", { agent: agentId, error: (e as Error).message });
       });
@@ -202,7 +190,14 @@ export class AgentHost implements AgentHostApi {
 
   async onAgentRemoved(chatId: string, agentId: string): Promise<void> {
     // Membership is checked on every message, so a removed chat simply stops getting replies.
-    this.devices.get(agentId)?.lastReply.delete(chatId);
+    this.lastReplyAt.delete(`${agentId}|${chatId}`);
+    // A turn in flight in the chat the agent left is stopped, not left to answer.
+    for (const turn of this.turns.values()) {
+      if (turn.agentId === agentId && turn.chatId === chatId) {
+        turn.stoppedBy = "the workspace";
+        turn.abort.abort();
+      }
+    }
   }
 
   /** Every 15 s: a device whose relay link has not been ready for 30 s is closed and rebuilt. */
@@ -319,12 +314,15 @@ export class AgentHost implements AgentHostApi {
       link,
       store,
       device,
-      isTrustedKeySender: async (chatId, sender) => {
+      isTrustedKeySender: async (chatId, sender, epoch) => {
+        // Only an epoch the bridge handed out (claimed) can carry a key.
         const rows = await db.query(
           `select d.id from sa.devices d
            join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id
-           where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null`,
-          [sender, chatId],
+           join sa.chats c on c.id = m.chat_id
+           where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null
+             and ($3::int is null or $3::int <= c.key_epoch)`,
+          [sender, chatId, epoch ?? null],
         );
         return rows.length > 0;
       },
@@ -334,8 +332,6 @@ export class AgentHost implements AgentHostApi {
       deviceId: row.device_id,
       engine,
       close,
-      lastReply: new Map(),
-      turns: Promise.resolve(),
       link,
       lastReadyAt: Date.now(),
     };
@@ -381,17 +377,12 @@ export class AgentHost implements AgentHostApi {
       const seed = await this.triggerFor(dev, m, m.body);
       if (!seed) return;
       if (ACCESS_RE.test(seed.text)) {
-        await this.answerAccess(dev, seed);
+        await this.queue.limit(seed.requesterUserId ?? "", () => this.answerAccess(dev, seed));
         return;
       }
       const turn = this.newTurn(dev, seed, "human");
       await this.noteReask(turn);
-      dev.turns = dev.turns
-        .then(() => this.runTurn(dev, turn))
-        .then(
-          () => {},
-          () => {},
-        );
+      void this.runTurn(dev, turn).catch(() => {});
     } catch (e) {
       log("agent message failed", { agent: dev.agent.id, error: (e as Error).message });
     }
@@ -407,9 +398,11 @@ export class AgentHost implements AgentHostApi {
     // 1. Only people trigger turns: agent devices never do, which prevents loops.
     const [sender] = await db.query<{ owner_id: string; display_name: string | null }>(
       `select d.owner_id, u.display_name from sa.devices d
-       left join sa.users u on u.id = d.owner_id
+       join sa.users u on u.id = d.owner_id and u.kind = 'person'
+       join sa.chat_members cm on cm.chat_id = $2 and cm.member_type = 'user'
+         and cm.member_id = d.owner_id and cm.removed_at is null
        where d.id = $1 and d.owner_type = 'user'`,
-      [m.senderDevice],
+      [m.senderDevice, m.chatId],
     );
     if (!sender) return null;
     // 2. Seeded history and replays are older than 5 minutes.
@@ -507,6 +500,7 @@ export class AgentHost implements AgentHostApi {
     if (!human) return;
     await setFeedback(db, {
       deviceId: dev.deviceId,
+      chatId: m.chatId,
       target: body.target,
       emoji: body.emoji,
       op: body.op,
@@ -571,12 +565,7 @@ export class AgentHost implements AgentHostApi {
       },
       "proactive",
     );
-    const run = dev.turns.then(() => this.runTurn(dev, turn));
-    dev.turns = run.then(
-      () => {},
-      () => {},
-    );
-    return run.catch(() => false);
+    return this.runTurn(dev, turn).catch(() => false);
   }
 
   /** "What can you access here?" is answered by the bridge from facts, never by the model. */
@@ -631,6 +620,8 @@ export class AgentHost implements AgentHostApi {
     t: { chatId: string; replyTo?: string; requesterUserId?: string },
   ) {
     if (!t.replyTo || !t.requesterUserId) return;
+    const now = Date.now();
+    for (const [k, v] of this.threadOwner) if (v.until < now) this.threadOwner.delete(k);
     this.threadOwner.set(`${t.chatId}|${t.replyTo}`, {
       agentId: dev.agent.id,
       userId: t.requesterUserId,
@@ -657,11 +648,19 @@ export class AgentHost implements AgentHostApi {
     return this.queue.enqueue(
       () => {
         running = true;
-        return this.executeTurn(dev, turn, act, () => signals);
+        // the device may have been rebuilt while the turn waited
+        return this.executeTurn(this.devices.get(turn.agentId) ?? dev, turn, act, () => signals);
       },
       turn.priority,
       (ahead) => {
-        if (!running) act({ phase: "queued", ahead });
+        if (!running && ahead > 0) act({ phase: "queued", ahead });
+      },
+      {
+        agentId: turn.agentId,
+        requester: turn.requesterUserId ?? "",
+        signal: turn.abort.signal,
+        // the 3 s gap between two replies in a chat delays the turn without holding a slot
+        notBefore: () => (this.lastReplyAt.get(`${turn.agentId}|${turn.chatId}`) ?? 0) + MIN_GAP_MS,
       },
     );
   }
@@ -691,9 +690,7 @@ export class AgentHost implements AgentHostApi {
     const model = runtime.modelName?.();
     if (model) meta.model = model.slice(0, 80);
     try {
-      // The 3 s gap between two replies in a chat delays the turn; it never drops it.
-      const gap = MIN_GAP_MS - (Date.now() - (dev.lastReply.get(chatId) ?? 0));
-      if (gap > 0) await abortableSleep(gap, abort);
+      if (abort.aborted) throw abortError();
       const [member] = await db.query(
         "select 1 from sa.chat_members where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null",
         [chatId, agent.id],
@@ -703,21 +700,23 @@ export class AgentHost implements AgentHostApi {
         await turn.eyes;
         await this.react(dev, turn, "👀", "remove");
         skipped = true;
+        act({ phase: "done" });
+        await pending();
         await this.record(turn, dev, "skipped", { queuedMs, firstTokenMs, doneMs: null, tools: 0 });
         return false;
       }
       act({ phase: "thinking" });
       this.toolLog.on("tool", onTool);
+      if (abort.aborted) throw abortError();
       await runtime.ensureStarted(agent);
       if (abort.aborted) throw abortError();
       const context = await this.context(dev, turn, act);
       read = context.read;
       act({ phase: "reading", count: read });
-      this.toolLog.begin(
-        agent.id,
-        chatId,
-        turn.requesterUserId ? { requesterUserId: turn.requesterUserId } : {},
-      );
+      this.toolLog.begin(agent.id, chatId, {
+        turnId: turn.id,
+        ...(turn.requesterUserId ? { requesterUserId: turn.requesterUserId } : {}),
+      });
       setForceFirstTool(agent.id, turn.force);
       let reply: Awaited<ReturnType<AgentRuntime["chat"]>>;
       try {
@@ -790,7 +789,7 @@ export class AgentHost implements AgentHostApi {
     meta.read = read;
     meta.ms = Date.now() - turn.started;
     await pending();
-    dev.lastReply.set(chatId, Date.now());
+    this.lastReplyAt.set(`${agent.id}|${chatId}`, Date.now());
     this.claimThread(dev, turn);
     let sent = true;
     try {

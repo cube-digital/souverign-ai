@@ -44,6 +44,18 @@ export async function postIntro(args: {
       [agent.id, chatId],
     );
     if (claimed.length === 0) return false;
+    // The agent may have been removed while it waited for the key or for its turns.
+    const [member] = await db.query(
+      "select 1 from sa.chat_members where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null",
+      [chatId, agent.id],
+    );
+    if (!member) {
+      await db.query("delete from sa.agent_intros where agent_id = $1 and chat_id = $2", [
+        agent.id,
+        chatId,
+      ]);
+      return false;
+    }
     const roster = rosterEntry(row.roster_id);
     const role = roster?.role ?? "personal assistant";
     const examples =

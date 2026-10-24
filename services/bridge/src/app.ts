@@ -373,20 +373,8 @@ export function buildApp({
     const g = await memberGuard(req, reply, true);
     if (!g) return;
     const target = (req.params as { userId: string }).userId;
-    const [active] = await db.query(
-      "select member_id from sa.chat_members where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null",
-      [g.chatId, target],
-    );
-    if (!active) return reply.code(404).send({ error: "not_found" });
-    // Relay first (idempotent): if the DB update fails afterwards the member is still active
-    // in the DB, so a retry re-sends the remove and completes.
-    await relayFor(g.chatId, target, "remove");
-    await db.query(
-      `update sa.chat_members set removed_at = now()
-       where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null`,
-      [g.chatId, target],
-    );
-    // The removed person's personal agents leave with them (they could still read the chat).
+    // The person's personal agents leave first (they could still read the chat), relay then DB,
+    // whether or not the person is still active, so a retry after a failure completes.
     const theirAgents = await db.query<{ id: string; device_id: string }>(
       `select a.id, ad.device_id from sa.chat_members m
        join sa.agents a on a.id = m.member_id and a.owner_user_id = $2
@@ -403,6 +391,21 @@ export function buildApp({
       );
       await agentHost?.onAgentRemoved(g.chatId, a.id);
     }
+    const [active] = await db.query(
+      "select member_id from sa.chat_members where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null",
+      [g.chatId, target],
+    );
+    if (!active && theirAgents.length === 0) return reply.code(404).send({ error: "not_found" });
+    if (active) {
+      // Relay first (idempotent): if the DB update fails afterwards the member is still active
+      // in the DB, so a retry re-sends the remove and completes.
+      await relayFor(g.chatId, target, "remove");
+      await db.query(
+        `update sa.chat_members set removed_at = now()
+         where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null`,
+        [g.chatId, target],
+      );
+    }
     log("member removed", { chat: g.chatId, agents: theirAgents.length });
     return loadChat(g.chatId);
   });
@@ -413,11 +416,10 @@ export function buildApp({
     const body = EpochClaimRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     const now = Date.now();
-    const recent = (epochClaims.get(g.chatId) ?? []).filter((t) => t > now - 60_000);
+    const recent = (epochClaims.get(g.userId) ?? []).filter((t) => t > now - 60_000);
     if (recent.length >= EPOCH_CLAIMS_PER_MIN) {
       return reply.code(429).send({ error: "too_many_claims" });
     }
-    epochClaims.set(g.chatId, [...recent, now]);
     // A claim may not jump far past the current epoch: that would burn the epoch space.
     const [row] = await db.query<{ key_epoch: number }>(
       `update sa.chats set key_epoch = greatest(key_epoch + 1, $2)
@@ -425,6 +427,7 @@ export function buildApp({
       [g.chatId, body.data.min],
     );
     if (!row) return reply.code(400).send({ error: "epoch_out_of_range" });
+    epochClaims.set(g.userId, [...recent, now]);
     return { epoch: Number(row.key_epoch) };
   });
 

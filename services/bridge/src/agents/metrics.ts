@@ -71,14 +71,14 @@ export async function markReask(
 /** Sets or clears 👍/👎 on the turn whose reply (sent by this agent device) was reacted to. */
 export async function setFeedback(
   db: Db,
-  r: { deviceId: string; target: string; emoji: string; op: "add" | "remove" },
+  r: { deviceId: string; chatId: string; target: string; emoji: string; op: "add" | "remove" },
 ): Promise<void> {
   const value = r.emoji === "👍" ? "up" : r.emoji === "👎" ? "down" : null;
   if (!value) return;
   const [reply] = await db.query<{ turn_id: string | null }>(
     `select body->'meta'->>'turn_id' as turn_id from sa.messages_plain
-     where device_id = $1 and id = $2 and sender_device = $1`,
-    [r.deviceId, r.target],
+     where device_id = $1 and id = $2 and sender_device = $1 and chat_id = $3`,
+    [r.deviceId, r.target, r.chatId],
   );
   if (!reply?.turn_id) return;
   if (r.op === "add") {

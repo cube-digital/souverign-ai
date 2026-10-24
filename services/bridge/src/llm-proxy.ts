@@ -32,8 +32,8 @@ export function registerLlmProxy(app: FastifyInstance, db: Db): void {
     return row?.template ?? null;
   };
 
-  /** Returns the agent's template, or null after replying 403/404. */
-  const admit = async (req: FastifyRequest, reply: FastifyReply): Promise<string | null> => {
+  /** Runs before the body is read: only a loopback gateway may talk to the proxy. */
+  const loopbackOnly = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     // A browser or a reverse proxy in front of the bridge is not a gateway: refuse forwarded
     // requests and any Host that is not a loopback name (DNS rebinding).
     const host = (req.headers.host ?? "").replace(/:\d+$/, "");
@@ -44,8 +44,11 @@ export function registerLlmProxy(app: FastifyInstance, db: Db): void {
       !["127.0.0.1", "localhost", "[::1]"].includes(host)
     ) {
       await reply.code(403).send({ error: "forbidden" });
-      return null;
     }
+  };
+
+  /** Returns the agent's template, or null after replying 404. */
+  const admit = async (req: FastifyRequest, reply: FastifyReply): Promise<string | null> => {
     const template = await templateOf((req.params as { agentId: string }).agentId);
     if (!template) {
       await reply.code(404).send({ error: "not_found" });
@@ -54,7 +57,7 @@ export function registerLlmProxy(app: FastifyInstance, db: Db): void {
     return template;
   };
 
-  app.get("/llm/:agentId/v1/models", async (req, reply) => {
+  app.get("/llm/:agentId/v1/models", { onRequest: loopbackOnly }, async (req, reply) => {
     if (!(await admit(req, reply))) return;
     try {
       const up = await fetch(`${llmTarget().baseUrl}/models`);
@@ -69,7 +72,7 @@ export function registerLlmProxy(app: FastifyInstance, db: Db): void {
 
   app.post(
     "/llm/:agentId/v1/chat/completions",
-    { bodyLimit: 16 * 1024 * 1024 },
+    { bodyLimit: 16 * 1024 * 1024, onRequest: loopbackOnly },
     async (req, reply) => {
       const template = await admit(req, reply);
       if (!template) return;

@@ -44,13 +44,19 @@ export class ChatEngine {
   private activityCbs = new Set<(a: ActivityEvent) => void>();
   private keyCbs = new Set<(chatId: string, epoch: number) => void>();
   private queue: Promise<void> = Promise.resolve();
-  private isTrustedKeySender: (chatId: string, senderDevice: string) => Promise<boolean>;
+  private isTrustedKeySender: (
+    chatId: string,
+    senderDevice: string,
+    epoch: number,
+  ) => Promise<boolean>;
 
   constructor(opts: {
     link: RelayLink;
     store: KeyStore;
     device: StoredDevice;
-    isTrustedKeySender?: ((chatId: string, senderDevice: string) => Promise<boolean>) | undefined;
+    isTrustedKeySender?:
+      | ((chatId: string, senderDevice: string, epoch: number) => Promise<boolean>)
+      | undefined;
   }) {
     this.isTrustedKeySender = opts.isTrustedKeySender ?? (async () => true);
     this.link = opts.link;
@@ -298,7 +304,7 @@ export class ChatEngine {
     }
     // The first key stored for an epoch stays: a later envelope cannot swap it.
     if (await this.store.getChatKey(env.chat_id, env.epoch)) return;
-    if (!(await this.isTrustedKeySender(env.chat_id, env.sender_device))) {
+    if (!(await this.isTrustedKeySender(env.chat_id, env.sender_device, env.epoch))) {
       console.warn("key_untrusted", env.chat_id, env.sender_device);
       return;
     }
