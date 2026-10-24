@@ -52,7 +52,9 @@ def render_config(
 
 def write_profile(home: Path, *, config: dict[str, Any], soul: str, env: dict[str, str]) -> None:
     home.mkdir(parents=True, exist_ok=True)
-    (home / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    config_path = home / "config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    config_path.chmod(0o600)  # holds the smoke API key
     (home / "SOUL.md").write_text(soul, encoding="utf-8")
     env_path = home / ".env"
     env_path.write_text("".join(f"{k}={v}\n" for k, v in env.items()), encoding="utf-8")
