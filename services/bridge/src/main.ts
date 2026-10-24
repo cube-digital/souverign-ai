@@ -15,20 +15,28 @@ const db = await openDb();
 await migrate(db);
 const runtime: AgentRuntime =
   process.env.AGENT_RUNTIME === "echo" ? new EchoRuntime() : new HermesRuntime({ db });
-const adminToken = process.env.RELAY_ADMIN_TOKEN ?? "";
+const adminToken = process.env.RELAY_ADMIN_TOKEN;
+if (!adminToken) throw new Error("RELAY_ADMIN_TOKEN is required");
+const toolLog = new ToolLog();
 const agentHost = new AgentHost({
   db,
   runtime,
   relayInternalUrl: process.env.RELAY_INTERNAL_URL || "http://127.0.0.1:8648",
   adminToken,
-  toolLog: new ToolLog(),
+  toolLog,
 });
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     void agentHost.stopAll().finally(() => process.exit(0));
   });
 }
-const app = buildApp({ db, relayAdmin, agentHost });
+const app = buildApp({
+  db,
+  relayAdmin,
+  agentHost,
+  toolLog,
+  rtSimUrl: process.env.RT_SIM_URL || "http://127.0.0.1:8649",
+});
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 8647);
 await app.listen({ host, port });

@@ -17,6 +17,8 @@ import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest }
 import { type AgentHost, registerAgentRoutes } from "./agents/routes.js";
 import { hashToken, newToken, SESSION_HOURS, verifyPin } from "./auth.js";
 import type { Db } from "./db.js";
+import { registerMcp } from "./mcp/server.js";
+import type { ToolLog } from "./mcp/tool-log.js";
 import type { RelayAdmin } from "./relay-admin.js";
 
 type DeviceRow = { id: string; owner_id: string; public_key: string };
@@ -28,10 +30,14 @@ export function buildApp({
   db,
   relayAdmin,
   agentHost,
+  toolLog,
+  rtSimUrl,
 }: {
   db: Db;
   relayAdmin: RelayAdmin;
   agentHost?: AgentHost;
+  toolLog?: ToolLog;
+  rtSimUrl?: string;
 }): FastifyInstance {
   const failedLogins = new Map<string, number[]>();
   const recentFailures = (user: string): number[] => {
@@ -354,5 +360,6 @@ export function buildApp({
     log,
   });
 
+  if (toolLog) registerMcp(app, { db, toolLog, rtSimUrl: rtSimUrl ?? "http://127.0.0.1:8649" });
   return app;
 }

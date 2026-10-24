@@ -152,12 +152,22 @@ const BY_TEMPLATE: Record<string, Tool[]> = { general: GENERAL, devops: OPS, qa:
 export type McpAppOptions = { db: Db; rtSimUrl?: string; toolLog?: ToolLog };
 
 export function buildMcpApp(opts: McpAppOptions): FastifyInstance {
-  const rtSimUrl = (opts.rtSimUrl ?? process.env.RT_SIM_URL ?? "http://127.0.0.1:8649").replace(
-    /\/$/,
-    "",
-  );
-  const toolLog = opts.toolLog ?? new ToolLog();
   const app = Fastify({ logger: false, forceCloseConnections: true });
+  registerMcp(app, {
+    db: opts.db,
+    rtSimUrl: opts.rtSimUrl ?? process.env.RT_SIM_URL ?? "http://127.0.0.1:8649",
+    toolLog: opts.toolLog ?? new ToolLog(),
+  });
+  return app;
+}
+
+/** Adds the /mcp routes (bearer MCP token auth, independent of user sessions) to `app`. */
+export function registerMcp(
+  app: FastifyInstance,
+  opts: { db: Db; rtSimUrl: string; toolLog: ToolLog },
+): void {
+  const rtSimUrl = opts.rtSimUrl.replace(/\/$/, "");
+  const toolLog = opts.toolLog;
 
   async function toolsFor(agentId: string): Promise<Tool[] | null> {
     const [row] = await opts.db.query<{ template: string }>(
@@ -230,6 +240,4 @@ export function buildMcpApp(opts: McpAppOptions): FastifyInstance {
     await server.connect(transport);
     await transport.handleRequest(req.raw, reply.raw, req.body);
   });
-
-  return app;
 }

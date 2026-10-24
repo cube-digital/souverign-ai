@@ -266,7 +266,11 @@ export class AgentHost {
         },
       };
     } catch (e) {
-      log("agent turn failed", { agent: agent.id, error: (e as Error).message });
+      log("agent turn failed", {
+        agent: agent.id,
+        error: (e as Error).name,
+        status: (e as { status?: unknown }).status,
+      });
       await db.query("update sa.agents set status = 'error' where id = $1", [agent.id]);
       body = { text: DOWN, meta: { tools: [], ms: Date.now() - started } };
     }
