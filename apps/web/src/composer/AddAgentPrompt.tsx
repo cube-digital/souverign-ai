@@ -1,6 +1,7 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { Agent, Chat } from "@sa/protocol";
 import { rosterEntry, TEMPLATE_INFO } from "@sa/protocol/roster";
+import { useEffect, useRef } from "react";
 import { Button, Card } from "../ds";
 
 export function agentTools(agent: Agent): string[] {
@@ -44,9 +45,13 @@ export function AddAgentPrompt({
   onSendWithout: () => void;
   onCancel: () => void;
 }) {
+  const first = useRef<HTMLButtonElement>(null);
   const addable = agents.filter((a) => canAddAgent(chat, a, userId));
+  useEffect(() => {
+    first.current?.focus();
+  }, []);
   return (
-    <Card ai className="mb-2 flex flex-col gap-2">
+    <Card ai role="status" className="mb-2 flex flex-col gap-2">
       {agents.map((agent) => {
         const note = cannotAddNote(chat, agent, userId);
         const warning = rosterEntry(agent.roster_id)?.warning;
@@ -63,7 +68,7 @@ export function AddAgentPrompt({
       })}
       <div className="flex gap-2">
         {addable.length > 0 && (
-          <Button size="sm" variant="primary" disabled={busy} onClick={onAddAndSend}>
+          <Button ref={first} size="sm" variant="primary" disabled={busy} onClick={onAddAndSend}>
             Add and send
           </Button>
         )}

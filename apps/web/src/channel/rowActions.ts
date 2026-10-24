@@ -1,6 +1,6 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { MessageBody } from "@sa/protocol";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router";
 import { useRail } from "../shell/rail";
 import { useSession } from "../state/session";
@@ -20,6 +20,10 @@ export function useRowActions(chatId: string): RowActions {
   const { engine } = useSession();
   const { open } = useRail();
   const navigate = useNavigate();
+  const nav = useRef(navigate);
+  useEffect(() => {
+    nav.current = navigate;
+  }, [navigate]);
   return useMemo(
     () => ({
       react: (id, emoji, op) => void engine?.sendReaction(chatId, id, emoji, op),
@@ -31,8 +35,10 @@ export function useRowActions(chatId: string): RowActions {
       },
       openThread: (rootId) => open({ kind: "thread", chatId, rootId }),
       ask: (rootId, agent, quote) =>
-        navigate(`/c/${chatId}/t/${rootId}`, { state: { compose: { text: `@${agent} `, quote } } }),
+        nav.current(`/c/${chatId}/t/${rootId}`, {
+          state: { compose: { text: `@${agent} `, quote } },
+        }),
     }),
-    [engine, chatId, open, navigate],
+    [engine, chatId, open],
   );
 }

@@ -13,6 +13,10 @@ export function ImagePreview({
   onDownload: (body: FileBody) => Promise<Uint8Array>;
 }) {
   const box = useRef<HTMLDivElement>(null);
+  const download = useRef(onDownload);
+  useEffect(() => {
+    download.current = onDownload;
+  }, [onDownload]);
   const [visible, setVisible] = useState(typeof IntersectionObserver === "undefined");
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -31,7 +35,8 @@ export function ImagePreview({
     if (!visible) return;
     let made: string | null = null;
     let live = true;
-    onDownload(body)
+    download
+      .current(body)
       .then((bytes) => {
         if (!live) return;
         made = URL.createObjectURL(new Blob([bytes as BlobPart], { type: body.mime }));
@@ -42,7 +47,7 @@ export function ImagePreview({
       live = false;
       if (made) URL.revokeObjectURL(made);
     };
-  }, [visible, onDownload, body]);
+  }, [visible, body]);
 
   return (
     <div ref={box} className="mt-1 min-h-12">
