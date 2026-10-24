@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 800" width="1280" height="800" role="img" aria-labelledby="arch-t arch-d">
+<title id="arch-t">Sovereign Agents system architecture</title>
+<desc id="arch-d">Browsers send ciphertext through an untrusted relay to the bridge on the MacBook. The bridge hosts agent devices, asks each agent's Hermes profile, which reasons on the local model and calls tools through the bridge's MCP server. Memory, audio and Postgres sit beside the bridge; connectors and calls are planned.</desc>
+<style>
+svg { --bg:#f6f8f8;--fg:#16201f;--muted:#55625f;--line:#d8e0de;--secure:#0f8a73;--gate:#a86a08;--d-blue:#2563eb;--d-green:#15803d;--d-purple:#7c3aed;--d-gray:#6b7280;--d-orange:#c2410c;--z-client:#eef4fd;--z-untrusted:#fdf1ef;--z-mac:#eef7f4;--z-hermes:#f2effd;--d-card:#ffffff; --sans: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-family: var(--sans); }
+@media (prefers-color-scheme: dark) { svg { --bg:#0e1113;--fg:#e6ecea;--muted:#9aa7a4;--line:#27302f;--secure:#3fd2b4;--gate:#f2b44b;--d-blue:#6ea8ff;--d-green:#4ade80;--d-purple:#b49cff;--d-gray:#9ca3af;--d-orange:#fb923c;--z-client:#111b2b;--z-untrusted:#261615;--z-mac:#0f1f1b;--z-hermes:#1c1830;--d-card:#151a1c; } }
+{ display: block; width: 100%; min-width: 1100px; height: auto; font-family: var(--sans); }
+.zone-label { font: 600 12px var(--mono); fill: var(--muted); letter-spacing: 0.04em; }
+.card { fill: var(--d-card); stroke: var(--line); }
+.row { fill: var(--bg); stroke: var(--line); }
+.planned { fill: none; stroke: var(--d-gray); stroke-dasharray: 5 4; }
+.t1 { font-size: 14px; font-weight: 600; fill: var(--fg); }
+.t2 { font-size: 12px; fill: var(--muted); }
+.t3 { font-size: 12.5px; font-weight: 600; fill: var(--fg); }
+.ico { fill: none; stroke: var(--secure); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.num { fill: var(--d-card); stroke: currentColor; }
+.numt { font: 600 11px var(--mono); fill: currentColor; }
+.l-req { stroke: var(--d-blue); color: var(--d-blue); }
+.l-res { stroke: var(--d-green); color: var(--d-green); }
+.l-mcp { stroke: var(--d-purple); color: var(--d-purple); stroke-dasharray: 6 4; }
+.l-sto { stroke: var(--d-gray); color: var(--d-gray); }
+.l-pln { stroke: var(--d-gray); color: var(--d-gray); stroke-dasharray: 4 4; }
+.l-llm { stroke: var(--d-orange); color: var(--d-orange); }
+path.l { fill: none; stroke-width: 1.6; }
+.tag { font: 600 10.5px var(--mono); }
+</style>
+<rect width="1280" height="800" rx="18" style="fill:var(--bg)"/>
+<defs>
+  <marker id="a-req" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" style="fill:var(--d-blue)"/></marker>
+  <marker id="a-res" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" style="fill:var(--d-green)"/></marker>
+  <marker id="a-mcp" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" style="fill:var(--d-purple)"/></marker>
+  <marker id="a-sto" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" style="fill:var(--d-gray)"/></marker>
+  <marker id="a-llm" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" style="fill:var(--d-orange)"/></marker>
+</defs>
+
+<!-- zones -->
+<rect x="16" y="16" width="254" height="214" rx="14" style="fill:var(--z-client)"/>
+<text class="zone-label" x="32" y="38">CLIENTS</text>
+<rect x="16" y="250" width="254" height="420" rx="14" style="fill:var(--z-untrusted)"/>
+<text class="zone-label" x="32" y="272">UNTRUSTED · CIPHERTEXT ONLY</text>
+<rect x="290" y="16" width="974" height="768" rx="16" style="fill:var(--z-mac)"/>
+<g transform="translate(306 24) scale(0.75)"><g class="ico"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></g></g>
+<text class="zone-label" x="330" y="38">MACBOOK M4 MAX · TRUSTED ZONE · NOTHING LEAVES THIS MACHINE</text>
+
+<!-- people -->
+<rect class="card" x="32" y="50" width="222" height="164" rx="10"/>
+<g transform="translate(46 62)"><g class="ico"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a6 6 0 0 1 12 0v1M16 3.13a4 4 0 0 1 0 7.75M22 21v-1a6 6 0 0 0-4-5.65"/></g></g>
+<text class="t1" x="80" y="80">People &amp; devices</text>
+<text class="t2" x="48" y="112">Browser on any laptop</text>
+<text class="t2" x="48" y="134">Own device key (IndexedDB)</text>
+<text class="t2" x="48" y="156">Testers over Tailscale HTTPS</text>
+<text class="t2" x="48" y="178">Presenter view: 4 users</text>
+
+<!-- relay -->
+<rect class="card" x="32" y="286" width="222" height="150" rx="10"/>
+<g transform="translate(46 298)"><g class="ico"><path d="M7 7h11l-3-3M17 17H6l3 3"/></g></g>
+<text class="t1" x="80" y="316">Relay</text>
+<text class="t2" x="48" y="346">WebSocket + SQLite</text>
+<text class="t2" x="48" y="368">Checks membership</text>
+<text class="t2" x="48" y="390">Signed tickets (12 h)</text>
+<text class="t2" x="48" y="412">Never holds a key</text>
+<path class="card" d="M81 466 a62 10 0 0 0 124 0 v48 a62 10 0 0 1 -124 0 z"/>
+<ellipse class="card" cx="143" cy="466" rx="62" ry="10"/>
+<text class="t3" x="143" y="496" text-anchor="middle">relay.sqlite</text>
+<text class="t2" x="143" y="514" text-anchor="middle">ciphertext · ids · sizes</text>
+<rect class="planned" x="32" y="556" width="222" height="96" rx="10"/>
+<g transform="translate(46 568)"><g class="ico" style="stroke:var(--d-gray)"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3"/></g></g>
+<text class="t1" x="80" y="586">Call server</text>
+<text class="t2" x="48" y="616">LiveKit · encrypted media</text>
+<text class="t2" x="48" y="638">planned</text>
+
+<!-- bridge -->
+<rect class="card" x="306" y="56" width="400" height="520" rx="12" style="stroke:var(--secure);stroke-width:1.5"/>
+<g transform="translate(322 66)"><g class="ico"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></g></g>
+<text class="t1" x="356" y="82">Bridge</text>
+<text class="t2" x="356" y="100">the only process that reads plaintext</text>
+<g>
+  <rect class="row" x="322" y="116" width="368" height="44" rx="8"/><text class="t3" x="338" y="135">Directory &amp; login</text><text class="t2" x="338" y="151">users · devices · chats · members</text>
+  <rect class="row" x="322" y="168" width="368" height="44" rx="8"/><text class="t3" x="338" y="187">Agent host</text><text class="t2" x="338" y="203">agent devices · E2E decrypt / encrypt</text>
+  <rect class="row" x="322" y="220" width="368" height="44" rx="8"/><text class="t3" x="338" y="239">Queue &amp; gates</text><text class="t2" x="338" y="255">@mention · member · rate limit</text>
+  <rect class="row" x="322" y="272" width="368" height="44" rx="8"/><text class="t3" x="338" y="291">Context builder</text><text class="t2" x="338" y="307">last 20 messages since the invite</text>
+  <rect class="row" x="322" y="324" width="368" height="44" rx="8"/><text class="t3" x="338" y="343">Hermes client</text><text class="t2" x="338" y="359">one session per chat · streaming</text>
+  <rect class="row" x="322" y="376" width="368" height="44" rx="8"/><text class="t3" x="338" y="395">MCP server</text><text class="t2" x="338" y="411">per-agent token · tool allowlist · trace</text>
+  <rect class="row" x="322" y="428" width="368" height="44" rx="8"/><text class="t3" x="338" y="447">Live activity</text><text class="t2" x="338" y="463">thinking · using tool · draft (ephemeral)</text>
+  <text class="tag" x="676" y="447" text-anchor="end" style="fill:var(--gate)">IN PROGRESS</text>
+  <rect class="planned" x="322" y="480" width="368" height="44" rx="8"/><text class="t3" x="338" y="499">Approvals · voice I/O</text><text class="t2" x="338" y="515">planned</text>
+  <text class="t2" x="338" y="552">keys of agent devices: AES-GCM at rest</text>
+</g>
+
+<!-- services under the bridge -->
+<path class="card" d="M326 622 a66 11 0 0 0 132 0 v82 a66 11 0 0 1 -132 0 z"/>
+<ellipse class="card" cx="392" cy="622" rx="66" ry="11"/>
+<text class="t3" x="392" y="664" text-anchor="middle">Postgres</text>
+<text class="t2" x="392" y="682" text-anchor="middle">+ pgvector</text>
+<rect class="card" x="484" y="610" width="220" height="110" rx="10"/>
+<g transform="translate(498 622)"><g class="ico"><path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17l9 5 9-5"/></g></g>
+<text class="t1" x="532" y="640">Memory</text>
+<text class="t2" x="500" y="670">EmbeddingGemma 2</text>
+<text class="t2" x="500" y="690">hybrid recall · citations</text>
+<text class="t2" x="500" y="710">private + per-chat spaces</text>
+<rect class="card" x="724" y="610" width="220" height="110" rx="10"/>
+<g transform="translate(738 622)"><g class="ico"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></g></g>
+<text class="t1" x="772" y="640">Audio API</text>
+<text class="t2" x="740" y="670">whisper.cpp speech-to-text</text>
+<text class="t2" x="740" y="690">Kokoro · Piper voices</text>
+<text class="t2" x="740" y="710">streamed per sentence</text>
+
+<!-- hermes -->
+<rect x="740" y="56" width="250" height="300" rx="12" style="fill:var(--z-hermes);stroke:var(--d-purple)"/>
+<g transform="translate(756 66)"><g class="ico" style="stroke:var(--d-purple)"><path d="M12 3l1.8 4.7L18.5 9.5 13.8 11.3 12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></g></g>
+<text class="t1" x="790" y="82">Hermes Agent</text>
+<text class="t2" x="790" y="100">one isolated profile per agent</text>
+<rect class="row" x="756" y="112" width="218" height="40" rx="8"/><text class="t3" x="770" y="137">SOUL · personality + rules</text>
+<rect class="row" x="756" y="158" width="218" height="40" rx="8"/><text class="t3" x="770" y="183">Agent loop · tool choice</text>
+<rect class="row" x="756" y="204" width="218" height="40" rx="8"/><text class="t3" x="770" y="229">Session per chat</text>
+<rect class="row" x="756" y="250" width="218" height="40" rx="8"/><text class="t3" x="770" y="275">Built-in tools off · MCP only</text>
+<rect class="row" x="756" y="296" width="218" height="40" rx="8"/><text class="t3" x="770" y="321">Reasoning → reply trace</text>
+
+<!-- local model -->
+<rect class="card" x="1020" y="56" width="228" height="150" rx="10" style="stroke:var(--d-orange)"/>
+<g transform="translate(1034 66)"><g class="ico" style="stroke:var(--d-orange)"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></g></g>
+<text class="t1" x="1068" y="82">Local model server</text>
+<text class="t2" x="1036" y="114">vllm-mlx · continuous batching</text>
+<text class="t2" x="1036" y="136">Qwen3.5 9B · fast</text>
+<text class="t2" x="1036" y="158">Gemma 4 26B · quality</text>
+<text class="t2" x="1036" y="180">one model resident</text>
+<text class="t2" x="1134" y="226" text-anchor="middle">prompt ⇄ completion</text>
+
+<!-- ops sim + connectors -->
+<rect class="card" x="740" y="386" width="250" height="110" rx="10"/>
+<g transform="translate(754 398)"><g class="ico"><path d="M3 12h4l3-8 4 16 3-8h4"/></g></g>
+<text class="t1" x="788" y="416">Ops backend simulator</text>
+<text class="t2" x="756" y="446">nodes · raft · DB replication</text>
+<text class="t2" x="756" y="466">users · QA runs · tickets</text>
+<text class="t2" x="756" y="486">stand-in for your systems</text>
+<rect class="planned" x="740" y="516" width="250" height="78" rx="10"/>
+<g transform="translate(754 528)"><g class="ico" style="stroke:var(--d-gray)"><path d="M9 2v6M15 2v6M7 8h10v4a5 5 0 0 1-10 0zM12 17v5"/></g></g>
+<text class="t1" x="788" y="546">Connectors</text>
+<text class="t2" x="756" y="576">GitLab · Jira · Confluence · planned</text>
+
+<!-- measured -->
+<rect class="card" x="1020" y="250" width="228" height="188" rx="10"/>
+<g transform="translate(1034 262)"><g class="ico"><path d="M12 14l4-4M3 14a9 9 0 0 1 18 0"/></g></g>
+<text class="t1" x="1068" y="280">Measured</text>
+<text class="t2" x="1036" y="310">13–32 s ops answers, local 9B</text>
+<text class="t2" x="1036" y="332">0.15 s first token</text>
+<text class="t2" x="1036" y="354">1.07 s STT for 11.9 s audio</text>
+<text class="t2" x="1036" y="376">40 / 40 memory recall@3</text>
+<text class="t2" x="1036" y="398">30.5 / 32 GiB memory</text>
+<text class="t2" x="1036" y="420">0 bytes to the internet</text>
+
+<!-- legend -->
+<rect class="card" x="1020" y="462" width="228" height="170" rx="10"/>
+<text class="t1" x="1036" y="488">Legend</text>
+<path class="l l-req" d="M1036 512h40" marker-end="url(#a-req)"/><text class="t2" x="1086" y="516">request · inbound</text>
+<path class="l l-res" d="M1036 536h40" marker-end="url(#a-res)"/><text class="t2" x="1086" y="540">reply to people</text>
+<path class="l l-mcp" d="M1036 560h40" marker-end="url(#a-mcp)"/><text class="t2" x="1086" y="564">MCP tool calls</text>
+<path class="l l-llm" d="M1036 584h40" marker-end="url(#a-llm)"/><text class="t2" x="1086" y="588">model inference</text>
+<path class="l l-sto" d="M1036 608h40" marker-end="url(#a-sto)"/><text class="t2" x="1086" y="612">storage · services</text>
+<path class="l l-pln" d="M1036 626h40"/><text class="t2" x="1086" y="630">planned</text>
+
+<!-- flows -->
+<path class="l l-req" d="M118 214V284" marker-end="url(#a-req)"/>
+<path class="l l-res" d="M168 286V216" marker-end="url(#a-res)"/>
+<g class="l-req"><circle class="num" cx="118" cy="240" r="9"/><text class="numt" x="118" y="244" text-anchor="middle">1</text></g>
+<path class="l l-req" d="M254 330H282V184H320" marker-end="url(#a-req)"/>
+<path class="l l-res" d="M322 198H268V360H256" marker-end="url(#a-res)"/>
+<g class="l-req"><circle class="num" cx="282" cy="250" r="9"/><text class="numt" x="282" y="254" text-anchor="middle">2</text></g>
+<path class="l l-req" d="M690 340H716V138H738" marker-end="url(#a-req)"/>
+<path class="l l-res" d="M740 168H730V354H692" marker-end="url(#a-res)"/>
+<g class="l-req"><circle class="num" cx="716" cy="240" r="9"/><text class="numt" x="716" y="244" text-anchor="middle">3</text></g>
+<path class="l l-mcp" d="M740 316H723V398H692" marker-end="url(#a-mcp)"/>
+<g class="l-mcp" style="stroke-dasharray:none"><circle class="num" cx="723" cy="376" r="9"/><text class="numt" x="723" y="380" text-anchor="middle">4</text></g>
+<path class="l l-llm" d="M992 130H1018" marker-start="url(#a-llm)" marker-end="url(#a-llm)"/>
+<path class="l l-sto" d="M690 412H738" marker-end="url(#a-sto)"/>
+<g class="l-sto"><circle class="num" cx="722" cy="412" r="9"/><text class="numt" x="722" y="416" text-anchor="middle">5</text></g>
+<path class="l l-pln" d="M690 420H710V556H738"/>
+<path class="l l-sto" d="M392 576V608" marker-end="url(#a-sto)"/>
+<path class="l l-pln" d="M594 576V608"/>
+<path class="l l-pln" d="M680 576V600H834V608"/>
+<path class="l l-pln" d="M254 604H262V524H306"/>
+</svg>
