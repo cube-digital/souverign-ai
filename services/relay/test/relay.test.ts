@@ -256,7 +256,9 @@ describe("relay", () => {
     relay = undefined;
     const bytes = Buffer.concat(readdirSync(dir).map((f) => readFileSync(join(dir, f))));
     expect(bytes.length).toBeGreaterThan(0);
-    expect(bytes.includes(Buffer.from(rows[0].ciphertext_prefix, "utf8"))).toBe(true);
+    const prefix = rows[0]?.ciphertext_prefix;
+    expect(prefix).toBeDefined();
+    expect(bytes.includes(Buffer.from(prefix ?? "", "utf8"))).toBe(true);
     expect(sentinels.filter((w) => bytes.includes(Buffer.from(w, "utf8")))).toEqual([]);
   });
 });
