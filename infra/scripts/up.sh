@@ -8,7 +8,7 @@ if [[ -f .env ]]; then set -a; source .env; set +a; fi
 if [[ -n "${1:-}" ]]; then export LLM_PROFILE="$1"; fi
 HERMES_SMOKE_PORT=8700
 
-alive() { [[ -f .run/$1.pid ]] && kill -0 "$(cat ".run/$1.pid")" 2>/dev/null; }
+source infra/scripts/pidlib.sh
 
 start() { # start <name> <cmd...>
   local name=$1
