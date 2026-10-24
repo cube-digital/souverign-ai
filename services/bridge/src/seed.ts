@@ -28,14 +28,19 @@ for (const [id, name] of USERS) {
   let pin = given.get(id);
   if (!pin && !existing) pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
   if (pin) {
-    await db.query(
+    // Only person rows get a PIN; a demo colleague (kind = 'seed') with this id is left alone.
+    const updated = await db.query(
       `insert into sa.users (id, display_name, pin_hash) values ($1, $2, $3)
-       on conflict (id) do update set display_name = excluded.display_name, pin_hash = excluded.pin_hash`,
+       on conflict (id) do update set display_name = excluded.display_name, pin_hash = excluded.pin_hash
+       where sa.users.kind = 'person' returning id`,
       [id, name, hashPin(pin)],
     );
-    set.push(`${id}:${pin}`);
+    if (updated.length > 0) set.push(`${id}:${pin}`);
   } else {
-    await db.query("update sa.users set display_name = $2 where id = $1", [id, name]);
+    await db.query("update sa.users set display_name = $2 where id = $1 and kind = 'person'", [
+      id,
+      name,
+    ]);
   }
 }
 await db.close();

@@ -2,6 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { rosterEntry } from "@sa/protocol/roster";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { renderHermesConfig } from "../src/agents/hermes.js";
@@ -109,10 +110,52 @@ describe("bridge MCP server", () => {
   });
 });
 
+describe("roster tool allowlists", () => {
+  const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
+
+  it("lists exactly the dev roster allowlist for a workspace dev agent and refuses cluster_health", async () => {
+    await db.query(
+      "insert into sa.agents (id, owner_user_id, name, template, scope, roster_id) values ('agent-dev-00000003', null, 'Dev', 'dev', 'workspace', 'dev')",
+    );
+    const dev = await connect(mcpToken("agent-dev-00000003"));
+    const listed = (await dev.listTools()).tools.map((t) => t.name).sort();
+    expect(listed).toEqual([...(rosterEntry("dev")?.tools ?? [])].sort());
+    expect(listed).toEqual(
+      expect.arrayContaining(["chat_read", "merge_requests", "pipeline_status", "build_log"]),
+    );
+
+    await dev.callTool({ name: "cluster_health", arguments: {} }).catch(() => undefined);
+    expect(opsSimHits).toEqual([]);
+  });
+
+  it("holds personal agents to their template: general has no sim tools, devops has no chat_digest", async () => {
+    await db.query(
+      "insert into sa.agents (id, owner_user_id, name, template, api_port) values ('agent-gen-00000004','ana','Gen','general',8704)",
+    );
+    const general = await connect(mcpToken("agent-gen-00000004"));
+    expect((await general.listTools()).tools.map((t) => t.name).sort()).toEqual([
+      "chat_read",
+      "image_generate",
+    ]);
+    for (const name of ["merge_requests", "crm_accounts"]) {
+      await general.callTool({ name, arguments: {} }).catch(() => undefined);
+    }
+    expect(opsSimHits).toEqual([]);
+
+    const devops = await connect(mcpToken("agent-devops-0001"));
+    expect((await devops.listTools()).tools.map((t) => t.name)).not.toContain("chat_digest");
+    const attempt = await devops
+      .callTool({ name: "chat_digest", arguments: {} })
+      .catch((e: Error) => ({ content: [{ text: `rejected ${e.message}` }] }));
+    expect(text(attempt)).not.toContain("chat_title");
+    expect(text(attempt)).not.toBe("[]");
+  });
+});
+
 describe("Hermes profile rendering", () => {
   it("runs on the local LLM with built-in tools off and the bridge MCP server attached", () => {
     const cfg = parse(renderHermesConfig({ agentId: "agent-devops-0001", port: 8701 }));
-    expect(cfg.model.base_url).toMatch(/^http:\/\/127\.0\.0\.1:8000/);
+    expect(cfg.model.base_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/llm\/agent-devops-0001\/v1$/);
     expect(cfg.agent.disabled_toolsets).toContain("terminal");
     expect(cfg.gateway.standalone).toBe(true);
     expect(cfg.gateway.api_server.port).toBe(8701);

@@ -2,7 +2,7 @@ import { cryptoReady } from "@sa/crypto";
 import { expect, it, vi } from "vitest";
 import { AgentHost } from "../src/agents/host.js";
 
-type Trust = (chatId: string, sender: string) => Promise<boolean>;
+type Trust = (chatId: string, sender: string, epoch?: number) => Promise<boolean>;
 const captured: { trust?: Trust } = {};
 
 vi.mock("@sa/client", async (orig) => {
@@ -23,15 +23,17 @@ import { migrate } from "../src/migrate.js";
 
 process.env.BRIDGE_MASTER_KEY = "test-master-key";
 
-it("accepts epoch keys only from the chat owner's devices, not other members", async () => {
+it("accepts epoch keys from any active human member's devices, never from agents or non-members", async () => {
   await cryptoReady();
   const db = await openDb("pglite://memory");
   await migrate(db);
-  for (const u of ["ana", "bob"])
+  for (const u of ["ana", "bob", "eve", "gone"])
     await db.query("insert into sa.users (id, display_name, pin_hash) values ($1,$1,'x')", [u]);
   for (const [id, u] of [
     ["dev-ana", "ana"],
     ["dev-bob", "bob"],
+    ["dev-eve", "eve"],
+    ["dev-gone", "gone"],
   ])
     await db.query(
       "insert into sa.devices (id, owner_type, owner_id, public_key) values ($1,'user',$2,$1)",
@@ -42,6 +44,12 @@ it("accepts epoch keys only from the chat owner's devices, not other members", a
   );
   await db.query(
     "insert into sa.chat_members (chat_id, member_type, member_id, role) values ('c1','user','ana','owner'), ('c1','user','bob','member')",
+  );
+  await db.query(
+    "insert into sa.chat_members (chat_id, member_type, member_id, role, removed_at) values ('c1','user','gone','member', now())",
+  );
+  await db.query(
+    "insert into sa.chat_members (chat_id, member_type, member_id, role) values ('c1','agent','ag1','member')",
   );
   await db.query(
     "insert into sa.agents (id, owner_user_id, name, template) values ('ag1','ana','Scout','general')",
@@ -68,7 +76,14 @@ it("accepts epoch keys only from the chat owner's devices, not other members", a
   });
   await host.onAgentAdded("c1", "ag1");
   expect(await captured.trust?.("c1", "dev-ana")).toBe(true);
-  expect(await captured.trust?.("c1", "dev-bob")).toBe(false);
+  expect(await captured.trust?.("c1", "dev-bob")).toBe(true);
+  expect(await captured.trust?.("c1", "dev-ag")).toBe(false);
+  expect(await captured.trust?.("c1", "dev-eve")).toBe(false);
+  expect(await captured.trust?.("c1", "dev-gone")).toBe(false);
+  // an unclaimed future epoch is rejected even from an active member; the claimed one is accepted
+  await db.query("update sa.chats set key_epoch = 2 where id = 'c1'");
+  expect(await captured.trust?.("c1", "dev-bob", 2)).toBe(true);
+  expect(await captured.trust?.("c1", "dev-bob", 3)).toBe(false);
   await host.stopAll();
   await db.close();
 });

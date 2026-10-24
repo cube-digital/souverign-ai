@@ -85,8 +85,8 @@ export async function createRelay(
           return json(res, 400, { error: "bad_request" });
         }
         if (!parsed.success) return json(res, 400, { error: "bad_request" });
-        const { chat_id, device_id, op } = parsed.data;
-        if (op === "add") db.addMember(chat_id, device_id);
+        const { chat_id, device_id, op, history_until_seq } = parsed.data;
+        if (op === "add") db.addMember(chat_id, device_id, history_until_seq);
         else db.removeMember(chat_id, device_id);
         log({ level: "info", msg: "membership", op, chat_id, device_id });
         return json(res, 200, { ok: true });
@@ -188,8 +188,8 @@ export async function createRelay(
               size: env.ciphertext.length,
               seq,
             });
-            out(ws, { op: "ack", id: env.id, seq });
             fanOut(env, seq);
+            out(ws, { op: "ack", id: env.id, seq });
             return;
           }
           case "signal": {
@@ -214,7 +214,7 @@ export async function createRelay(
           case "sync": {
             const added = db.activeSince(msg.chat_id, device);
             if (added === undefined) return fail(ws, "not_member", "not a member of this chat");
-            const after = Math.max(msg.since, added);
+            const after = msg.since;
             const rows = db.sync(msg.chat_id, device, after, SYNC_LIMIT);
             for (const r of rows) out(ws, { op: "deliver", seq: r.seq, env: r.env });
             const last = rows.at(-1)?.seq ?? after;

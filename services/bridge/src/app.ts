@@ -6,6 +6,7 @@ import {
   type DevicePublic,
   DeviceRegistration,
   type DirectoryEntry,
+  EpochClaimRequest,
   LoginRequest,
   type LoginResponse,
   RelayTicketRequest,
@@ -14,17 +15,23 @@ import {
 } from "@sa/protocol";
 import { signTicket } from "@sa/protocol/ticket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { type AgentHost, registerAgentRoutes } from "./agents/routes.js";
+import type { AgentHostApi, BridgeHooks } from "./agents/api.js";
+import { registerAgentRoutes } from "./agents/routes.js";
+import { registerTurnRoutes } from "./agents/turn-routes.js";
 import { hashToken, newToken, SESSION_HOURS, verifyPin } from "./auth.js";
 import type { Db } from "./db.js";
+import { registerLlmProxy } from "./llm-proxy.js";
 import { registerMcp } from "./mcp/server.js";
 import type { ToolLog } from "./mcp/tool-log.js";
+import type { BridgePlugin } from "./plugin-api.js";
 import type { RelayAdmin } from "./relay-admin.js";
 
 type DeviceRow = { id: string; owner_id: string; public_key: string };
 
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_FAILURES = 5;
+const EPOCH_CLAIMS_PER_MIN = 10;
+const MAX_EPOCH_JUMP = 8;
 
 export function buildApp({
   db,
@@ -32,14 +39,19 @@ export function buildApp({
   agentHost,
   toolLog,
   opsSimUrl,
+  plugins,
+  hooks,
 }: {
   db: Db;
   relayAdmin: RelayAdmin;
-  agentHost?: AgentHost;
+  agentHost?: AgentHostApi;
   toolLog?: ToolLog;
   opsSimUrl?: string;
+  plugins?: BridgePlugin[];
+  hooks?: BridgeHooks;
 }): FastifyInstance {
   const failedLogins = new Map<string, number[]>();
+  const epochClaims = new Map<string, number[]>();
   const recentFailures = (user: string): number[] => {
     const cutoff = Date.now() - LOGIN_WINDOW_MS;
     const live = (failedLogins.get(user) ?? []).filter((t) => t > cutoff);
@@ -68,7 +80,13 @@ export function buildApp({
       title: string;
       kind: Chat["kind"];
       created_by: string;
-    }>("select id, title, kind, created_by from sa.chats where id = $1", [chatId]);
+      topic: string | null;
+      seed_key: string | null;
+      key_epoch: number;
+    }>(
+      "select id, title, kind, created_by, topic, seed_key, key_epoch from sa.chats where id = $1",
+      [chatId],
+    );
     if (!chat) return null;
     const members = await db.query<{
       member_type: "user" | "agent";
@@ -78,11 +96,17 @@ export function buildApp({
       owner_display_name: string | null;
       agent_device_id: string | null;
       agent_public_key: string | null;
+      agent_scope: "personal" | "workspace" | null;
+      is_seed: boolean | null;
+      agent_status: "stopped" | "starting" | "running" | "error" | null;
+      joined_ms: number;
     }>(
       `select m.member_type, m.member_id, m.role,
          coalesce(u.display_name, a.name) as display_name,
          ou.display_name as owner_display_name,
-         ad.device_id as agent_device_id, dv.public_key as agent_public_key
+         ad.device_id as agent_device_id, dv.public_key as agent_public_key,
+         a.scope as agent_scope, (u.kind = 'seed') as is_seed, a.status as agent_status,
+         (extract(epoch from m.joined_at) * 1000)::float8 as joined_ms
        from sa.chat_members m
        left join sa.users u on m.member_type = 'user' and u.id = m.member_id
        left join sa.agents a on m.member_type = 'agent' and a.id = m.member_id
@@ -95,8 +119,12 @@ export function buildApp({
     const devices = await devicesOf(
       members.filter((m) => m.member_type === "user").map((m) => m.member_id),
     );
+    const { topic, seed_key, key_epoch, ...base } = chat;
     return {
-      ...chat,
+      ...base,
+      key_epoch: Number(key_epoch),
+      ...(topic ? { topic } : {}),
+      ...(seed_key ? { seed_key } : {}),
       members: members.map((m) => ({
         member_type: m.member_type,
         member_id: m.member_id,
@@ -105,6 +133,10 @@ export function buildApp({
           ? { owner_display_name: m.owner_display_name }
           : {}),
         role: m.role,
+        ...(m.agent_scope ? { agent_scope: m.agent_scope } : {}),
+        ...(m.is_seed ? { seed: true } : {}),
+        ...(m.agent_status ? { status: m.agent_status } : {}),
+        joined_at: Math.round(Number(m.joined_ms)),
         devices:
           m.member_type === "user"
             ? (devices.get(m.member_id) ?? [])
@@ -139,7 +171,7 @@ export function buildApp({
     req: FastifyRequest,
     reply: FastifyReply,
     needOwner: boolean,
-  ): Promise<{ userId: string; chatId: string } | null> => {
+  ): Promise<{ userId: string; chatId: string; role: "owner" | "member" } | null> => {
     const userId = await authenticate(req, reply);
     if (!userId) return null;
     const chatId = (req.params as { id: string }).id;
@@ -155,7 +187,7 @@ export function buildApp({
       await reply.code(403).send({ error: "forbidden" });
       return null;
     }
-    return { userId, chatId };
+    return { userId, chatId, role: m.role as "owner" | "member" };
   };
 
   app.get("/api/healthz", async () => ({ ok: true }));
@@ -163,14 +195,16 @@ export function buildApp({
   app.get(
     "/api/users",
     async (): Promise<UserSummary[]> =>
-      db.query<UserSummary>("select id, display_name from sa.users order by display_name"),
+      db.query<UserSummary>(
+        "select id, display_name from sa.users where kind = 'person' order by display_name",
+      ),
   );
 
   app.post("/api/login", async (req, reply) => {
     const body = LoginRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     const [u] = await db.query<{ id: string; display_name: string; pin_hash: string }>(
-      "select id, display_name, pin_hash from sa.users where id = $1",
+      "select id, display_name, pin_hash from sa.users where id = $1 and kind = 'person'",
       [body.data.user_id],
     );
     if (recentFailures(body.data.user_id).length >= LOGIN_MAX_FAILURES) {
@@ -206,7 +240,7 @@ export function buildApp({
     }
     // Relay first (add is idempotent): a failure leaves no device row, so the client can retry.
     const mine = await db.query<{ chat_id: string }>(
-      "select chat_id from sa.chat_members where member_type = 'user' and member_id = $1",
+      "select chat_id from sa.chat_members where member_type = 'user' and member_id = $1 and removed_at is null",
       [userId],
     );
     for (const c of mine) {
@@ -225,6 +259,7 @@ export function buildApp({
     if (owner?.owner_type !== "user" || owner.owner_id !== userId) {
       return reply.code(409).send({ error: "device_taken" });
     }
+    await hooks?.onDeviceRegistered?.(userId, body.data.device_id);
     log("device registered", { user: userId });
     return { ok: true };
   });
@@ -248,7 +283,7 @@ export function buildApp({
   app.get("/api/directory", async (req, reply): Promise<DirectoryEntry[] | undefined> => {
     if (!(await authenticate(req, reply))) return;
     const users = await db.query<UserSummary>(
-      "select id, display_name from sa.users order by display_name",
+      "select id, display_name from sa.users where kind = 'person' order by display_name",
     );
     const devices = await devicesOf(users.map((u) => u.id));
     return users.map((u) => ({ ...u, devices: devices.get(u.id) ?? [] }));
@@ -278,9 +313,10 @@ export function buildApp({
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     const others = [...new Set(body.data.member_user_ids)].filter((id) => id !== userId);
     const everyone = [userId, ...others];
-    const known = await db.query<{ id: string }>("select id from sa.users where id = any($1)", [
-      everyone,
-    ]);
+    const known = await db.query<{ id: string }>(
+      "select id from sa.users where id = any($1) and kind = 'person'",
+      [everyone],
+    );
     if (known.length !== everyone.length) return reply.code(400).send({ error: "unknown_user" });
     const devices = await devicesOf(everyone);
     const missing = everyone.filter((u) => (devices.get(u) ?? []).length === 0);
@@ -291,12 +327,11 @@ export function buildApp({
     const kind = others.length === 1 ? "dm" : "group";
     // Relay first: a relay failure leaves no chat row, so the client can simply retry.
     for (const u of everyone) await relayFor(chatId, u, "add");
-    await db.query("insert into sa.chats (id, title, kind, created_by) values ($1, $2, $3, $4)", [
-      chatId,
-      body.data.title,
-      kind,
-      userId,
-    ]);
+    // key_epoch 1: the creator mints the chat's first key (epoch 1) without a claim.
+    await db.query(
+      "insert into sa.chats (id, title, kind, created_by, key_epoch) values ($1, $2, $3, $4, 1)",
+      [chatId, body.data.title, kind, userId],
+    );
     for (const u of everyone) {
       await db.query(
         "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, $3)",
@@ -308,12 +343,20 @@ export function buildApp({
   });
 
   app.post("/api/chats/:id/members", async (req, reply) => {
-    const g = await memberGuard(req, reply, true);
+    const g = await memberGuard(req, reply, false);
     if (!g) return;
+    const [chat] = await db.query<{ kind: string }>("select kind from sa.chats where id = $1", [
+      g.chatId,
+    ]);
+    if (g.role !== "owner" && chat?.kind !== "room") {
+      return reply.code(403).send({ error: "forbidden" });
+    }
     const body = AddMemberRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     const target = body.data.user_id;
-    const [u] = await db.query("select id from sa.users where id = $1", [target]);
+    const [u] = await db.query("select id from sa.users where id = $1 and kind = 'person'", [
+      target,
+    ]);
     if (!u) return reply.code(400).send({ error: "unknown_user" });
     if ((await devicesOf([target])).get(target)?.length === 0) {
       return reply.code(409).send({ error: "missing_devices", missing_devices: [target] });
@@ -322,9 +365,10 @@ export function buildApp({
     await relayFor(g.chatId, target, "add");
     await db.query(
       `insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'member')
-       on conflict (chat_id, member_type, member_id) do update set removed_at = null, joined_at = now()`,
+       on conflict (chat_id, member_type, member_id) do update set removed_at = null, joined_at = now(), role = 'member'`,
       [g.chatId, target],
     );
+    await hooks?.onMemberAdded?.(g.chatId, target);
     log("member added", { chat: g.chatId });
     return loadChat(g.chatId);
   });
@@ -333,33 +377,87 @@ export function buildApp({
     const g = await memberGuard(req, reply, true);
     if (!g) return;
     const target = (req.params as { userId: string }).userId;
+    // The person's personal agents leave first (they could still read the chat), relay then DB,
+    // whether or not the person is still active, so a retry after a failure completes.
+    const theirAgents = await db.query<{ id: string; device_id: string }>(
+      `select a.id, ad.device_id from sa.chat_members m
+       join sa.agents a on a.id = m.member_id and a.owner_user_id = $2
+       join sa.agent_devices ad on ad.agent_id = a.id
+       where m.chat_id = $1 and m.member_type = 'agent' and m.removed_at is null`,
+      [g.chatId, target],
+    );
+    for (const a of theirAgents) {
+      await relayAdmin.setMember({ chat_id: g.chatId, device_id: a.device_id, op: "remove" });
+      await db.query(
+        `update sa.chat_members set removed_at = now()
+         where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null`,
+        [g.chatId, a.id],
+      );
+      await agentHost?.onAgentRemoved(g.chatId, a.id);
+    }
     const [active] = await db.query(
       "select member_id from sa.chat_members where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null",
       [g.chatId, target],
     );
-    if (!active) return reply.code(404).send({ error: "not_found" });
-    // Relay first (idempotent): if the DB update fails afterwards the member is still active
-    // in the DB, so a retry re-sends the remove and completes.
-    await relayFor(g.chatId, target, "remove");
-    await db.query(
-      `update sa.chat_members set removed_at = now()
-       where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null`,
-      [g.chatId, target],
-    );
-    log("member removed", { chat: g.chatId });
+    if (!active && theirAgents.length === 0) return reply.code(404).send({ error: "not_found" });
+    if (active) {
+      // Relay first (idempotent): if the DB update fails afterwards the member is still active
+      // in the DB, so a retry re-sends the remove and completes.
+      await relayFor(g.chatId, target, "remove");
+      await db.query(
+        `update sa.chat_members set removed_at = now()
+         where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null`,
+        [g.chatId, target],
+      );
+    }
+    log("member removed", { chat: g.chatId, agents: theirAgents.length });
     return loadChat(g.chatId);
   });
 
+  app.post("/api/chats/:id/epoch", async (req, reply) => {
+    const g = await memberGuard(req, reply, false);
+    if (!g) return;
+    const body = EpochClaimRequest.safeParse(req.body);
+    if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    const now = Date.now();
+    const recent = (epochClaims.get(g.userId) ?? []).filter((t) => t > now - 60_000);
+    if (recent.length >= EPOCH_CLAIMS_PER_MIN) {
+      return reply.code(429).send({ error: "too_many_claims" });
+    }
+    // A claim may not jump far past the current epoch: that would burn the epoch space.
+    const [row] = await db.query<{ key_epoch: number }>(
+      `update sa.chats set key_epoch = greatest(key_epoch + 1, $2)
+       where id = $1 and $2 <= key_epoch + ${MAX_EPOCH_JUMP} returning key_epoch`,
+      [g.chatId, body.data.min],
+    );
+    if (!row) return reply.code(400).send({ error: "epoch_out_of_range" });
+    epochClaims.set(g.userId, [...recent, now]);
+    return { epoch: Number(row.key_epoch) };
+  });
+
+  registerLlmProxy(app, db);
   registerAgentRoutes(app, {
     db,
     relayAdmin,
     ...(agentHost ? { agentHost } : {}),
+    ...(hooks ? { hooks } : {}),
     authenticate,
     memberGuard,
     loadChat,
     log,
   });
+  registerTurnRoutes(app, { authenticate, agentHost });
 
   if (toolLog) registerMcp(app, { db, toolLog, opsSimUrl: opsSimUrl ?? "http://127.0.0.1:8649" });
+  for (const p of plugins ?? []) {
+    p.routes?.(app, {
+      db,
+      authenticate,
+      agentHost,
+      opsSimUrl: opsSimUrl ?? "http://127.0.0.1:8649",
+      log,
+      hooks: hooks ?? {},
+    });
+  }
   return app;
 }

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
+import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 let port = 0;
@@ -35,7 +36,12 @@ afterAll(() => {
 describe("describeImage", () => {
   it("sends the image as a data URI to the local model and strips think blocks", async () => {
     const { describeImage } = await import("../src/agents/vision.js");
-    const text = await describeImage(new Uint8Array([1, 2, 3]), "image/png", "a.png");
+    const tiny = new Uint8Array(
+      await sharp({ create: { width: 8, height: 8, channels: 3, background: "#fff" } })
+        .png()
+        .toBuffer(),
+    );
+    const text = await describeImage(tiny, "image/png", "a.png");
     expect(text).toBe("A login screen.");
     const req = received[0];
     expect(req?.url).toBe("/v1/chat/completions");
@@ -44,8 +50,34 @@ describe("describeImage", () => {
     const parts = req?.body.messages[0].content;
     expect(parts[1]).toEqual({
       type: "image_url",
-      image_url: { url: "data:image/png;base64,AQID" },
+      image_url: { url: `data:image/png;base64,${Buffer.from(tiny).toString("base64")}` },
     });
     await expect(describeImage(new Uint8Array([1]), "application/pdf", "a.pdf")).rejects.toThrow();
+  });
+});
+
+describe("downscale", () => {
+  const png = async (width: number, height: number) =>
+    new Uint8Array(
+      await sharp({ create: { width, height, channels: 3, background: "#336699" } })
+        .png()
+        .toBuffer(),
+    );
+
+  it("fits images larger than 1280 px into 1280 x 1280 as PNG and leaves smaller ones untouched", async () => {
+    const { downscale } = await import("../src/agents/vision.js");
+    const big = await downscale(await png(3000, 1000), "image/png");
+    const meta = await sharp(Buffer.from(big.bytes)).metadata();
+    expect({ w: meta.width, h: meta.height, format: meta.format, mime: big.mime }).toEqual({
+      w: 1280,
+      h: 427,
+      format: "png",
+      mime: "image/png",
+    });
+
+    const small = await png(800, 600);
+    const kept = await downscale(small, "image/png");
+    expect(kept.mime).toBe("image/png");
+    expect(Buffer.from(kept.bytes).equals(Buffer.from(small))).toBe(true);
   });
 });

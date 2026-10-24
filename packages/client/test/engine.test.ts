@@ -32,7 +32,7 @@ async function makeDevice(
 }
 
 const texts = (seen: Msg[]) =>
-  seen.map((m) => (m.body as { text?: string }).text).filter((t) => t !== undefined);
+  seen.map((m) => (m.body as { text?: string } | null)?.text).filter((t) => t !== undefined);
 
 describe("ChatEngine", () => {
   it("members exchange encrypted messages and each sees every message once", async () => {
@@ -183,5 +183,48 @@ describe("ChatEngine", () => {
     });
     expect(b.seen).toEqual([]);
     expect(relay.log.every((s) => s.env.kind !== "status")).toBe(true);
+  });
+
+  it("a reply keeps its thread root and a reaction round-trips encrypted", async () => {
+    const relay = new FakeRelay();
+    const chat = randomId();
+    const a = await makeDevice(relay);
+    const b = await makeDevice(relay);
+    relay.addMember(chat, a.deviceId);
+    relay.addMember(chat, b.deviceId);
+    await a.engine.start([chat]);
+    await b.engine.start([chat]);
+    await a.engine.createEpoch(chat, [a.pub, b.pub]);
+
+    await a.engine.sendText(chat, "in thread", undefined, { replyTo: "root_message_1" });
+    await a.engine.sendReaction(chat, "root_message_1", "👍", "add");
+
+    await expect.poll(() => b.seen.length).toBe(2);
+    expect(b.seen.map((m) => m.body)).toEqual([
+      { type: "text", text: "in thread", reply_to: "root_message_1" },
+      { type: "reaction", target: "root_message_1", emoji: "👍", op: "add" },
+    ]);
+    expect(JSON.stringify(relay.log)).not.toContain("root_message_1");
+  });
+
+  it("shareEpochs lets a device added later decrypt an epoch-1 message", async () => {
+    const relay = new FakeRelay();
+    const chat = randomId();
+    const a = await makeDevice(relay);
+    const c = await makeDevice(relay);
+    relay.addMember(chat, a.deviceId);
+    await a.engine.start([chat]);
+    await a.engine.createEpoch(chat, [a.pub]);
+    expect(await a.engine.latestEpoch(chat)).toBe(1);
+
+    relay.addMember(chat, c.deviceId);
+    await a.engine.sendText(chat, "epoch one text");
+    await c.engine.start([chat]);
+    const sent = await a.engine.shareEpochs(chat, c.pub);
+
+    await expect.poll(() => c.seen.map((m) => m.status).at(-1)).toBe("ok");
+    expect(sent).toBe(1);
+    expect(texts(c.seen)).toEqual(["epoch one text"]);
+    expect(c.seen.at(-1)?.epoch).toBe(1);
   });
 });

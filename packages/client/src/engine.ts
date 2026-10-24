@@ -44,13 +44,19 @@ export class ChatEngine {
   private activityCbs = new Set<(a: ActivityEvent) => void>();
   private keyCbs = new Set<(chatId: string, epoch: number) => void>();
   private queue: Promise<void> = Promise.resolve();
-  private isTrustedKeySender: (chatId: string, senderDevice: string) => Promise<boolean>;
+  private isTrustedKeySender: (
+    chatId: string,
+    senderDevice: string,
+    epoch: number,
+  ) => Promise<boolean>;
 
   constructor(opts: {
     link: RelayLink;
     store: KeyStore;
     device: StoredDevice;
-    isTrustedKeySender?: ((chatId: string, senderDevice: string) => Promise<boolean>) | undefined;
+    isTrustedKeySender?:
+      | ((chatId: string, senderDevice: string, epoch: number) => Promise<boolean>)
+      | undefined;
   }) {
     this.isTrustedKeySender = opts.isTrustedKeySender ?? (async () => true);
     this.link = opts.link;
@@ -89,10 +95,14 @@ export class ChatEngine {
     for (const c of this.chats) this.link.sync(c, await this.store.getCursor(c));
   }
 
-  async createEpoch(chatId: string, devices: DevicePublic[]): Promise<number> {
-    const epoch = (await this.store.latestEpoch(chatId)) + 1;
+  async latestEpoch(chatId: string): Promise<number> {
+    return this.store.latestEpoch(chatId);
+  }
+
+  async createEpoch(chatId: string, devices: DevicePublic[], epoch?: number): Promise<number> {
+    const next = Math.max((await this.store.latestEpoch(chatId)) + 1, epoch ?? 0);
     const key = newChatKey();
-    await this.store.putChatKey(chatId, epoch, key);
+    await this.store.putChatKey(chatId, next, key);
     for (const d of devices) {
       try {
         await this.link.send({
@@ -101,7 +111,7 @@ export class ChatEngine {
           chat_id: chatId,
           sender_device: this.device.deviceId,
           to_device: d.device_id,
-          epoch,
+          epoch: next,
           kind: "key",
           nonce: "",
           ciphertext: sealKey(key, d.public_key),
@@ -112,15 +122,52 @@ export class ChatEngine {
         if (!(e instanceof Error && e.message === "not_member")) throw e;
       }
     }
-    return epoch;
+    return next;
+  }
+
+  /** Seal every epoch key this device holds, for one device, so it can read older messages. */
+  async shareEpochs(chatId: string, device: DevicePublic): Promise<number> {
+    const latest = await this.store.latestEpoch(chatId);
+    let sent = 0;
+    for (let epoch = 1; epoch <= latest; epoch++) {
+      const key = await this.store.getChatKey(chatId, epoch);
+      if (!key) continue;
+      try {
+        await this.link.send({
+          v: 1,
+          id: randomId(),
+          chat_id: chatId,
+          sender_device: this.device.deviceId,
+          to_device: device.device_id,
+          epoch,
+          kind: "key",
+          nonce: "",
+          ciphertext: sealKey(key, device.public_key),
+          ts: Date.now(),
+        });
+        sent++;
+      } catch (e) {
+        // Same tolerance as createEpoch: a device the relay does not know yet is skipped.
+        if (!(e instanceof Error && e.message === "not_member")) throw e;
+      }
+    }
+    return sent;
   }
 
   sendText(
     chatId: string,
     text: string,
     meta?: Extract<MessageBody, { type: "text" }>["meta"],
+    opts?: { replyTo?: string; ts?: number },
   ): Promise<void> {
-    return this.sendBody(chatId, meta ? { type: "text", text, meta } : { type: "text", text });
+    const body: MessageBody = { type: "text", text };
+    if (meta) body.meta = meta;
+    if (opts?.replyTo) body.reply_to = opts.replyTo;
+    return this.sendBody(chatId, body, opts?.ts);
+  }
+
+  sendReaction(chatId: string, target: string, emoji: string, op: "add" | "remove"): Promise<void> {
+    return this.sendBody(chatId, { type: "reaction", target, emoji, op });
   }
 
   sendSystem(chatId: string, text: string): Promise<void> {
@@ -130,12 +177,13 @@ export class ChatEngine {
   async sendFile(
     chatId: string,
     file: { name: string; mime: string; bytes: Uint8Array },
+    opts?: { replyTo?: string },
   ): Promise<void> {
     await this.keyFor(chatId); // fail early with no_key
     const enc = encryptBytes(file.bytes);
     const blobId = randomId();
     await this.link.putBlob(blobId, chatId, enc.ciphertext);
-    await this.sendBody(chatId, {
+    const body: MessageBody = {
       type: "file",
       blob_id: blobId,
       name: file.name,
@@ -143,7 +191,9 @@ export class ChatEngine {
       size: file.bytes.length,
       key: enc.key,
       nonce: enc.nonce,
-    });
+    };
+    if (opts?.replyTo) body.reply_to = opts.replyTo;
+    await this.sendBody(chatId, body);
   }
 
   async downloadFile(body: FileBody): Promise<Uint8Array> {
@@ -197,7 +247,7 @@ export class ChatEngine {
     }
   }
 
-  private async sendBody(chatId: string, body: MessageBody): Promise<void> {
+  private async sendBody(chatId: string, body: MessageBody, ts?: number): Promise<void> {
     const { epoch, key } = await this.keyFor(chatId);
     const id = randomId();
     const { nonce, ciphertext } = encrypt(key, JSON.stringify(body), messageAad(chatId, epoch, id));
@@ -210,7 +260,7 @@ export class ChatEngine {
       kind: "msg",
       nonce,
       ciphertext,
-      ts: Date.now(),
+      ts: ts ?? Date.now(),
     });
   }
 
@@ -252,7 +302,9 @@ export class ChatEngine {
     } catch {
       return;
     }
-    if (!(await this.isTrustedKeySender(env.chat_id, env.sender_device))) {
+    // The first key stored for an epoch stays: a later envelope cannot swap it.
+    if (await this.store.getChatKey(env.chat_id, env.epoch)) return;
+    if (!(await this.isTrustedKeySender(env.chat_id, env.sender_device, env.epoch))) {
       console.warn("key_untrusted", env.chat_id, env.sender_device);
       return;
     }

@@ -20,7 +20,13 @@ process.env.BRIDGE_MASTER_KEY = "test-master-key";
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const DOWN = "I can't answer right now (the local model is not available).";
 
-type Seen = { senderDevice: string; status: string; body: MessageBody | null };
+type Seen = {
+  id: string;
+  ts: number;
+  senderDevice: string;
+  status: string;
+  body: MessageBody | null;
+};
 
 let db: Db;
 let relay: FakeRelay;
@@ -120,11 +126,27 @@ async function addAgent(
   return agent as { id: string; device_id: string };
 }
 
+/** Mints the next chat key the way the web does: claim the epoch from the bridge first. */
+async function claimEpoch(ana: Awaited<ReturnType<typeof anaInChat>>, devices: DevicePublic[]) {
+  const [r] = await db.query<{ key_epoch: number }>(
+    "update sa.chats set key_epoch = key_epoch + 1 where id = $1 returning key_epoch",
+    [ana.chatId],
+  );
+  return ana.engine.createEpoch(ana.chatId, devices, r?.key_epoch);
+}
+
 const textOf = (m: Seen) => (m.body as { text: string }).text;
 const metaOf = (m: Seen) =>
   (m.body as { meta?: { tools?: string[]; ms?: number; trace?: unknown[] } }).meta;
+// Join intros are chips, not answers; reactions are not answers either.
 const from = (seen: Seen[], deviceId: string) =>
-  seen.filter((m) => m.senderDevice === deviceId && m.status === "ok");
+  seen.filter(
+    (m) =>
+      m.senderDevice === deviceId &&
+      m.status === "ok" &&
+      m.body?.type === "text" &&
+      (m.body as { meta?: { trigger?: string } }).meta?.trigger !== "intro",
+  );
 
 afterEach(async () => {
   await host.stopAll();
@@ -136,10 +158,10 @@ describe("agent host", () => {
     await setup(new EchoRuntime());
   });
 
-  it("replies only when addressed by name, at most once per 3 seconds", async () => {
+  it("replies only when addressed by name, in a thread, and waits out the 3 second gap instead of dropping the turn", async () => {
     const ana = await anaInChat();
     const agent = await addAgent(ana, "Scout");
-    await ana.engine.createEpoch(ana.chatId, [
+    await claimEpoch(ana, [
       ana.pub,
       {
         device_id: agent.device_id,
@@ -158,28 +180,33 @@ describe("agent host", () => {
     await ana.engine.sendText(ana.chatId, "@scout ping one");
     await expect.poll(() => from(ana.seen, agent.device_id).length, { timeout: 5000 }).toBe(1);
     await ana.engine.sendText(ana.chatId, "@SCOUT ping two");
-    await new Promise((r) => setTimeout(r, 500));
+    await expect.poll(() => from(ana.seen, agent.device_id).length, { timeout: 10000 }).toBe(2);
 
     const replies = from(ana.seen, agent.device_id);
-    expect(replies).toHaveLength(1);
+    const one = ana.seen.find((m) => (m.body as { text?: string }).text === "@scout ping one");
+    const two = ana.seen.find((m) => (m.body as { text?: string }).text === "@SCOUT ping two");
     expect(textOf(replies[0] as Seen).endsWith("| @scout ping one")).toBe(true);
+    expect(textOf(replies[1] as Seen).endsWith("| @SCOUT ping two")).toBe(true);
+    expect((replies[0]!.body as { reply_to?: string }).reply_to).toBe(one?.id);
+    expect((replies[1]!.body as { reply_to?: string }).reply_to).toBe(two?.id);
+    expect((replies[1]?.ts ?? 0) - (replies[0]?.ts ?? 0)).toBeGreaterThanOrEqual(2900);
     expect(metaOf(replies[0] as Seen)?.tools).toEqual([]);
     expect(metaOf(replies[0] as Seen)?.trace?.[0]).toEqual({
       kind: "thinking",
-      text: expect.stringMatching(/^echo: looked at 2 messages$/),
+      text: expect.stringMatching(/^echo: looked at \d+ messages$/),
     });
-  });
+  }, 20000);
 
   it("never shows the agent messages from before it was invited", async () => {
     const ana = await anaInChat();
-    await ana.engine.createEpoch(ana.chatId, [ana.pub]);
+    await claimEpoch(ana, [ana.pub]);
     await ana.engine.sendText(ana.chatId, "PRE-INVITE-SENTINEL");
     const agent = await addAgent(ana, "Scout");
     const [agentRow] = await db.query<{ public_key: string }>(
       "select public_key from sa.devices where id = $1",
       [agent.device_id],
     );
-    await ana.engine.createEpoch(ana.chatId, [
+    await claimEpoch(ana, [
       ana.pub,
       { device_id: agent.device_id, public_key: agentRow?.public_key ?? "" },
     ]);
@@ -221,7 +248,7 @@ describe("agent host replies", () => {
           id,
         ])
       )[0]?.public_key ?? "";
-    await ana.engine.createEpoch(ana.chatId, [
+    await claimEpoch(ana, [
       ana.pub,
       { device_id: good.device_id, public_key: await pubOf(good.device_id) },
       { device_id: bad.device_id, public_key: await pubOf(bad.device_id) },
@@ -262,7 +289,7 @@ describe("agent host live activity", () => {
       "select public_key from sa.devices where id = $1",
       [agent.device_id],
     );
-    await ana.engine.createEpoch(ana.chatId, [
+    await claimEpoch(ana, [
       ana.pub,
       { device_id: agent.device_id, public_key: agentRow?.public_key ?? "" },
     ]);
@@ -273,7 +300,7 @@ describe("agent host live activity", () => {
         timeline.push({ kind: a.body.phase, draft: a.body.draft });
     });
     ana.engine.onMessage((m) => {
-      if (m.senderDevice === agent.device_id && m.status === "ok")
+      if (m.senderDevice === agent.device_id && m.status === "ok" && m.body?.type === "text")
         timeline.push({ kind: "message", text: (m.body as { text: string }).text });
     });
 
@@ -283,8 +310,7 @@ describe("agent host live activity", () => {
     const kinds = timeline.map((s) => s.kind);
     expect(kinds[0]).toBe("thinking");
     expect(kinds.slice(-2)).toEqual(["message", "done"]);
-    expect(kinds.slice(1, -2).length).toBeGreaterThanOrEqual(1);
-    expect(new Set(kinds.slice(1, -2))).toEqual(new Set(["writing"]));
+    expect(kinds.slice(1, -2).join(" ")).toMatch(/^(reading )?writing( writing)*$/);
     const drafts = timeline.filter((s) => s.kind === "writing").map((s) => s.draft ?? "");
     const finalText = timeline[timeline.length - 2]?.text ?? "";
     const first = drafts[0] ?? "";
@@ -329,7 +355,7 @@ describe("agent host vision", () => {
       "select public_key from sa.devices where id = $1",
       [agent.device_id],
     );
-    await ana.engine.createEpoch(ana.chatId, [
+    await claimEpoch(ana, [
       ana.pub,
       { device_id: agent.device_id, public_key: row?.public_key ?? "" },
     ]);

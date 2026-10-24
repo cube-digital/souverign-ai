@@ -1,9 +1,7 @@
 import type { UserSummary } from "@sa/protocol";
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiFailure, users as fetchUsers, login, type Session, setSession } from "../api";
-import { Avatar } from "../ui/Avatar";
-import { Button } from "../ui/Button";
-import { Input } from "../ui/Input";
+import { Avatar, Button, Input } from "../ds";
 
 export function Login({ onSignedIn }: { onSignedIn: (s: Session) => void }) {
   const [list, setList] = useState<UserSummary[]>([]);
@@ -43,23 +41,24 @@ export function Login({ onSignedIn }: { onSignedIn: (s: Session) => void }) {
 
   return (
     <div className="flex h-full items-center justify-center p-4">
-      <div className="w-full max-w-[420px] rounded-[14px] border border-line bg-panel p-6">
-        <h1 className="mb-1 text-lg font-semibold">Sovereign Agents</h1>
-        <p className="mb-4 text-muted">Who is signing in?</p>
+      <div className="w-full max-w-sm rounded-xl border border-border-soft bg-bg-1 p-6">
+        <h1 className="mb-1 text-[15px] font-semibold text-text-0">Sovereign Agents</h1>
+        <p className="mb-4 text-text-2">Who is signing in?</p>
         <div className="mb-4 flex flex-col gap-2">
           {list.map((u) => (
             <Button
               key={u.id}
-              variant={picked?.id === u.id ? "primary" : "secondary"}
+              variant={picked?.id === u.id ? "primary" : "default"}
+              size="lg"
               aria-pressed={picked?.id === u.id}
-              className="flex items-center gap-3 text-left"
+              className="justify-start text-left"
               onClick={() => {
                 setPicked(u);
                 setPin("");
                 setError(null);
               }}
             >
-              <Avatar name={u.display_name} size={28} />
+              <Avatar name={u.display_name} size={20} />
               <span>{u.display_name}</span>
             </Button>
           ))}
@@ -77,17 +76,17 @@ export function Login({ onSignedIn }: { onSignedIn: (s: Session) => void }) {
               onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
             />
             {error && (
-              <p role="alert" className="text-sm text-danger">
+              <p role="alert" className="text-[12.5px] text-danger">
                 {error}
               </p>
             )}
-            <Button type="submit" variant="primary" disabled={busy || pin.length === 0}>
+            <Button type="submit" variant="primary" size="lg" disabled={busy || pin.length === 0}>
               Sign in
             </Button>
           </form>
         )}
         {!picked && error && (
-          <p role="alert" className="text-sm text-danger">
+          <p role="alert" className="text-[12.5px] text-danger">
             {error}
           </p>
         )}

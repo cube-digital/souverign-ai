@@ -1,3 +1,5 @@
+import { buildMock } from "./mock.js";
+
 // Synthetic ops data, computed relative to a start time so it always looks live.
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -30,6 +32,12 @@ function statusOf(disk: number): string {
   return disk >= 90 ? "critical" : disk >= 75 ? "warning" : "ok";
 }
 
+const slug = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+
 export function buildSim(start: number) {
   const now = () => Date.now();
   // Elapsed time since start (modulo 1 hour, a rolling anchor so disk never passes ~90%) drifts the scenario; stays consistent across routes.
@@ -45,7 +53,16 @@ export function buildSim(start: number) {
     return round1(base + wobble);
   }
 
+  const raised: { at: number; severity: string; node: string; message: string }[] = [];
+  const mock = buildMock(now);
+
   return {
+    ...mock,
+    raiseAlert(node: string, severity: string, message: string): { id: string } {
+      raised.push({ at: now(), severity, node, message });
+      if (raised.length > 50) raised.shift();
+      return { id: `${node}:${slug(message)}` };
+    },
     healthz: () => ({ ok: true, service: "ops-sim", uptime_s: Math.round((now() - start) / 1000) }),
 
     clusterHealth() {
@@ -181,7 +198,10 @@ export function buildSim(start: number) {
           message: "certificate renewed",
         },
       ];
-      return { hours, alerts: all.filter((a) => Date.parse(a.at) >= t - hours * HOUR) };
+      const withIds = [...all, ...raised.map((r) => ({ ...r, at: iso(r.at) }))]
+        .map((a) => ({ id: `${a.node}:${slug(a.message)}`, ...a }))
+        .sort((x, y) => Date.parse(y.at) - Date.parse(x.at));
+      return { hours, alerts: withIds.filter((a) => Date.parse(a.at) >= t - hours * HOUR) };
     },
 
     testRuns(limit: number) {
