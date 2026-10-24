@@ -77,16 +77,21 @@ function heldLink(base: RelayLink) {
   return { link, sent, shut };
 }
 
-/** Key trust as everywhere else: the sender device belongs to an active human member of the chat. */
+/**
+ * Key trust as everywhere else: the sender device belongs to an active human member of the chat,
+ * and the epoch is one the bridge handed out (claimed), so no member can pre-send future keys.
+ */
 export const humanMemberDevice =
   (db: Db) =>
-  async (chatId: string, senderDevice: string): Promise<boolean> =>
+  async (chatId: string, senderDevice: string, epoch?: number): Promise<boolean> =>
     (
       await db.query(
         `select 1 from sa.devices d
          join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id
-         where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null`,
-        [senderDevice, chatId],
+         join sa.chats c on c.id = m.chat_id
+         where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null
+           and ($3::int is null or $3::int <= c.key_epoch)`,
+        [senderDevice, chatId, epoch ?? null],
       )
     ).length > 0;
 

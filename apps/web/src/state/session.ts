@@ -27,6 +27,7 @@ import {
   SHARED_TICKET_KEY,
 } from "../api";
 import { IdbKeyStore } from "../lib/idb-keystore";
+import { isTrustedKeySender } from "./keyTrust";
 import { buildView, type ChatView } from "./threads";
 
 export type ActivityState = Record<string, Record<string, { body: ActivityBody; ts: number }>>;
@@ -231,17 +232,8 @@ export function SessionProvider({ session, children }: { session: Session; child
           link: client,
           store,
           device: dev,
-          isTrustedKeySender: async (chatId, senderDevice) => {
-            const isHumanMember = (list: Chat[]) =>
-              list
-                .find((c) => c.id === chatId)
-                ?.members.some(
-                  (m) =>
-                    m.member_type === "user" && m.devices.some((d) => d.device_id === senderDevice),
-                ) ?? false;
-            // A new member device may postdate the cached chats: refresh once and recheck.
-            return isHumanMember(chatsRef.current) || isHumanMember(await refreshChats());
-          },
+          isTrustedKeySender: async (chatId, senderDevice, epoch) =>
+            isTrustedKeySender(chatsRef.current, refreshChats, chatId, senderDevice, epoch),
         });
         offs.push(
           eng.onMessage((m) => {
