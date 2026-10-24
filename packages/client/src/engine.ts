@@ -9,7 +9,7 @@ import {
   randomId,
   sealKey,
 } from "@sa/crypto";
-import { type DevicePublic, type Envelope, MessageBody } from "@sa/protocol";
+import { ActivityBody, type DevicePublic, type Envelope, MessageBody } from "@sa/protocol";
 import type { KeyStore, StoredDevice } from "./keystore.js";
 import type { RelayLink } from "./link.js";
 
@@ -26,6 +26,13 @@ export type ChatMessage = {
 
 type FileBody = Extract<MessageBody, { type: "file" }>;
 
+export type ActivityEvent = {
+  chatId: string;
+  senderDevice: string;
+  body: ActivityBody;
+  ts: number;
+};
+
 export class ChatEngine {
   private link: RelayLink;
   private store: KeyStore;
@@ -34,6 +41,7 @@ export class ChatEngine {
   private seen = new Set<string>();
   private waiting = new Map<string, { seq: number; env: Envelope }[]>(); // `${chat}|${epoch}`
   private msgCbs = new Set<(m: ChatMessage) => void>();
+  private activityCbs = new Set<(a: ActivityEvent) => void>();
   private keyCbs = new Set<(chatId: string, epoch: number) => void>();
   private queue: Promise<void> = Promise.resolve();
   private isTrustedKeySender: (chatId: string, senderDevice: string) => Promise<boolean>;
@@ -51,12 +59,19 @@ export class ChatEngine {
     this.link.onDeliver((seq, env) => {
       this.queue = this.queue.then(() => this.incoming(seq, env)).catch(() => {});
     });
+    this.link.onSignal((env) => {
+      void this.incomingActivity(env).catch(() => {});
+    });
     this.link.onReconnect?.(() => void this.syncAll());
   }
 
   onMessage(cb: (m: ChatMessage) => void): () => void {
     this.msgCbs.add(cb);
     return () => this.msgCbs.delete(cb);
+  }
+  onActivity(cb: (a: ActivityEvent) => void): () => void {
+    this.activityCbs.add(cb);
+    return () => this.activityCbs.delete(cb);
   }
   onKey(cb: (chatId: string, epoch: number) => void): () => void {
     this.keyCbs.add(cb);
@@ -141,6 +156,45 @@ export class ChatEngine {
     const key = epoch > 0 ? await this.store.getChatKey(chatId, epoch) : null;
     if (!key) throw new Error("no_key");
     return { epoch, key };
+  }
+
+  /** Ephemeral typing/progress signal: encrypted like a message, never stored or replayed. */
+  async sendActivity(chatId: string, body: ActivityBody): Promise<void> {
+    const epoch = await this.store.latestEpoch(chatId);
+    const key = epoch > 0 ? await this.store.getChatKey(chatId, epoch) : null;
+    if (!key) return;
+    const id = randomId();
+    const { nonce, ciphertext } = encrypt(key, JSON.stringify(body), messageAad(chatId, epoch, id));
+    this.link.signal({
+      v: 1,
+      id,
+      chat_id: chatId,
+      sender_device: this.device.deviceId,
+      epoch,
+      kind: "status",
+      nonce,
+      ciphertext,
+      ts: Date.now(),
+    });
+  }
+
+  private async incomingActivity(env: Envelope): Promise<void> {
+    if (env.kind !== "status") return;
+    const key = await this.store.getChatKey(env.chat_id, env.epoch);
+    if (!key) return;
+    try {
+      const plain = decrypt(
+        key,
+        env.nonce,
+        env.ciphertext,
+        messageAad(env.chat_id, env.epoch, env.id),
+      );
+      const body = ActivityBody.parse(JSON.parse(plain));
+      const a = { chatId: env.chat_id, senderDevice: env.sender_device, body, ts: env.ts };
+      for (const cb of this.activityCbs) cb(a);
+    } catch {
+      // undecryptable or malformed activity is ignored
+    }
   }
 
   private async sendBody(chatId: string, body: MessageBody): Promise<void> {

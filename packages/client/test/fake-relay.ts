@@ -12,6 +12,7 @@ export class FakeRelay {
   readonly log: Stored[] = [];
   readonly blobs = new Map<string, Uint8Array>();
   private joined = new Map<string, number>(); // `${chat}|${device}` -> seq at join
+  private signalListeners = new Map<string, Set<(env: Envelope) => void>>();
   private listeners = new Map<string, Set<(seq: number, env: Envelope) => void>>();
 
   addMember(chatId: string, deviceId: string): void {
@@ -40,6 +41,22 @@ export class FakeRelay {
           if (this.visible(dev, s)) this.push(dev, s);
         }
         return s.seq;
+      },
+      signal: (env) => {
+        if (!this.joined.has(`${env.chat_id}|${deviceId}`)) return;
+        for (const k of this.joined.keys()) {
+          const [chat, dev] = k.split("|") as [string, string];
+          if (chat !== env.chat_id || dev === deviceId) continue;
+          queueMicrotask(() => {
+            for (const cb of this.signalListeners.get(dev) ?? []) cb(env);
+          });
+        }
+      },
+      onSignal: (cb) => {
+        const set = this.signalListeners.get(deviceId) ?? new Set();
+        set.add(cb);
+        this.signalListeners.set(deviceId, set);
+        return () => set.delete(cb);
       },
       sync: (chatId, since) => {
         for (const s of this.log) {
