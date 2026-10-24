@@ -32,7 +32,7 @@ async function makeDevice(
 }
 
 const texts = (seen: Msg[]) =>
-  seen.map((m) => (m.body as { text?: string }).text).filter((t) => t !== undefined);
+  seen.map((m) => (m.body as { text?: string } | null)?.text).filter((t) => t !== undefined);
 
 describe("ChatEngine", () => {
   it("members exchange encrypted messages and each sees every message once", async () => {
