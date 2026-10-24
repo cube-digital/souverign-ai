@@ -6,6 +6,7 @@ import { Button } from "../ui/Button";
 export function ChatList({
   chats,
   unread,
+  typing = {},
   activeId,
   publicKey,
   onSelect,
@@ -17,6 +18,8 @@ export function ChatList({
 }: {
   chats: Chat[];
   unread: Record<string, number>;
+  /** Chats with live agent activity. */
+  typing?: Record<string, boolean>;
   activeId: string | null;
   publicKey: string | null;
   onSelect: (id: string) => void;
@@ -66,6 +69,14 @@ export function ChatList({
               <span aria-hidden="true"># </span>
               <span>{c.title}</span>
             </span>
+            {typing[c.id] && (
+              <span
+                role="img"
+                aria-label="typing"
+                title="typing"
+                className="mr-2 ml-auto h-2 w-2 rounded-full bg-teal motion-safe:animate-pulse"
+              />
+            )}
             {(unread[c.id] ?? 0) > 0 && (
               <span className="grid h-5 min-w-5 place-items-center rounded-full bg-teal px-1 text-xs font-semibold text-teal-ink">
                 {unread[c.id]}
