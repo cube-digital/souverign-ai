@@ -9,6 +9,7 @@ export function Shell({
   children,
   aside,
   banner,
+  actions,
 }: {
   userName: string;
   onSwitchUser: () => void;
@@ -16,6 +17,7 @@ export function Shell({
   children: ReactNode;
   aside?: ReactNode;
   banner?: ReactNode;
+  actions?: ReactNode;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -26,6 +28,7 @@ export function Shell({
         </div>
         <TrustStrip />
         <div className="flex items-center gap-2 text-sm">
+          {actions}
           <Avatar name={userName} size={28} />
           <span>{userName}</span>
           <span className="text-muted">·</span>
@@ -47,12 +50,14 @@ export function Shell({
           {nav}
         </nav>
         <main className="flex min-h-0 min-w-0 flex-[3_1_360px] flex-col">{children}</main>
-        <aside
-          aria-label="What the relay sees"
-          className="min-w-[320px] max-w-full flex min-h-0 flex-1 basis-[350px] flex-col overflow-hidden border-l border-line bg-panel md:max-w-[380px] md:flex-none md:basis-[350px]"
-        >
-          {aside}
-        </aside>
+        {aside && (
+          <aside
+            aria-label="What the relay sees"
+            className="min-w-[320px] max-w-full flex min-h-0 flex-1 basis-[350px] flex-col overflow-hidden border-l border-line bg-panel md:max-w-[380px] md:flex-none md:basis-[350px]"
+          >
+            {aside}
+          </aside>
+        )}
       </div>
     </div>
   );

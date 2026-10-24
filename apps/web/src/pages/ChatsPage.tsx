@@ -19,6 +19,7 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
   const [newChat, setNewChat] = useState(false);
   const [members, setMembers] = useState(false);
   const [view, setView] = useState<"chats" | "agents">("chats");
+  const [showRelay, setShowRelay] = useState(false);
   const [creatingAgent, setCreatingAgent] = useState(false);
   const [myAgents, setMyAgents] = useState<Agent[]>([]);
   const loadAgents = useCallback(() => {
@@ -137,7 +138,17 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
             </div>
           )
         }
-        aside={<RelayPanel />}
+        aside={showRelay ? <RelayPanel /> : undefined}
+        actions={
+          <button
+            type="button"
+            aria-pressed={showRelay}
+            onClick={() => setShowRelay((v) => !v)}
+            className="mr-2 cursor-pointer rounded-[8px] border border-line px-2 py-1 text-muted hover:text-text"
+          >
+            {showRelay ? "Hide relay view" : "Relay view"}
+          </button>
+        }
       >
         {main}
       </Shell>
