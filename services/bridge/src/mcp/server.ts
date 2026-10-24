@@ -252,6 +252,7 @@ const chatDigest: Tool = {
                   m.body, m.ts, m.seq
            from sa.messages_plain m
            join sa.agent_devices me on me.device_id = m.device_id and me.agent_id = $2
+           join sa.chats c on c.id = m.chat_id
            join sa.chat_members rq on rq.chat_id = m.chat_id and rq.member_type = 'user'
              and rq.member_id = $4 and rq.removed_at is null
            join sa.chat_members am on am.chat_id = m.chat_id and am.member_type = 'agent'
@@ -260,6 +261,9 @@ const chatDigest: Tool = {
            left join sa.users us on d.owner_type = 'user' and us.id = d.owner_id
            left join sa.agents ag on d.owner_type = 'agent' and ag.id = d.owner_id
            where m.chat_id = $1 and m.body->>'type' = 'text' and m.ts >= $3
+             and (m.seq <= coalesce(c.history_until_seq, -1)
+                  or (m.ts >= extract(epoch from rq.joined_at) * 1000
+                      and m.ts >= extract(epoch from am.joined_at) * 1000))
            order by m.id, m.seq
          ) t order by seq desc limit 15`,
         [c.id, agentId, since, requester],
