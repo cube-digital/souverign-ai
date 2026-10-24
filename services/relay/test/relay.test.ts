@@ -86,11 +86,17 @@ class Client {
   }
 }
 
-async function member(url: string, chat: string, device: string, op: "add" | "remove") {
+async function member(
+  url: string,
+  chat: string,
+  device: string,
+  op: "add" | "remove",
+  history_until_seq?: number,
+) {
   return fetch(`${url}/relay/admin/members`, {
     method: "POST",
     headers: { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: chat, device_id: device, op }),
+    body: JSON.stringify({ chat_id: chat, device_id: device, op, history_until_seq }),
   });
 }
 
@@ -404,5 +410,86 @@ describe("relay", () => {
       ref: st.id,
     });
     expect(await recent(url)).toEqual([]);
+  });
+});
+
+describe("relay history window (D-12)", () => {
+  const ids = (ops: RelayOp[]) => ops.flatMap((m) => (m.op === "deliver" ? [m.env.id] : []));
+  const post = async (c: Client, chat: string) => {
+    const e = env(chat, c.device);
+    const ack = (await c.ask({ op: "send", env: e }, (m) => m.op === "ack")).at(-1);
+    return { id: e.id, seq: ack?.op === "ack" ? ack.seq : -1 };
+  };
+  const syncIds = async (c: Client, chat: string) =>
+    ids(await c.ask({ op: "sync", chat_id: chat, since: 0 }, (m) => m.op === "synced"));
+
+  it("gives a windowed device the seeded history and what follows its join, but not the gap", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const a = await Client.connect(url);
+    const w = await Client.connect(url);
+    await member(url, chat, a.device, "add");
+    const m1 = await post(a, chat);
+    const m2 = await post(a, chat);
+    await post(a, chat);
+    await post(a, chat);
+
+    expect((await member(url, chat, w.device, "add", m2.seq)).ok).toBe(true);
+    const m5 = await post(a, chat);
+
+    expect(await syncIds(w, chat)).toEqual([m1.id, m2.id, m5.id]);
+  });
+
+  it("shows a device added without a window only what was sent after it joined", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const a = await Client.connect(url);
+    const b = await Client.connect(url);
+    await member(url, chat, a.device, "add");
+    await post(a, chat);
+    await post(a, chat);
+    await member(url, chat, b.device, "add");
+    const m3 = await post(a, chat);
+
+    expect(await syncIds(b, chat)).toEqual([m3.id]);
+  });
+
+  it("does not reset added_seq when an active member is re-added with a window", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const a = await Client.connect(url);
+    const b = await Client.connect(url);
+    await member(url, chat, a.device, "add");
+    const m1 = await post(a, chat);
+    await member(url, chat, b.device, "add");
+    const m2 = await post(a, chat);
+    const m3 = await post(a, chat);
+
+    await member(url, chat, b.device, "add", m1.seq);
+
+    expect(await syncIds(b, chat)).toEqual([m1.id, m2.id, m3.id]);
+  });
+
+  it("never shows pre-join messages in a chat without a window, while a windowed device elsewhere keeps its history", async () => {
+    const { url } = await start();
+    const room = randomId();
+    const other = randomId();
+    const a = await Client.connect(url);
+    const w = await Client.connect(url);
+    const c = await Client.connect(url);
+    const agent = await Client.connect(url);
+    await member(url, room, a.device, "add");
+    const r1 = await post(a, room);
+    const r2 = await post(a, room);
+    await member(url, room, w.device, "add", r2.seq);
+
+    await member(url, other, c.device, "add");
+    await post(c, other);
+    await post(c, other);
+    await member(url, other, agent.device, "add");
+    const x3 = await post(c, other);
+
+    expect(await syncIds(agent, other)).toEqual([x3.id]);
+    expect(await syncIds(w, room)).toEqual([r1.id, r2.id]);
   });
 });
