@@ -46,6 +46,8 @@ it("chat_digest works only in the requester's DM and only over chats the request
     ["g-shared", "Shared", "group", ["ana", "bob"]],
     ["g-bob", "Bob only", "group", ["bob"]],
   ];
+  chats.push(["room", "Room", "room", ["ana"]]);
+  const joined = new Date(Date.now() - 3_600_000).toISOString();
   for (const [id, title, kind, users] of chats) {
     await db.query("insert into sa.chats (id, title, kind, created_by) values ($1,$2,$3,'ana')", [
       id,
@@ -53,27 +55,30 @@ it("chat_digest works only in the requester's DM and only over chats the request
       kind,
     ]);
     await db.query(
-      "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1,'agent',$2,'member')",
-      [id, AGENT],
+      "insert into sa.chat_members (chat_id, member_type, member_id, role, joined_at) values ($1,'agent',$2,'member',$3)",
+      [id, AGENT, joined],
     );
     for (const u of users) {
       await db.query(
-        "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1,'user',$2,'member')",
-        [id, u],
+        "insert into sa.chat_members (chat_id, member_type, member_id, role, joined_at) values ($1,'user',$2,'member',$3)",
+        [id, u, joined],
       );
     }
   }
-  let seq = 0;
+  await db.query("update sa.chats set seed_key = 'room', history_until_seq = 10 where id = 'room'");
   const now = Date.now();
-  for (const [chat, sender, text] of [
-    ["dm-ana", "dev-ana", "dm talk"],
-    ["g-shared", "dev-ana", "shared talk"],
-    ["g-bob", "dev-bob", "bob private talk"],
+  const pre = now - 7_200_000;
+  for (const [chat, sender, text, seq, ts] of [
+    ["dm-ana", "dev-ana", "dm talk", 1, now - 60_000],
+    ["g-shared", "dev-ana", "shared talk", 2, now - 60_000],
+    ["g-shared", "dev-ana", "talk before the requester joined", 3, pre],
+    ["g-bob", "dev-bob", "bob private talk", 4, now - 60_000],
+    ["room", "dev-ana", "seeded history", 5, pre],
+    ["room", "dev-ana", "gap before join", 20, pre],
   ] as const) {
-    seq += 1;
     await db.query(
       "insert into sa.messages_plain (device_id, chat_id, id, seq, sender_device, epoch, body, ts) values ('dev-agent',$1,$2,$3,$4,1,$5::jsonb,$6)",
-      [chat, `m${seq}`, seq, sender, JSON.stringify({ type: "text", text }), now - 60_000],
+      [chat, `m${seq}`, seq, sender, JSON.stringify({ type: "text", text }), ts],
     );
   }
 
@@ -95,12 +100,20 @@ it("chat_digest works only in the requester's DM and only over chats the request
 
   expect(await digest("g-shared", "ana")).toEqual({ error: "digest_only_in_dm" });
   expect(await digest("dm-bob", "ana")).toEqual({ error: "digest_only_in_dm" });
-  expect(await digest("dm-ana", "ana")).toEqual([
-    {
-      chat_title: "Shared",
-      messages: [{ sender: "Ana", text: "shared talk", ts: expect.anything() }],
-    },
-  ]);
+  const result = await digest("dm-ana", "ana");
+  expect(result).toHaveLength(2);
+  expect(result).toEqual(
+    expect.arrayContaining([
+      {
+        chat_title: "Shared",
+        messages: [{ sender: "Ana", text: "shared talk", ts: expect.anything() }],
+      },
+      {
+        chat_title: "Room",
+        messages: [{ sender: "Ana", text: "seeded history", ts: expect.anything() }],
+      },
+    ]),
+  );
 
   await client.close();
   await app.close();
