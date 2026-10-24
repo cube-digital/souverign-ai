@@ -58,7 +58,9 @@ export class ChatEngine {
 
   async start(chatIds: string[]): Promise<void> {
     for (const c of chatIds) if (!this.chats.includes(c)) this.chats.push(c);
-    await this.syncAll();
+    // Messages live only in memory, so a fresh session replays from 0 (the relay already limits
+    // history to what followed this device joining); the cursor is for in-session reconnects.
+    for (const c of chatIds) this.link.sync(c, 0);
   }
 
   private async syncAll(): Promise<void> {
@@ -70,18 +72,23 @@ export class ChatEngine {
     const key = newChatKey();
     await this.store.putChatKey(chatId, epoch, key);
     for (const d of devices) {
-      await this.link.send({
-        v: 1,
-        id: randomId(),
-        chat_id: chatId,
-        sender_device: this.device.deviceId,
-        to_device: d.device_id,
-        epoch,
-        kind: "key",
-        nonce: "",
-        ciphertext: sealKey(key, d.public_key),
-        ts: Date.now(),
-      });
+      try {
+        await this.link.send({
+          v: 1,
+          id: randomId(),
+          chat_id: chatId,
+          sender_device: this.device.deviceId,
+          to_device: d.device_id,
+          epoch,
+          kind: "key",
+          nonce: "",
+          ciphertext: sealKey(key, d.public_key),
+          ts: Date.now(),
+        });
+      } catch (e) {
+        // A device the relay does not know yet (just registered) must not abort the rest.
+        if (!(e instanceof Error && e.message === "not_member")) throw e;
+      }
     }
     return epoch;
   }
