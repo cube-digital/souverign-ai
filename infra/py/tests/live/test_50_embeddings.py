@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 pytestmark = pytest.mark.live
 
 
 def test_normalized_512_and_cross_language_ranking(cfg, embedder):
+    import numpy as np
+
     emb = cfg["embeddings"]
     dim = emb["mrl_dim"]
     docs = [

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import numpy as np
 import pytest
-from sa_infra import make_fixtures
 
 pytestmark = pytest.mark.live
 TEXT = {
@@ -14,6 +12,9 @@ TEXT = {
 
 @pytest.mark.parametrize("lang", ["en", "fr", "de"])
 def test_tts_audio(lang, cfg, kokoro_model):
+    import numpy as np
+    from sa_infra import make_fixtures
+
     if lang == "de":
         audio, sr = make_fixtures.piper(TEXT[lang], "de", cfg)
     else:
