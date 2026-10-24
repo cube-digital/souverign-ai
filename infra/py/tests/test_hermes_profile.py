@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import yaml
-
 from sa_infra import hermes_profile as hp
 
 
