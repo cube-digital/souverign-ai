@@ -11,7 +11,9 @@ import {
   randomId,
 } from "@sa/crypto";
 import type { Envelope, RelayOp, RelayRecentRow } from "@sa/protocol";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { signTicket } from "@sa/protocol/ticket";
+import Database from "better-sqlite3";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import WebSocket from "ws";
 import { createRelay } from "../src/server.js";
 
@@ -57,8 +59,7 @@ class Client {
       ws.once("open", res);
       ws.once("error", rej);
     });
-    // TODO(sp2): real ticket (T3/T5)
-    c.send({ op: "hello", device_id: device, ticket: "unsigned-placeholder" });
+    c.send({ op: "hello", device_id: device, ticket: signTicket(ADMIN, device, 60_000).ticket });
     await c.next((m) => m.op === "ready");
     return c;
   }
@@ -109,7 +110,9 @@ function env(chat: string, sender: string, over: Partial<Envelope> = {}): Envelo
 }
 
 async function recent(url: string): Promise<RelayRecentRow[]> {
-  const r = await fetch(`${url}/relay/debug/recent?limit=50`);
+  const r = await fetch(`${url}/relay/debug/recent?limit=50`, {
+    headers: { authorization: `Bearer ${signTicket(ADMIN, "debug-viewer", 60_000).ticket}` },
+  });
   return (await r.json()) as RelayRecentRow[];
 }
 
@@ -261,5 +264,76 @@ describe("relay", () => {
     expect(prefix).toBeDefined();
     expect(bytes.includes(Buffer.from(prefix ?? "", "utf8"))).toBe(true);
     expect(sentinels.filter((w) => bytes.includes(Buffer.from(w, "utf8")))).toEqual([]);
+  });
+
+  it("accepts a hello only with a valid, unexpired ticket for that same device", async () => {
+    const { url } = await start();
+    const deviceA = deviceIdFor(newDeviceKeys().publicKey);
+    const deviceB = deviceIdFor(newDeviceKeys().publicKey);
+    const attempts = [
+      { device: deviceA, ticket: signTicket("some-other-secret", deviceA, 60_000).ticket }, // forged
+      { device: deviceA, ticket: signTicket(ADMIN, deviceA, 60_000, Date.now() - 120_000).ticket }, // expired
+      { device: deviceB, ticket: signTicket(ADMIN, deviceA, 60_000).ticket }, // wrong device
+    ];
+    const outcomes: { msgs: RelayOp[]; closed: boolean }[] = [];
+    for (const { device, ticket } of attempts) {
+      const ws = new WebSocket(`${url.replace(/^http/, "ws")}/relay/ws`);
+      sockets.push(ws);
+      const msgs: RelayOp[] = [];
+      ws.on("message", (d) => msgs.push(JSON.parse(d.toString()) as RelayOp));
+      const closed = new Promise<boolean>((res) => ws.once("close", () => res(true)));
+      await new Promise((res, rej) => {
+        ws.once("open", res);
+        ws.once("error", rej);
+      });
+      ws.send(JSON.stringify({ op: "hello", device_id: device, ticket }));
+      outcomes.push({
+        msgs,
+        closed: await Promise.race([closed, sleep(1500).then(() => false)]),
+      });
+    }
+    expect(outcomes).toEqual(
+      attempts.map(() => ({
+        msgs: [{ op: "error", code: "bad_ticket", message: expect.any(String) }],
+        closed: true,
+      })),
+    );
+  });
+
+  it("requires a ticket on the debug view", async () => {
+    const { url } = await start();
+    expect((await fetch(`${url}/relay/debug/recent`)).status).toBe(401);
+    const forged = signTicket("some-other-secret", "dev", 60_000).ticket;
+    expect(
+      (await fetch(`${url}/relay/debug/recent`, { headers: { authorization: `Bearer ${forged}` } }))
+        .status,
+    ).toBe(401);
+    const ok = await fetch(`${url}/relay/debug/recent`, {
+      headers: { authorization: `Bearer ${signTicket(ADMIN, "dev", 60_000).ticket}` },
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual([]);
+  });
+
+  it("answers a failing operation with bad_request and keeps the socket open", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const a = await Client.connect(url);
+    await member(url, chat, a.device, "add");
+    // fault injection at the storage boundary: the next statement run throws
+    const stmtProto = Object.getPrototypeOf(new Database(":memory:").prepare("select 1"));
+    const run = vi.spyOn(stmtProto, "run").mockImplementationOnce(() => {
+      throw new Error("disk I/O error");
+    });
+    const put = { op: "blob_put", id: "blob-fail", chat_id: chat, data: "AAEC" };
+    const reply = await a.ask(put, (m) => m.op === "error" || m.op === "blob_ok");
+    run.mockRestore();
+    expect(reply).toEqual([
+      { op: "error", code: "bad_request", message: expect.any(String), ref: "blob-fail" },
+    ]);
+    expect(a.ws.readyState).toBe(WebSocket.OPEN);
+    const good = env(chat, a.device);
+    const ack = await a.ask({ op: "send", env: good }, (m) => m.op === "ack");
+    expect(ack.find((m) => m.op === "ack")).toMatchObject({ op: "ack" });
   });
 });
