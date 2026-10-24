@@ -1,14 +1,14 @@
-import { type Server, createServer } from "node:http";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { hermesApiKey, mcpToken } from "../src/agents/secrets.js";
 import { renderHermesConfig } from "../src/agents/hermes.js";
+import { hermesApiKey, mcpToken } from "../src/agents/secrets.js";
 import { type Db, openDb } from "../src/db.js";
-import { migrate } from "../src/migrate.js";
 import { buildMcpApp } from "../src/mcp/server.js";
+import { migrate } from "../src/migrate.js";
 
 process.env.BRIDGE_MASTER_KEY = "test-master-key";
 
