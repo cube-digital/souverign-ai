@@ -305,3 +305,6 @@ export const ApiError = z.object({
   missing_devices: z.array(z.string()).optional(),
 });
 export type ApiError = z.infer<typeof ApiError>;
+
+// Roster and seed rooms are pure data, safe for every consumer (the web included).
+export * from "./roster.js";
