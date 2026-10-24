@@ -155,7 +155,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       e.preventDefault();
       setActive(items.length ? (sel - 1 + items.length) % items.length : 0);
     } else if (e.key === "Enter") {
-      if (e.nativeEvent.isComposing) return;
+      if (e.nativeEvent.isComposing || e.keyCode === 229 || e.key === "Process") return;
       e.preventDefault();
       run(items[sel]);
     }
@@ -181,7 +181,6 @@ function Palette({ onClose }: { onClose: () => void }) {
             hideLabel
             placeholder="Search chats, agents and actions…"
             role="textbox"
-            aria-expanded={items.length > 0}
             aria-controls="palette-list"
             aria-autocomplete="list"
             aria-activedescendant={items[sel] ? `pal-${items[sel].id}` : undefined}
