@@ -105,13 +105,17 @@ export function renderHermesConfig(a: { agentId: string; port: number }): string
   return stringify(cfg);
 }
 
-function renderSoul(agent: RuntimeAgent): string {
+export function renderSoul(agent: RuntimeAgent): string {
   const tpl = readFileSync(join(ROOT, "infra", "hermes", "SOUL.template.md"), "utf8");
   const templateText = readFileSync(
     join(ROOT, "infra", "hermes", "templates", `${agent.template}.md`),
     "utf8",
   ).trim();
-  const soul = [templateText, agent.soul.trim()].filter(Boolean).join("\n\n");
+  let soul = [templateText, agent.soul.trim()].filter(Boolean).join("\n\n");
+  if (agent.lessons?.length) {
+    const lines = agent.lessons.map((l) => `- ${l.text}${l.by ? ` (taught by ${l.by})` : ""}`);
+    soul += `\n\n## Lessons from the team\n${lines.join("\n")}`;
+  }
   // One pass with function replacers: names containing `$&`, `$'` or `${...}` cannot inject text.
   const values: Record<string, string> = {
     AGENT_NAME: agent.name,

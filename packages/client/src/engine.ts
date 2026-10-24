@@ -159,7 +159,7 @@ export class ChatEngine {
     text: string,
     meta?: Extract<MessageBody, { type: "text" }>["meta"],
     opts?: { replyTo?: string; ts?: number },
-  ): Promise<void> {
+  ): Promise<string> {
     const body: MessageBody = { type: "text", text };
     if (meta) body.meta = meta;
     if (opts?.replyTo) body.reply_to = opts.replyTo;
@@ -167,11 +167,11 @@ export class ChatEngine {
   }
 
   sendReaction(chatId: string, target: string, emoji: string, op: "add" | "remove"): Promise<void> {
-    return this.sendBody(chatId, { type: "reaction", target, emoji, op });
+    return this.sendBody(chatId, { type: "reaction", target, emoji, op }).then(() => undefined);
   }
 
   sendSystem(chatId: string, text: string): Promise<void> {
-    return this.sendBody(chatId, { type: "system", text });
+    return this.sendBody(chatId, { type: "system", text }).then(() => undefined);
   }
 
   async sendFile(
@@ -247,7 +247,7 @@ export class ChatEngine {
     }
   }
 
-  private async sendBody(chatId: string, body: MessageBody, ts?: number): Promise<void> {
+  private async sendBody(chatId: string, body: MessageBody, ts?: number): Promise<string> {
     const { epoch, key } = await this.keyFor(chatId);
     const id = randomId();
     const { nonce, ciphertext } = encrypt(key, JSON.stringify(body), messageAad(chatId, epoch, id));
@@ -262,6 +262,7 @@ export class ChatEngine {
       ciphertext,
       ts: ts ?? Date.now(),
     });
+    return id;
   }
 
   private emit(

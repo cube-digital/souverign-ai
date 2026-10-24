@@ -4,6 +4,7 @@ export type RuntimeAgent = {
   template: string;
   soul: string;
   ownerName: string;
+  lessons?: { text: string; by: string | null }[];
 };
 
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };

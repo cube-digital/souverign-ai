@@ -24,6 +24,14 @@ import { markReask, recordTurn, setFeedback, type TurnOutcome } from "./metrics.
 import { PgKeyStore } from "./pg-keystore.js";
 import { type AgentRuntime, abortError, type ChatMessage, type RuntimeAgent } from "./runtime.js";
 import { decrypt, encrypt } from "./secrets.js";
+import {
+  beginTurn,
+  endTurn,
+  hasBeforeReplyHooks,
+  runBeforeReply,
+  runStored,
+  type TurnContext,
+} from "./turn-hooks.js";
 import { setForceFirstTool } from "./turn-policy.js";
 import { type Priority, TurnQueue } from "./turn-queue.js";
 import { describeImage } from "./vision.js";
@@ -86,6 +94,8 @@ type Turn = {
   /** owner of the verified sender device, never taken from text or tool args */
   requesterUserId?: string;
   requesterName?: string;
+  /** retry after a denied private preview: recall must skip taught knowledge */
+  noTaught?: boolean;
   abort: AbortController;
   stoppedBy?: string;
   /** the 👀 reaction, so the final reactions are sent after it */
@@ -184,7 +194,13 @@ export class AgentHost implements AgentHostApi {
       [agentId],
     );
     if (!row) return;
-    dev.agent = { ...dev.agent, name: row.name, template: row.template, soul: row.soul };
+    dev.agent = {
+      ...dev.agent,
+      name: row.name,
+      template: row.template,
+      soul: row.soul,
+      lessons: await this.lessonsOf(agentId),
+    };
     await this.opts.runtime.stop(dev.agent);
   }
 
@@ -252,6 +268,15 @@ export class AgentHost implements AgentHostApi {
     return p;
   }
 
+  private async lessonsOf(agentId: string): Promise<{ text: string; by: string | null }[]> {
+    return this.opts.db.query<{ text: string; by: string | null }>(
+      `select l.text, u.display_name as by from sa.agent_lessons l
+       left join sa.users u on u.id = l.taught_by
+       where l.agent_id = $1 order by l.created_at`,
+      [agentId],
+    );
+  }
+
   private async build(agentId: string): Promise<Device | null> {
     const { db, adminToken } = this.opts;
     await cryptoReady();
@@ -281,6 +306,7 @@ export class AgentHost implements AgentHostApi {
       template: row.template,
       soul: row.soul,
       ownerName: row.owner_name,
+      lessons: await this.lessonsOf(row.id),
     };
     const device = {
       deviceId: row.device_id,
@@ -370,6 +396,22 @@ export class AgentHost implements AgentHostApi {
         ],
       );
       if (fresh.length === 0) return;
+      const body = m.body;
+      runStored(
+        {
+          agentId: dev.agent.id,
+          deviceId: dev.deviceId,
+          chatId: m.chatId,
+          id: m.id,
+          seq: m.seq,
+          senderDevice: m.senderDevice,
+          body,
+          ts: m.ts,
+          receivedAt: Date.now(),
+          ...(body.type === "file" ? { loadFile: () => this.fileBytes(dev, body) } : {}),
+        },
+        log,
+      );
       if (m.body.type === "reaction") {
         await this.onReaction(dev, m, m.body);
         return;
@@ -387,6 +429,14 @@ export class AgentHost implements AgentHostApi {
     } catch (e) {
       log("agent message failed", { agent: dev.agent.id, error: (e as Error).message });
     }
+  }
+
+  /** Downloads and decrypts the blob of a file body. */
+  private fileBytes(
+    dev: Device,
+    body: Extract<MessageBody, { type: "file" }>,
+  ): Promise<Uint8Array> {
+    return dev.engine.downloadFile(body);
   }
 
   /** The answer rules (Decisions, in order). Null when this agent should stay quiet. */
@@ -555,6 +605,7 @@ export class AgentHost implements AgentHostApi {
         requesterName: u?.display_name ?? req.requesterUserId,
       };
     }
+    const human = req.kind === "retry" || req.kind === "answer";
     const turn = this.newTurn(
       dev,
       {
@@ -562,11 +613,37 @@ export class AgentHost implements AgentHostApi {
         trigger: req.kind,
         text: req.prompt,
         force: true,
+        ...(req.replyTo ? { replyTo: req.replyTo } : {}),
+        ...(req.noTaught ? { noTaught: true } : {}),
         ...requester,
       },
-      "proactive",
+      human ? "human" : "proactive",
     );
     return this.runTurn(dev, turn).catch(() => false);
+  }
+
+  /** Posts as the agent when it is an active member and holds a chat key. */
+  async postAs(
+    agentId: string,
+    chatId: string,
+    text: string,
+    opts: { replyTo?: string | null; meta?: TextMeta } = {},
+  ): Promise<string | null> {
+    const dev = await this.deviceFor(agentId);
+    if (!dev) return null;
+    const [member] = await this.opts.db.query(
+      "select 1 from sa.chat_members where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null",
+      [chatId, agentId],
+    );
+    if (!member || (await dev.engine.latestEpoch(chatId)) <= 0) return null;
+    try {
+      return await dev.engine.sendText(chatId, text, opts.meta, {
+        ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+      });
+    } catch (e) {
+      log("agent post failed", { agent: agentId, error: (e as Error).message });
+      return null;
+    }
   }
 
   /** "What can you access here?" is answered by the bridge from facts, never by the model. */
@@ -714,6 +791,19 @@ export class AgentHost implements AgentHostApi {
       const context = await this.context(dev, turn, act);
       read = context.read;
       act({ phase: "reading", count: read });
+      const ctx: TurnContext = {
+        turnId: turn.id,
+        agentId: agent.id,
+        agentName: agent.name,
+        chatId,
+        replyTo: turn.replyTo ?? null,
+        triggerMessageId: turn.messageId ?? null,
+        requesterUserId: turn.requesterUserId ?? null,
+        trigger: turn.trigger,
+        prompt: turn.text,
+        noTaught: turn.noTaught ?? false,
+      };
+      beginTurn(ctx, log);
       this.toolLog.begin(agent.id, chatId, {
         turnId: turn.id,
         ...(turn.requesterUserId ? { requesterUserId: turn.requesterUserId } : {}),
@@ -724,11 +814,13 @@ export class AgentHost implements AgentHostApi {
         let draft = "";
         let shown = "";
         let lastSent = 0;
+        // A before-reply hook may hold the answer, so live drafts must not carry model text.
+        const guarded = hasBeforeReplyHooks();
         const flush = () => {
           if (draft === shown || abort.aborted) return;
           shown = draft;
           lastSent = Date.now();
-          act({ phase: "writing", draft });
+          act(guarded ? { phase: "writing" } : { phase: "writing", draft });
         };
         const streamed = runtime.chatStream?.bind(runtime);
         reply = streamed
@@ -759,6 +851,9 @@ export class AgentHost implements AgentHostApi {
       trace.push(...context.imageSteps, ...steps);
       meta.trace = trace.slice(0, 30);
       text = reply.content.slice(0, 8000) || "(no answer)";
+      const out = await runBeforeReply(ctx, { text, meta }, log);
+      text = out.text;
+      Object.assign(meta, out.meta);
     } catch (e) {
       const name = (e as Error).name;
       if (abort.aborted) {
@@ -785,6 +880,7 @@ export class AgentHost implements AgentHostApi {
     } finally {
       this.turns.delete(turn.id);
       this.toolLog.off("tool", onTool);
+      endTurn(agent.id, log);
     }
     meta.tools = steps.flatMap((s) => (s.kind === "tool" ? [s.name] : [])).slice(0, 20);
     meta.read = read;
@@ -906,7 +1002,7 @@ export class AgentHost implements AgentHostApi {
       const t0 = Date.now();
       let result: string;
       try {
-        const bytes = await dev.engine.downloadFile(b as never);
+        const bytes = await this.fileBytes(dev, b as never);
         const description = (await describe(bytes, String(b.mime), fname)).trim();
         if (!description) throw new Error("empty description");
         b.description = description;
