@@ -9,14 +9,16 @@ package = false
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [tool.uv.workspace]
-members = ["infra/py"]
+members = ["infra/py", "services/memory", "services/audio-api"]
 
 [tool.uv.sources]
 sa-infra = { workspace = true }
+sa-memory = { workspace = true }
+sa-audio = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.6", "sa-infra"]
-live = ["sa-infra[live]"]
+dev = ["pytest>=8.3", "ruff>=0.6", "sa-infra", "sa-memory", "sa-audio"]
+live = ["sa-infra[live]", "sa-memory[models]", "sa-audio[models]"]
 
 [tool.ruff]
 line-length = 100
@@ -27,6 +29,9 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
-addopts = "-q -m 'not live'"
-markers = ["live: needs the running local stack (make models + make up)"]
-testpaths = ["infra/py/tests"]
+addopts = "-q --import-mode=importlib -m 'not live and not pg'"
+markers = [
+  "live: loads real models or needs the running local stack (make models, make up)",
+  "pg: needs the Docker Postgres on 127.0.0.1:5433",
+]
+testpaths = ["infra/py/tests", "services/memory/tests", "services/audio-api/tests"]
