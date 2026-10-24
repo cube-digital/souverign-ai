@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./ticket": "./src/ticket.ts"
+    "./ticket": "./src/ticket.ts",
+    "./roster": "./src/roster.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p .",

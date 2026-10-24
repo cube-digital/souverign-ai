@@ -56,4 +56,7 @@ unshare: ## stop publishing the demo on the tailnet
 agents-smoke: ## live: the DevOps bot answers on the local LLM through the app (needs make up + make dev)
 	pnpm --filter @sa/e2e run agents-smoke
 
-.PHONY: help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke
+roster-smoke: ## live: @Ops and @QA answer one message in a thread with tools (needs make up + make dev)
+	pnpm --filter @sa/e2e run roster-smoke
+
+.PHONY: help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke roster-smoke

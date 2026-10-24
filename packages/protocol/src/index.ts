@@ -78,6 +78,7 @@ export const RelayMemberChange = z.object({
   chat_id: Id,
   device_id: Id,
   op: z.enum(["add", "remove"]),
+  history_until_seq: z.number().int().nonnegative().optional(),
 });
 export type RelayMemberChange = z.infer<typeof RelayMemberChange>;
 
@@ -96,9 +97,18 @@ export type RelayRecentRow = z.infer<typeof RelayRecentRow>;
 
 export const ActivityBody = z.object({
   type: z.literal("activity"),
-  phase: z.enum(["thinking", "tool", "writing", "done", "error"]),
+  phase: z.enum(["queued", "thinking", "reading", "tool", "writing", "done", "error", "stopped"]),
   tool: z.string().max(64).optional(),
   draft: z.string().max(8000).optional(),
+  turn_id: Id.optional(),
+  /** thread root the turn answers in; absent for top-level turns */
+  reply_to: Id.optional(),
+  /** user id of the person who triggered the turn; only they may stop it */
+  requester: z.string().max(64).optional(),
+  /** messages read, for phase "reading" */
+  count: z.number().int().nonnegative().optional(),
+  /** turns ahead in the LLM queue, for phase "queued" */
+  ahead: z.number().int().nonnegative().optional(),
 });
 export type ActivityBody = z.infer<typeof ActivityBody>;
 
@@ -115,18 +125,47 @@ export const TraceStep = z.discriminatedUnion("kind", [
 ]);
 export type TraceStep = z.infer<typeof TraceStep>;
 
+export const TurnTrigger = z.enum([
+  "mention",
+  "followup",
+  "dm",
+  "access",
+  "alert",
+  "catchup",
+  "routine",
+  "welcome",
+  "intro",
+]);
+export type TurnTrigger = z.infer<typeof TurnTrigger>;
+
+/** Receipts an agent attaches to its reply (inside the ciphertext). */
+export const TextMeta = z.object({
+  tools: z.array(z.string().max(64)).max(20).optional(),
+  ms: z.number().int().nonnegative().optional(),
+  trace: z.array(TraceStep).max(30).optional(),
+  read: z.number().int().nonnegative().optional(),
+  model: z.string().max(80).optional(),
+  local: z.boolean().optional(),
+  turn_id: Id.optional(),
+  trigger: TurnTrigger.optional(),
+  stopped_by: z.string().max(80).optional(),
+  /** seeded demo history (D-12): no receipts */
+  seeded: z.boolean().optional(),
+  /** example prompts rendered as clickable chips (join intro) */
+  chips: z.array(z.string().min(1).max(120)).max(3).optional(),
+});
+export type TextMeta = z.infer<typeof TextMeta>;
+
+export const ReactionOp = z.enum(["add", "remove"]);
+
 /** The plaintext inside a "msg" envelope. */
 export const MessageBody = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("text"),
     text: z.string().min(1).max(8000),
-    meta: z
-      .object({
-        tools: z.array(z.string().max(64)).max(20).optional(),
-        ms: z.number().int().nonnegative().optional(),
-        trace: z.array(TraceStep).max(30).optional(),
-      })
-      .optional(),
+    /** id of the thread root this message replies to */
+    reply_to: Id.optional(),
+    meta: TextMeta.optional(),
   }),
   z.object({
     type: z.literal("file"),
@@ -136,8 +175,15 @@ export const MessageBody = z.discriminatedUnion("type", [
     size: z.number().int().nonnegative().max(MAX_BLOB_BYTES),
     key: B64,
     nonce: B64,
+    reply_to: Id.optional(),
   }),
   z.object({ type: z.literal("system"), text: z.string().min(1).max(500) }),
+  z.object({
+    type: z.literal("reaction"),
+    target: Id,
+    emoji: z.string().min(1).max(16),
+    op: ReactionOp,
+  }),
 ]);
 export type MessageBody = z.infer<typeof MessageBody>;
 
@@ -155,6 +201,9 @@ export const DevicePublic = z.object({ device_id: Id, public_key: B64 });
 export type DevicePublic = z.infer<typeof DevicePublic>;
 export const DirectoryEntry = UserSummary.extend({ devices: z.array(DevicePublic) });
 export type DirectoryEntry = z.infer<typeof DirectoryEntry>;
+export const AgentStatus = z.enum(["stopped", "starting", "running", "error"]);
+export const AgentScope = z.enum(["personal", "workspace"]);
+export type AgentScope = z.infer<typeof AgentScope>;
 export const ChatMember = z.object({
   member_type: z.enum(["user", "agent"]),
   member_id: z.string(),
@@ -162,6 +211,13 @@ export const ChatMember = z.object({
   owner_display_name: z.string().optional(),
   role: z.enum(["owner", "member"]),
   devices: z.array(DevicePublic),
+  agent_scope: AgentScope.optional(),
+  /** a bridge-hosted demo colleague */
+  seed: z.boolean().optional(),
+  /** agents only */
+  status: AgentStatus.optional(),
+  /** epoch ms of the current membership; the member reads from here on */
+  joined_at: z.number().int().optional(),
 });
 export type ChatMember = z.infer<typeof ChatMember>;
 export const Chat = z.object({
@@ -170,6 +226,8 @@ export const Chat = z.object({
   kind: z.enum(["dm", "group", "room"]),
   created_by: z.string(),
   members: z.array(ChatMember),
+  topic: z.string().max(200).optional(),
+  seed_key: z.string().max(40).optional(),
 });
 export type Chat = z.infer<typeof Chat>;
 export const CreateChatRequest = z.object({
@@ -178,17 +236,27 @@ export const CreateChatRequest = z.object({
 });
 export const AddMemberRequest = z.object({ user_id: z.string().min(1) });
 
-export const AgentTemplate = z.enum(["general", "devops", "qa"]);
+export const AgentTemplate = z.enum([
+  "general",
+  "devops",
+  "qa",
+  "ops",
+  "dev",
+  "tech",
+  "sales",
+  "scribe",
+]);
 export type AgentTemplate = z.infer<typeof AgentTemplate>;
-export const AgentStatus = z.enum(["stopped", "starting", "running", "error"]);
 export const Agent = z.object({
   id: z.string(),
   name: z.string(),
   template: AgentTemplate,
   soul: z.string(),
-  owner_user_id: z.string(),
+  owner_user_id: z.string().nullable(),
   device_id: Id,
   status: AgentStatus,
+  scope: AgentScope,
+  roster_id: z.string().nullable(),
 });
 export type Agent = z.infer<typeof Agent>;
 export const CreateAgentRequest = z.object({
@@ -203,6 +271,35 @@ export const CreateAgentRequest = z.object({
 });
 export const UpdateAgentRequest = z.object({ soul: z.string().max(2000) });
 export const AddAgentRequest = z.object({ agent_id: z.string().min(1) });
+export const EpochClaimRequest = z.object({ min: z.number().int().min(1) });
+export const EpochClaimResponse = z.object({ epoch: z.number().int().min(1) });
+export const HelloResponse = z.object({ catchup: z.boolean() });
+/** time_zone is set by the server on GET and ignored on PUT */
+export const Prefs = z.object({ pause_all: z.boolean(), time_zone: z.string().max(64).optional() });
+export type Prefs = z.infer<typeof Prefs>;
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+export const Weekdays = z.array(z.number().int().min(0).max(6)).min(1).max(7);
+export const Routine = z.object({
+  id: z.string(),
+  kind: z.enum(["routine", "alert_watch"]),
+  user_id: z.string().nullable(),
+  agent_id: z.string(),
+  chat_id: Id,
+  days: Weekdays,
+  time: z.string().regex(HHMM),
+  prompt: z.string().min(1).max(500),
+  paused: z.boolean(),
+  last_run_at: z.number().int().nullable(),
+});
+export type Routine = z.infer<typeof Routine>;
+export const CreateRoutineRequest = z.object({
+  agent_id: z.string().min(1),
+  chat_id: Id,
+  days: Weekdays,
+  time: z.string().regex(HHMM),
+  prompt: z.string().trim().min(1).max(500),
+});
+export const UpdateRoutineRequest = z.object({ paused: z.boolean() });
 export const ApiError = z.object({
   error: z.string(),
   missing_devices: z.array(z.string()).optional(),
