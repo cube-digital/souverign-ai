@@ -4,7 +4,6 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { buildView } from "../src/state/threads";
 
 const h = vi.hoisted(() => ({
   messages: [] as ChatMessage[],
