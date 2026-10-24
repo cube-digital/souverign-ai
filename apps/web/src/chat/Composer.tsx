@@ -4,10 +4,13 @@ import { Button } from "../ui/Button";
 
 export function Composer({
   title,
+  agentNames = [],
   onSendText,
   onSendFile,
 }: {
   title: string;
+  /** Names of the chat's agents, suggested after an `@`. */
+  agentNames?: string[];
   onSendText: (text: string) => Promise<void>;
   onSendFile: (file: File) => Promise<void>;
 }) {
@@ -16,6 +19,10 @@ export function Composer({
   const [busy, setBusy] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const label = `Message # ${title}`;
+  const mention = /(?:^|\s)@([\p{L}\p{N}_-]*)$/u.exec(text);
+  const suggestions = mention
+    ? agentNames.filter((n) => n.toLowerCase().startsWith((mention[1] ?? "").toLowerCase()))
+    : [];
 
   async function run(job: () => Promise<void>) {
     setBusy(true);
@@ -58,6 +65,21 @@ export function Composer({
           {error}
         </p>
       )}
+      {suggestions.length > 0 && (
+        <ul aria-label="Agents in this chat" className="mb-2 flex flex-wrap gap-2">
+          {suggestions.map((n) => (
+            <li key={n}>
+              <button
+                type="button"
+                onClick={() => setText((t) => t.replace(/@[\p{L}\p{N}_-]*$/u, `@${n} `))}
+                className="cursor-pointer rounded-full border border-agent-line bg-teal-soft px-3 py-1 text-xs text-teal-text"
+              >
+                @{n}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="flex items-end gap-2.5">
         <input
           ref={picker}
@@ -84,7 +106,7 @@ export function Composer({
         </Button>
         <textarea
           aria-label={label}
-          placeholder={label}
+          placeholder={`${label} · type @ to ask an agent`}
           rows={1}
           maxLength={8000}
           value={text}

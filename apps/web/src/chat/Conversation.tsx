@@ -1,9 +1,10 @@
 import type { ChatMessage } from "@sa/client";
-import type { Chat, MessageBody } from "@sa/protocol";
+import type { Chat, MessageBody, TraceStep } from "@sa/protocol";
 import { useEffect, useRef, useState } from "react";
 import { formatSize, timeOf } from "../lib/format";
 import { Avatar } from "../ui/Avatar";
 import { Button } from "../ui/Button";
+import { Pill } from "../ui/Pill";
 
 type FileBody = Extract<MessageBody, { type: "file" }>;
 const GROUP_MS = 5 * 60 * 1000;
@@ -11,9 +12,11 @@ const GROUP_MS = 5 * 60 * 1000;
 function Content({
   m,
   onDownload,
+  isAgent = false,
 }: {
   m: ChatMessage;
   onDownload: (body: FileBody) => Promise<void>;
+  isAgent?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   if (m.status === "pending") return <p className="text-muted">Waiting for the key…</p>;
@@ -39,7 +42,85 @@ function Content({
       </div>
     );
   }
-  return <p className="whitespace-pre-wrap break-words">{body.type === "text" ? body.text : ""}</p>;
+  const text = (
+    <p className="whitespace-pre-wrap break-words">{body.type === "text" ? body.text : ""}</p>
+  );
+  if (!isAgent || body.type !== "text" || !body.meta) return text;
+  return (
+    <>
+      {text}
+      <Reasoning meta={body.meta} />
+    </>
+  );
+}
+
+type Meta = NonNullable<Extract<MessageBody, { type: "text" }>["meta"]>;
+
+const seconds = (ms: number) => (ms / 1000).toFixed(1);
+
+function ToolStep({ step }: { step: Extract<TraceStep, { kind: "tool" }> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="rounded-[8px] border border-line bg-bg px-2.5 py-2">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <strong className="font-mono text-xs font-medium text-soft">{step.name}</strong>
+        <span className="font-mono text-xs text-muted">{step.args}</span>
+        <span className="ml-auto text-xs text-muted">{step.ms} ms</span>
+      </div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="mt-1 cursor-pointer text-xs text-muted hover:text-text"
+      >
+        {open ? "▾ Hide result" : "▸ Show result"}
+      </button>
+      {open && (
+        <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-soft">
+          {step.result}
+        </pre>
+      )}
+    </li>
+  );
+}
+
+function Reasoning({ meta }: { meta: Meta }) {
+  const [open, setOpen] = useState(false);
+  const tools = meta.tools ?? [];
+  const took = meta.ms === undefined ? null : `${seconds(meta.ms)} s`;
+  const summary =
+    tools.length > 0
+      ? `Used ${tools.join(", ")}${took ? ` · ${took}` : ""}`
+      : `Answered${took ? ` in ${took}` : ""}`;
+  const trace = meta.trace ?? [];
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="cursor-pointer rounded-[8px] px-1 text-xs text-muted hover:text-text"
+      >
+        <span>{summary}</span> <span>{open ? "▴ Hide reasoning" : "▾ Show reasoning"}</span>
+      </button>
+      {open && (
+        <ol className="mt-2 flex flex-col gap-2">
+          {trace.map((step, i) =>
+            step.kind === "thinking" ? (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the trace is fixed once sent
+              <li key={i} className="whitespace-pre-wrap break-words text-xs italic text-muted">
+                {step.text}
+              </li>
+            ) : (
+              // biome-ignore lint/suspicious/noArrayIndexKey: the trace is fixed once sent
+              <ToolStep key={i} step={step} />
+            ),
+          )}
+          {trace.length === 0 && <li className="text-xs text-muted">No steps were recorded.</li>}
+        </ol>
+      )}
+    </div>
+  );
 }
 
 export function Conversation({
@@ -79,6 +160,27 @@ export function Conversation({
       prev !== null && prev.senderDevice === m.senderDevice && m.ts - prev.ts < GROUP_MS;
     prev = m;
     const name = nameOf(m.senderDevice);
+    const agent = chat.members.find(
+      (c) => c.member_type === "agent" && c.devices.some((d) => d.device_id === m.senderDevice),
+    );
+    if (agent) {
+      const owner = agent.owner_display_name ?? "someone";
+      return (
+        <div key={m.id} className="flex gap-3">
+          <Avatar name={name} agent />
+          <div className="min-w-0 max-w-[620px] rounded-[12px] border border-agent-line bg-agent px-3.5 py-3">
+            <div className="flex flex-wrap items-center gap-2 text-[13px]">
+              <strong className="font-semibold">{name}</strong>
+              <Pill tone="teal">{`agent · ${owner}'s`}</Pill>
+              <span className="text-muted">{timeOf(m.ts)}</span>
+            </div>
+            <div className="mt-1.5">
+              <Content m={m} onDownload={onDownload} isAgent />
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
       <div key={m.id} className={`flex gap-3 ${grouped ? "-mt-3.5" : ""}`}>
         {grouped ? <span className="w-9 shrink-0" /> : <Avatar name={name} />}

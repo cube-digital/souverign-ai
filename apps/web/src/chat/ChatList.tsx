@@ -1,5 +1,6 @@
-import type { Chat } from "@sa/protocol";
+import type { Agent, Chat } from "@sa/protocol";
 import { useState } from "react";
+import { Avatar } from "../ui/Avatar";
 import { Button } from "../ui/Button";
 
 export function ChatList({
@@ -9,6 +10,10 @@ export function ChatList({
   publicKey,
   onSelect,
   onNew,
+  agents = [],
+  agentsActive = false,
+  onOpenAgents,
+  onNewAgent,
 }: {
   chats: Chat[];
   unread: Record<string, number>;
@@ -16,6 +21,10 @@ export function ChatList({
   publicKey: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  agents?: Agent[];
+  agentsActive?: boolean;
+  onOpenAgents?: () => void;
+  onNewAgent?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const shown = chats.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase()));
@@ -66,6 +75,36 @@ export function ChatList({
           </button>
         ))}
         {shown.length === 0 && <p className="px-2 text-muted">No chats yet.</p>}
+        {onOpenAgents && (
+          <section aria-label="My agents" className="mt-4 flex flex-col gap-1">
+            <div className="px-2 pb-1 text-xs text-muted">My agents</div>
+            {agents.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                aria-current={agentsActive}
+                onClick={onOpenAgents}
+                className="flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-[10px] px-3 text-left text-soft hover:bg-panel-2"
+              >
+                <Avatar name={a.name} agent size={28} />
+                <span className="flex-1">{a.name}</span>
+                <span
+                  role="img"
+                  aria-label={a.status}
+                  title={a.status}
+                  className={`h-2 w-2 rounded-full ${a.status === "running" ? "bg-teal" : a.status === "error" ? "bg-danger" : a.status === "starting" ? "bg-amber" : "bg-[#5b6475]"}`}
+                />
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={onNewAgent}
+              className="min-h-[44px] cursor-pointer rounded-[10px] border border-dashed border-[#343b48] px-3 text-left text-muted hover:text-text"
+            >
+              + New agent
+            </button>
+          </section>
+        )}
       </div>
       <Button variant="primary" onClick={onNew}>
         New chat
