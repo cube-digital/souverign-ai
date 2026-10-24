@@ -30,7 +30,7 @@ need vllm-mlx "uv tool install 'vllm-mlx==0.4.1'"
 need hermes "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash   # then infra/hermes/pin.sh --pin"
 want livekit-server "brew install livekit   # SP6"
 
-if command -v node >/dev/null 2>&1 && ! node -e 'process.exit(+process.versions.node.split(".")[0] < 22)'; then
+if command -v node >/dev/null 2>&1 && ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)'; then
   echo "  node is older than 22"; missing=1
 fi
 if command -v docker >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
