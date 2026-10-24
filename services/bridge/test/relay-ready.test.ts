@@ -20,7 +20,11 @@ describe("waitForRelay", () => {
     });
     await new Promise<void>((r) => server?.listen(0, "127.0.0.1", () => r()));
     const { port } = server.address() as AddressInfo;
-    expect(await waitForRelay(`http://127.0.0.1:${port}`, { timeoutMs: 2000, intervalMs: 50 })).toBe(true);
-    expect(await waitForRelay("http://127.0.0.1:1", { timeoutMs: 200, intervalMs: 50 })).toBe(false);
+    expect(
+      await waitForRelay(`http://127.0.0.1:${port}`, { timeoutMs: 2000, intervalMs: 50 }),
+    ).toBe(true);
+    expect(await waitForRelay("http://127.0.0.1:1", { timeoutMs: 200, intervalMs: 50 })).toBe(
+      false,
+    );
   });
 });
