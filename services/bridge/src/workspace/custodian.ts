@@ -1,5 +1,6 @@
 import { ChatEngine, RelayClient, type RelayLink, type StoredDevice } from "@sa/client";
-import { TICKET_TTL_MS } from "@sa/protocol";
+import { randomId, sealKey } from "@sa/crypto";
+import { type DevicePublic, TICKET_TTL_MS } from "@sa/protocol";
 import { signTicket } from "@sa/protocol/ticket";
 import { PgKeyStore } from "../agents/pg-keystore.js";
 import { decrypt, encrypt } from "../agents/secrets.js";
@@ -18,6 +19,8 @@ export type HeldEngine = {
   engine: ChatEngine;
   /** id and seq of the last "msg" envelope this device sent in the chat */
   lastSent(chatId: string): { id: string; seq: number } | undefined;
+  /** Seals one epoch key this device holds to `device`; false when it holds none. */
+  sealEpoch(chatId: string, epoch: number, device: DevicePublic): Promise<boolean>;
   /** Stops all deliveries to the engine and closes the socket. */
   close(): void;
 };
@@ -89,23 +92,33 @@ export const humanMemberDevice =
     ).length > 0;
 
 /**
- * The custodian's key store keeps a seed room's keys only while the room is being seeded (no
- * history window yet). Every epoch created after the window (the closing rotation, later member
- * rotations) is never stored, so the custodian cannot seal post-window keys to a late joiner.
+ * The epoch every seed room's history is posted on (`history_until_epoch`): a seed room is always a
+ * fresh chat whose first and only epoch claim during seeding returns 1 (seedRoom asserts this).
+ * Late joiners are sealed only epochs up to this one.
+ */
+export const SEED_HISTORY_EPOCH = 1;
+
+/**
+ * The custodian's key store keeps the history epochs and only the newest live epoch (the one it
+ * last issued or received); older live epochs are dropped, so it never holds traffic keys between
+ * the window and the current key.
  */
 class CustodianKeyStore extends PgKeyStore {
   constructor(
     private pg: Db,
-    device: StoredDevice,
+    private own: StoredDevice,
   ) {
-    super(pg, device, { encrypt, decrypt });
+    super(pg, own, { encrypt, decrypt });
   }
   override async putChatKey(chatId: string, epoch: number, key: string): Promise<void> {
-    const open = await this.pg.query(
-      "select 1 from sa.chats where id = $1 and seed_key is not null and history_until_seq is null",
-      [chatId],
+    if (epoch <= SEED_HISTORY_EPOCH) return super.putChatKey(chatId, epoch, key);
+    if ((await this.latestEpoch(chatId)) > epoch) return;
+    await super.putChatKey(chatId, epoch, key);
+    await this.pg.query(
+      `delete from sa.agent_chat_keys
+       where device_id = $1 and chat_id = $2 and epoch > $3 and epoch < $4`,
+      [this.own.deviceId, chatId, SEED_HISTORY_EPOCH, epoch],
     );
-    if (open.length > 0) await super.putChatKey(chatId, epoch, key);
   }
 }
 
@@ -132,11 +145,12 @@ export async function openHeldEngine(
     );
   }
   const held = heldLink(base);
+  const store = custodian
+    ? new CustodianKeyStore(deps.db, device)
+    : new PgKeyStore(deps.db, device, { encrypt, decrypt });
   const engine = new ChatEngine({
     link: held.link,
-    store: custodian
-      ? new CustodianKeyStore(deps.db, device)
-      : new PgKeyStore(deps.db, device, { encrypt, decrypt }),
+    store,
     device,
     isTrustedKeySender: humanMemberDevice(deps.db),
   });
@@ -144,6 +158,23 @@ export async function openHeldEngine(
     deviceId: device.deviceId,
     engine,
     lastSent: (chatId) => held.sent.get(chatId),
+    async sealEpoch(chatId, epoch, to) {
+      const key = await store.getChatKey(chatId, epoch);
+      if (!key) return false;
+      await held.link.send({
+        v: 1,
+        id: randomId(),
+        chat_id: chatId,
+        sender_device: device.deviceId,
+        to_device: to.device_id,
+        epoch,
+        kind: "key",
+        nonce: "",
+        ciphertext: sealKey(key, to.public_key),
+        ts: Date.now(),
+      });
+      return true;
+    },
     close: () => {
       held.shut();
       closeSocket();
@@ -156,8 +187,15 @@ export async function openHeldEngine(
  * or seed colleague device) that is an active member of a seed room, and only with that room's
  * own window. Anything else is refused before it reaches the relay.
  */
+const guarded = new WeakSet<RelayAdmin>();
+
+/**
+ * Wraps a RelayAdmin once (wrapping an already guarded one returns it unchanged), so the bridge
+ * can guard its raw relay admin at startup and the custodian can rely on it either way.
+ */
 export function windowGuard(db: Db, relayAdmin: RelayAdmin): RelayAdmin {
-  return {
+  if (guarded.has(relayAdmin)) return relayAdmin;
+  const wrapped: RelayAdmin = {
     async setMember(change) {
       if (change.history_until_seq !== undefined) {
         const ok = await db.query(
@@ -177,12 +215,14 @@ export function windowGuard(db: Db, relayAdmin: RelayAdmin): RelayAdmin {
       await relayAdmin.setMember(change);
     },
   };
+  guarded.add(wrapped);
+  return wrapped;
 }
 
 /**
- * D-12 key custodian: Mira's device, started on every seed room, seals the room's epoch keys to
- * the devices of persons who are active members of a seed room, with the room's history window.
- * It holds only the epochs up to the window (see CustodianKeyStore), so that is all it can seal.
+ * D-12 key custodian: Mira's device, started on every seed room. It gives a person's devices the
+ * room's history window and the history epoch keys (never later ones), then rotates the room to a
+ * fresh epoch for every current member device, so the person reads live traffic from now on.
  * Nothing is ever granted to agent devices, seed colleagues, non-members or non-seed chats.
  */
 export class Custodian {
@@ -197,10 +237,7 @@ export class Custodian {
     this.relayAdmin = windowGuard(db, relayAdmin);
   }
 
-  /**
-   * Issues a fresh chat key to every active member device but the custodian's own, which never
-   * keeps it. Ends seeding (post-seed traffic is on a new epoch) and follows a bridge-side join.
-   */
+  /** Issues a fresh chat key to every active member device but the custodian's own. */
   async rotate(chatId: string): Promise<number> {
     const [claim] = await this.db.query<{ key_epoch: number }>(
       "update sa.chats set key_epoch = greatest(key_epoch + 1, $2) where id = $1 returning key_epoch",
@@ -218,43 +255,88 @@ export class Custodian {
     return epoch;
   }
 
-  /** Grants every device of `userId` in a seed room; a no-op unless the user is a person member. */
+  /** Grants every device of `userId` in a seed room, then rotates; a no-op for non-persons. */
   async grant(chatId: string, userId: string): Promise<void> {
-    await this.grantDevices(chatId, userId, null);
+    if ((await this.grantDevices(chatId, userId, null)) > 0) await this.rotate(chatId);
   }
 
   readonly hooks = {
     onDeviceRegistered: async (userId: string, deviceId: string): Promise<void> => {
-      const rooms = await this.db.query<{ chat_id: string }>(
-        `select m.chat_id from sa.chat_members m join sa.chats c on c.id = m.chat_id
-         where m.member_type = 'user' and m.member_id = $1 and m.removed_at is null
-           and c.seed_key is not null and c.history_until_seq is not null`,
-        [userId],
-      );
-      for (const r of rooms) await this.grantDevices(r.chat_id, userId, deviceId);
+      for (const chatId of await this.seedRooms(userId)) {
+        try {
+          if ((await this.grantDevices(chatId, userId, deviceId)) > 0) await this.rotate(chatId);
+        } catch (e) {
+          this.log("seed room grant failed", { chat: chatId, error: (e as Error).message });
+        }
+      }
     },
-    onMemberAdded: (chatId: string, userId: string): Promise<void> => this.grant(chatId, userId),
+    onMemberAdded: async (chatId: string, userId: string): Promise<void> => {
+      try {
+        await this.grant(chatId, userId);
+      } catch (e) {
+        this.log("seed room grant failed", { chat: chatId, error: (e as Error).message });
+      }
+    },
   };
 
-  private async grantDevices(chatId: string, userId: string, onlyDevice: string | null) {
+  /**
+   * Boot pass (idempotent): re-grants every active person device of every seed room, so a failed
+   * grant is retried, and rotates a room when it granted anything or its live key is still the
+   * history epoch (a closing rotation that never happened).
+   */
+  async reconcile(): Promise<void> {
+    for (const chatId of await this.seedRooms(null)) {
+      try {
+        const granted = await this.grantDevices(chatId, null, null);
+        const stale = (await this.mira.engine.latestEpoch(chatId)) <= SEED_HISTORY_EPOCH;
+        if (granted > 0 || stale) await this.rotate(chatId);
+      } catch (e) {
+        this.log("seed room reconcile failed", { chat: chatId, error: (e as Error).message });
+      }
+    }
+  }
+
+  /** Seed rooms with a history window, optionally only those the person is an active member of. */
+  private async seedRooms(userId: string | null): Promise<string[]> {
+    const rows = await this.db.query<{ id: string }>(
+      `select c.id from sa.chats c
+       where c.seed_key is not null and c.history_until_seq is not null
+         and ($1::text is null or exists (select 1 from sa.chat_members m
+           where m.chat_id = c.id and m.member_type = 'user' and m.member_id = $1
+             and m.removed_at is null))
+       order by c.id`,
+      [userId],
+    );
+    return rows.map((r) => r.id);
+  }
+
+  /** Window + history epochs to person devices (all person members when userId is null). */
+  private async grantDevices(
+    chatId: string,
+    userId: string | null,
+    onlyDevice: string | null,
+  ): Promise<number> {
     const [chat] = await this.db.query<{ hus: string | number }>(
       `select history_until_seq as hus from sa.chats
        where id = $1 and seed_key is not null and history_until_seq is not null`,
       [chatId],
     );
-    if (!chat) return;
+    if (!chat) return 0;
     // Person devices of an active person member only (seed colleagues and agents are excluded).
     const devices = await this.db.query<{ device_id: string; public_key: string }>(
       `select d.id as device_id, d.public_key from sa.devices d
        join sa.users u on u.id = d.owner_id and u.kind = 'person'
        join sa.chat_members m on m.chat_id = $1 and m.member_type = 'user'
          and m.member_id = u.id and m.removed_at is null
-       where d.owner_type = 'user' and d.owner_id = $2 and ($3::text is null or d.id = $3)
+       where d.owner_type = 'user' and ($2::text is null or d.owner_id = $2)
+         and ($3::text is null or d.id = $3)
          and not exists (select 1 from sa.agent_devices ad where ad.device_id = d.id)
-         and not exists (select 1 from sa.seed_devices sd where sd.device_id = d.id)`,
+         and not exists (select 1 from sa.seed_devices sd where sd.device_id = d.id)
+       order by d.id`,
       [chatId, userId, onlyDevice],
     );
     const historyUntilSeq = Number(chat.hus);
+    let granted = 0;
     for (const d of devices) {
       try {
         await this.relayAdmin.setMember({
@@ -263,16 +345,21 @@ export class Custodian {
           op: "add",
           history_until_seq: historyUntilSeq,
         });
-        const keys = await this.mira.engine.shareEpochs(chatId, d);
+        let keys = 0;
+        for (let epoch = 1; epoch <= SEED_HISTORY_EPOCH; epoch++) {
+          if (await this.mira.sealEpoch(chatId, epoch, d)) keys++;
+        }
+        granted++;
         this.log("seed room granted", { chat: chatId, device: d.device_id, keys });
       } catch (e) {
         this.log("seed room grant failed", {
           chat: chatId,
           device: d.device_id,
-          error: (e as Error).name,
+          error: (e as Error).message,
         });
       }
     }
+    return granted;
   }
 
   close(): void {

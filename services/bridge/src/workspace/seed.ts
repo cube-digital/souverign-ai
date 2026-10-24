@@ -5,7 +5,13 @@ import { ROSTER, type RosterId, SEED_CHANNELS } from "@sa/protocol";
 import { decrypt, encrypt } from "../agents/secrets.js";
 import type { Db } from "../db.js";
 import { waitForRelay } from "../relay-ready.js";
-import { Custodian, type HeldEngine, openHeldEngine, type WorkspaceDeps } from "./custodian.js";
+import {
+  Custodian,
+  type HeldEngine,
+  openHeldEngine,
+  SEED_HISTORY_EPOCH,
+  type WorkspaceDeps,
+} from "./custodian.js";
 import { SEED_HISTORY, SEED_USERS, type SeedUserId } from "./seed-data.js";
 
 export type { WorkspaceDeps } from "./custodian.js";
@@ -34,13 +40,18 @@ const toDevice = (r: KeyRow): StoredDevice => ({
   keys: { publicKey: r.public_key, secretKey: decrypt(r.enc_secret_key) },
 });
 
-async function ensureSeedUsers(db: Db): Promise<Map<SeedUserId, StoredDevice>> {
+/** Null when a seed id already belongs to a person: that row is never converted. */
+async function ensureSeedUsers(db: Db): Promise<Map<SeedUserId, StoredDevice> | null> {
   const out = new Map<SeedUserId, StoredDevice>();
   for (const u of SEED_USERS) {
+    const [taken] = await db.query("select 1 from sa.users where id = $1 and kind <> 'seed'", [
+      u.id,
+    ]);
+    if (taken) return null;
     await db.query(
       `insert into sa.users (id, display_name, pin_hash, kind) values ($1, $2, 'disabled', 'seed')
-       on conflict (id) do update set display_name = excluded.display_name,
-         pin_hash = 'disabled', kind = 'seed'`,
+       on conflict (id) do update set display_name = excluded.display_name, pin_hash = 'disabled'
+       where sa.users.kind = 'seed'`,
       [u.id, u.name],
     );
     const select = () =>
@@ -125,6 +136,7 @@ async function dropUnfinished(db: Db, seedKey: string): Promise<void> {
     [seedKey],
   );
   for (const { id } of rows) {
+    await db.query("delete from sa.routines where chat_id = $1", [id]);
     await db.query("delete from sa.chat_members where chat_id = $1", [id]);
     await db.query("delete from sa.agent_chat_keys where chat_id = $1", [id]);
     await db.query("delete from sa.agent_cursors where chat_id = $1", [id]);
@@ -187,6 +199,7 @@ async function seedRoom(ctx: SeedCtx, channel: (typeof SEED_CHANNELS)[number]): 
     others.map((d) => ({ device_id: d.deviceId, public_key: d.keys.publicKey })),
     Number(claim?.key_epoch),
   );
+  if (epoch !== SEED_HISTORY_EPOCH) throw new Error("seed room history epoch mismatch");
   await mira.engine.sendSystem(chatId, "Mira created this channel");
 
   const authors = new Map<string, HeldEngine>([["mira", mira]]);
@@ -227,22 +240,16 @@ async function seedRoom(ctx: SeedCtx, channel: (typeof SEED_CHANNELS)[number]): 
     for (const t of temporary) t.close();
   }
 
+  // Close the window: live traffic starts on a fresh epoch. The room counts as done only once
+  // this rotation went out, so a failure leaves it unfinished and the next start redoes it.
+  await custodian.rotate(chatId);
   await db.query("update sa.chats set history_until_seq = $2 where id = $1", [chatId, lastSeq]);
   deps.log("seed room created", { chat: chatId, seed_key: channel.key, messages: ids.length });
-
-  const persons = await db.query<{ member_id: string }>(
-    `select m.member_id from sa.chat_members m join sa.users u on u.id = m.member_id
-     where m.chat_id = $1 and m.member_type = 'user' and u.kind = 'person'`,
-    [chatId],
-  );
-  for (const p of persons) await custodian.grant(chatId, p.member_id);
-  // The window is closed: everything after it is on a fresh epoch the custodian never holds.
-  await custodian.rotate(chatId);
 }
 
 /**
- * D-12 seeded workspace. Every step is idempotent: a later start creates and sends nothing,
- * apart from adding and granting persons created since.
+ * D-12 seeded workspace. Every step is idempotent: a later start creates nothing and only
+ * re-grants (and then rotates) rooms that have person devices.
  */
 export async function ensureWorkspace(deps: WorkspaceDeps): Promise<Workspace> {
   const { db, log } = deps;
@@ -252,6 +259,10 @@ export async function ensureWorkspace(deps: WorkspaceDeps): Promise<Workspace> {
   }
   await cryptoReady();
   const seeds = await ensureSeedUsers(db);
+  if (!seeds) {
+    log("workspace seed skipped", { reason: "seed_user_id_taken" });
+    return NOOP_WORKSPACE;
+  }
   const agents = await ensureRosterAgents(db);
   const miraDevice = seeds.get("mira");
   if (!miraDevice) throw new Error("seed device missing");
@@ -269,7 +280,7 @@ export async function ensureWorkspace(deps: WorkspaceDeps): Promise<Workspace> {
       await seedRoom({ deps, mira, seeds, agents, custodian }, channel);
     }
 
-    // Persons created after seeding (`make seed`) join every seed room and get its history.
+    // Persons created after seeding (`make seed`) join every seed room; reconcile grants them.
     const rooms = await db.query<{ id: string }>(
       "select id from sa.chats where seed_key is not null and history_until_seq is not null",
     );
@@ -283,12 +294,11 @@ export async function ensureWorkspace(deps: WorkspaceDeps): Promise<Workspace> {
          returning member_id`,
         [room.id],
       );
-      if (added.length === 0) continue;
-      for (const a of added) await custodian.grant(room.id, a.member_id);
-      // Joining still issues a new chat key (D-12), as when a member adds a person in the web.
-      await custodian.rotate(room.id);
-      log("seed room members added", { chat: room.id, added: added.length });
+      if (added.length > 0) log("seed room members added", { chat: room.id, added: added.length });
     }
+    // Every person device gets the window and history keys (retrying failed grants), and a room
+    // that granted anything gets a new chat key, as joining does in the web (D-12).
+    await custodian.reconcile();
   } catch (e) {
     log("workspace seed failed", { error: (e as Error).message });
   }
