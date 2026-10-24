@@ -9,6 +9,7 @@ import { type ActivityBody, TICKET_TTL_MS, type TraceStep } from "@sa/protocol";
 import { signTicket } from "@sa/protocol/ticket";
 import type { Db } from "../db.js";
 import { ToolLog } from "../mcp/tool-log.js";
+import { waitForRelay } from "../relay-ready.js";
 import type { AgentHostApi } from "./api.js";
 import { PgKeyStore } from "./pg-keystore.js";
 import type { AgentRuntime, ChatMessage, RuntimeAgent } from "./runtime.js";
@@ -41,7 +42,14 @@ type Device = {
   close: () => void;
   lastReply: Map<string, number>;
   turns: Promise<void>;
+  /** the relay link, for the health check */
+  link: RelayLink;
+  /** last time the link was seen `ready` (or the device was built) */
+  lastReadyAt: number;
 };
+
+const HEALTH_INTERVAL_MS = 15_000;
+const DEAD_AFTER_MS = 30_000;
 
 const log = (msg: string, extra: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ level: "info", msg, ...extra }));
@@ -62,6 +70,8 @@ export class AgentHost implements AgentHostApi {
   private devices = new Map<string, Device>();
   private building = new Map<string, Promise<Device | null>>();
   private toolLog: ToolLog;
+  private health: ReturnType<typeof setInterval> | null = null;
+  private rebuilding = new Set<string>();
 
   constructor(private opts: AgentHostOptions) {
     this.toolLog = opts.toolLog ?? new ToolLog();
@@ -107,7 +117,40 @@ export class AgentHost implements AgentHostApi {
     this.devices.get(agentId)?.lastReply.delete(chatId);
   }
 
+  /** Every 15 s: a device whose relay link has not been ready for 30 s is closed and rebuilt. */
+  private ensureHealthLoop(): void {
+    if (this.health) return;
+    this.health = setInterval(() => void this.checkHealth(), HEALTH_INTERVAL_MS);
+    this.health.unref?.();
+  }
+
+  private async checkHealth(): Promise<void> {
+    const now = Date.now();
+    for (const [agentId, dev] of [...this.devices]) {
+      const status = (dev.link as { status?: string }).status;
+      if (status === undefined || status === "ready") {
+        dev.lastReadyAt = now;
+        continue;
+      }
+      if (now - dev.lastReadyAt < DEAD_AFTER_MS || this.rebuilding.has(agentId)) continue;
+      this.rebuilding.add(agentId);
+      try {
+        dev.close();
+        this.devices.delete(agentId);
+        const fresh = await this.deviceFor(agentId);
+        if (fresh)
+          log("agent device reconnected", { agent: agentId, after_ms: now - dev.lastReadyAt });
+      } catch (e) {
+        log("agent device rebuild failed", { agent: agentId, error: (e as Error).message });
+      } finally {
+        this.rebuilding.delete(agentId);
+      }
+    }
+  }
+
   async stopAll(): Promise<void> {
+    if (this.health) clearInterval(this.health);
+    this.health = null;
     await Promise.allSettled(this.building.values());
     for (const d of this.devices.values()) d.close();
     this.devices.clear();
@@ -139,10 +182,10 @@ export class AgentHost implements AgentHostApi {
       public_key: string;
       enc_secret_key: string;
     }>(
-      `select a.id, a.name, a.template, a.soul, u.display_name as owner_name,
+      `select a.id, a.name, a.template, a.soul, coalesce(u.display_name, 'the workspace') as owner_name,
          ad.device_id, dv.public_key, ad.enc_secret_key
        from sa.agents a
-       join sa.users u on u.id = a.owner_user_id
+       left join sa.users u on u.id = a.owner_user_id
        join sa.agent_devices ad on ad.agent_id = a.id
        join sa.devices dv on dv.id = ad.device_id
        where a.id = $1`,
@@ -168,6 +211,8 @@ export class AgentHost implements AgentHostApi {
     if (this.opts.linkFactory) {
       link = this.opts.linkFactory(row.device_id);
     } else {
+      // After a machine restart the relay may come up after the bridge: do not give up early.
+      await waitForRelay(this.opts.relayInternalUrl);
       const url = `${this.opts.relayInternalUrl.replace(/^http/, "ws").replace(/\/$/, "")}/relay/ws`;
       const client = new RelayClient({
         url,
@@ -189,7 +234,7 @@ export class AgentHost implements AgentHostApi {
       isTrustedKeySender: async (chatId, sender) => {
         const rows = await db.query(
           `select d.id from sa.devices d
-           join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id and m.role = 'owner'
+           join sa.chat_members m on m.member_type = 'user' and m.member_id = d.owner_id
            where d.owner_type = 'user' and d.id = $1 and m.chat_id = $2 and m.removed_at is null`,
           [sender, chatId],
         );
@@ -203,9 +248,12 @@ export class AgentHost implements AgentHostApi {
       close,
       lastReply: new Map(),
       turns: Promise.resolve(),
+      link,
+      lastReadyAt: Date.now(),
     };
     engine.onMessage((m) => void this.onMessage(dev, m));
     this.devices.set(agentId, dev);
+    this.ensureHealthLoop();
     await connecting;
     const chats = await db.query<{ chat_id: string }>(
       "select chat_id from sa.chat_members where member_type = 'agent' and member_id = $1 and removed_at is null",
