@@ -47,7 +47,7 @@ describe("signal ops", () => {
 });
 
 describe("teammates protocol", () => {
-  it("accepts reactions and thread replies, rejects a bad reply_to, and lets members carry history_until_seq", () => {
+  it("fixes the wire shapes: reactions, replies, member history, agents, routines and the roster", () => {
     expect(
       MessageBody.safeParse({ type: "reaction", target: "msg_0000001", emoji: "👍", op: "add" })
         .success,
@@ -65,9 +65,7 @@ describe("teammates protocol", () => {
     const change = { chat_id: "chat_0000001", device_id: "dev_00000001", op: "add" };
     expect(RelayMemberChange.safeParse({ ...change, history_until_seq: 12 }).success).toBe(true);
     expect(RelayMemberChange.safeParse({ ...change, history_until_seq: -1 }).success).toBe(false);
-  });
 
-  it("fixes the shape of agents, routines and the roster", async () => {
     const agent = {
       id: "a1",
       name: "Ops",
@@ -75,7 +73,7 @@ describe("teammates protocol", () => {
       soul: "",
       owner_user_id: null,
       device_id: "dev_00000001",
-      status: "online",
+      status: "running",
       scope: "workspace",
       roster_id: "ops",
     };
