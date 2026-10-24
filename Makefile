@@ -24,7 +24,7 @@ prereqs: ## check host tools; prints install commands for anything missing
 models: ## download every model in config/models.yaml (resumable, ~30 GB)
 	infra/models/download.sh $(if $(PROFILE),--profile $(PROFILE),)
 
-up: ## start postgres, the LLM (PROFILE=fast|quality), whisper, the Hermes smoke gateway
+up: ## start postgres, the LLM (PROFILE=fast|quality), whisper, memory, the Hermes smoke gateway
 	infra/scripts/up.sh $(PROFILE)
 
 down: ## stop everything make up started
@@ -59,4 +59,7 @@ agents-smoke: ## live: the DevOps bot answers on the local LLM through the app (
 roster-smoke: ## live: @Ops and @QA answer one message in a thread with tools (needs make up + make dev)
 	pnpm --filter @sa/e2e run roster-smoke
 
-.PHONY: help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke roster-smoke
+memory-smoke: ## live: teach a doc, ask in chat, citation present; approve and deny an action (needs make up + make dev)
+	pnpm --filter @sa/e2e run memory-smoke
+
+.PHONY: help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke roster-smoke memory-smoke

@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 source infra/scripts/pidlib.sh
 
-for name in hermes-smoke whisper llm; do
+for name in hermes-smoke memory whisper llm; do
   f=.run/$name.pid
   [[ -f $f ]] || continue
   pid=$(cat "$f")
