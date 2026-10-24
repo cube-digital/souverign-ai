@@ -854,6 +854,7 @@ export class AgentHost implements AgentHostApi {
       const out = await runBeforeReply(ctx, { text, meta }, log);
       text = out.text;
       Object.assign(meta, out.meta);
+      if (out.failed) outcome = "error";
     } catch (e) {
       const name = (e as Error).name;
       if (abort.aborted) {

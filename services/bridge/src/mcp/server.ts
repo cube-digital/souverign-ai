@@ -24,6 +24,8 @@ type Tool = {
   properties: Record<string, { type: string; description?: string }>;
   required?: string[];
   run: (ctx: Ctx, args: Args) => Promise<unknown>;
+  /** registered tools return text that is passed through as is */
+  raw?: boolean;
 };
 
 const sim = (path: string) => async (ctx: Ctx) => simGet(ctx, path);
@@ -348,7 +350,7 @@ export function registerMcp(
       description: r.description,
       properties: r.properties as Tool["properties"],
       ...(r.required ? { required: r.required } : {}),
-      // registered tools return text; it is passed through as is
+      raw: true,
       run: (_ctx, args) => r.run(toolCtx(deps, agentId, template), args),
     }));
     const room = Math.max(0, MAX_TOOLS - builtIn.length);
@@ -411,7 +413,7 @@ export function registerMcp(
           },
           args,
         );
-        text = typeof out === "string" ? out : JSON.stringify(out);
+        text = tool.raw && typeof out === "string" ? out : JSON.stringify(out);
       } catch (e) {
         isError = true;
         text = JSON.stringify({ error: "tool_failed", message: (e as Error).message });

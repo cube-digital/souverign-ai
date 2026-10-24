@@ -77,9 +77,9 @@ export function currentTurn(agentId: string): TurnContext | undefined {
 export function runStored(m: StoredMessage, log: Log): void {
   for (const h of hooks) {
     if (!h.onStored) continue;
-    h.onStored(m).catch((e) =>
-      log("stored hook failed", { hook: h.name, error: (e as Error).message }),
-    );
+    Promise.resolve()
+      .then(() => h.onStored?.(m))
+      .catch((e) => log("stored hook failed", { hook: h.name, error: (e as Error).message }));
   }
 }
 
@@ -115,7 +115,7 @@ export async function runBeforeReply(
   ctx: TurnContext,
   draft: ReplyDraft,
   log: Log,
-): Promise<{ text: string; meta: TextMeta; held: boolean }> {
+): Promise<{ text: string; meta: TextMeta; held: boolean; failed?: boolean }> {
   let meta: TextMeta = { ...draft.meta };
   for (const h of hooks) {
     if (!h.beforeReply) continue;
@@ -124,7 +124,7 @@ export async function runBeforeReply(
       d = await h.beforeReply(ctx, { text: draft.text, meta });
     } catch (e) {
       log("before reply hook failed", { hook: h.name, error: (e as Error).message });
-      return { text: FAIL_CLOSED_NOTICE, meta, held: true };
+      return { text: FAIL_CLOSED_NOTICE, meta, held: true, failed: true };
     }
     meta = { ...meta, ...(d.meta ?? {}) };
     if (d.action === "hold") return { text: d.notice, meta, held: true };
