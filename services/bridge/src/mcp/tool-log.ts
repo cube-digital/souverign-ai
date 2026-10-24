@@ -10,9 +10,17 @@ export class ToolLog extends EventEmitter {
 
   private chats = new Map<string, string>();
 
-  begin(agentId: string, chatId: string): void {
+  private requesters = new Map<string, string | undefined>();
+
+  begin(agentId: string, chatId: string, ctx: { requesterUserId?: string } = {}): void {
     this.steps.set(agentId, []);
     this.chats.set(agentId, chatId);
+    this.requesters.set(agentId, ctx.requesterUserId);
+  }
+
+  /** The requester of the agent's turn in progress, if any. */
+  requester(agentId: string): string | undefined {
+    return this.requesters.get(agentId);
   }
 
   /** The chat of the agent's turn in progress, if any. */
@@ -38,6 +46,7 @@ export class ToolLog extends EventEmitter {
     const list = this.steps.get(agentId) ?? [];
     this.steps.delete(agentId);
     this.chats.delete(agentId);
+    this.requesters.delete(agentId);
     return list;
   }
 }
