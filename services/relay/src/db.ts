@@ -23,6 +23,11 @@ interface EnvelopeRow {
   ts: number;
 }
 
+interface MemberRow {
+  added_seq: number;
+  history_until_seq: number | null;
+}
+
 function toStored(r: EnvelopeRow): StoredEnvelope {
   const env = {
     v: 1,
@@ -63,7 +68,8 @@ function makeDb(path: string) {
       chat_id text not null,
       device_id text not null,
       added_seq integer not null,
-      removed_seq integer
+      removed_seq integer,
+      history_until_seq integer
     );
     CREATE INDEX IF NOT EXISTS members_chat ON members(chat_id, device_id);
     CREATE TABLE IF NOT EXISTS blobs (
@@ -74,16 +80,24 @@ function makeDb(path: string) {
     );
   `);
 
+  const cols = db.pragma("table_info(members)") as { name: string }[];
+  if (!cols.some((c) => c.name === "history_until_seq")) {
+    db.exec("ALTER TABLE members ADD COLUMN history_until_seq integer");
+  }
+
   const maxSeq = db.prepare("SELECT COALESCE(MAX(seq), 0) AS m FROM envelopes");
   const sqliteSeq = db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'envelopes'");
   const activeRow = db.prepare(
-    "SELECT added_seq FROM members WHERE chat_id = ? AND device_id = ? AND removed_seq IS NULL",
+    "SELECT added_seq, history_until_seq FROM members WHERE chat_id = ? AND device_id = ? AND removed_seq IS NULL",
+  );
+  const widenWindow = db.prepare(
+    "UPDATE members SET history_until_seq = max(coalesce(history_until_seq, -1), ?) WHERE chat_id = ? AND device_id = ? AND removed_seq IS NULL",
   );
   const activeList = db.prepare(
     "SELECT device_id FROM members WHERE chat_id = ? AND removed_seq IS NULL",
   );
   const insertMember = db.prepare(
-    "INSERT INTO members (chat_id, device_id, added_seq) VALUES (?, ?, ?)",
+    "INSERT INTO members (chat_id, device_id, added_seq, history_until_seq) VALUES (?, ?, ?, ?)",
   );
   const removeMember = db.prepare(
     "UPDATE members SET removed_seq = ? WHERE chat_id = ? AND device_id = ? AND removed_seq IS NULL",
@@ -94,7 +108,7 @@ function makeDb(path: string) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const syncQ = db.prepare(
-    `SELECT * FROM envelopes WHERE chat_id = ? AND seq > ? AND (to_device IS NULL OR to_device = ?)
+    `SELECT * FROM envelopes WHERE chat_id = ? AND seq > ? AND (seq > ? OR seq <= ?) AND (to_device IS NULL OR to_device = ?)
      ORDER BY seq LIMIT ?`,
   );
   const recentQ = db.prepare("SELECT * FROM envelopes ORDER BY seq DESC LIMIT ?");
@@ -123,10 +137,13 @@ function makeDb(path: string) {
     activeDevices(chat: string): string[] {
       return (activeList.all(chat) as { device_id: string }[]).map((r) => r.device_id);
     },
-    addMember(chat: string, device: string): void {
+    addMember(chat: string, device: string, historyUntil?: number): void {
       db.transaction(() => {
-        if (activeRow.get(chat, device)) return;
-        insertMember.run(chat, device, currentSeq());
+        if (activeRow.get(chat, device)) {
+          if (historyUntil !== undefined) widenWindow.run(historyUntil, chat, device);
+          return;
+        }
+        insertMember.run(chat, device, currentSeq(), historyUntil ?? null);
       })();
     },
     removeMember(chat: string, device: string): void {
@@ -152,10 +169,15 @@ function makeDb(path: string) {
       return Number(res.lastInsertRowid);
     },
     sync(chat: string, device: string, afterSeq: number, limit: number): StoredEnvelope[] {
-      return (syncQ.all(chat, afterSeq, device, limit) as EnvelopeRow[]).map(toStored);
+      const m = activeRow.get(chat, device) as MemberRow | undefined;
+      if (!m) return [];
+      const until = m.history_until_seq ?? -1;
+      return (syncQ.all(chat, afterSeq, m.added_seq, until, device, limit) as EnvelopeRow[]).map(
+        toStored,
+      );
     },
     hasMoreAfter(chat: string, device: string, afterSeq: number): boolean {
-      return syncQ.all(chat, afterSeq, device, 1).length > 0;
+      return this.sync(chat, device, afterSeq, 1).length > 0;
     },
     recent(limit: number): RelayRecentRow[] {
       return (recentQ.all(limit) as EnvelopeRow[]).map((r) => ({
