@@ -1,0 +1,25 @@
+{
+  "name": "@sa/bridge",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "migrate": "tsx src/migrate.ts",
+    "seed": "tsx src/seed.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.11",
+    "@sa/protocol": "workspace:^",
+    "fastify": "^5.12.7",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
+  }
+}

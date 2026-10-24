@@ -33,4 +33,15 @@ down: ## stop everything make up started
 smoke: ## live checks against the running stack, offline, with egress + memory guards
 	HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --group live pytest -m live infra/py/tests/live
 
-.PHONY: help install check prereqs models up down smoke
+dev: ## chat stack for manual testing: postgres, relay, bridge, web on http://127.0.0.1:5173
+	infra/scripts/dev.sh
+
+seed: ## create the four demo users; prints their PINs once
+	docker compose -f infra/docker-compose.yaml up -d --wait postgres
+	pnpm --filter @sa/bridge run migrate
+	pnpm --filter @sa/bridge run seed
+
+e2e: ## Playwright: four browsers chat end to end (self-contained, no docker)
+	pnpm --filter @sa/e2e run e2e
+
+.PHONY: help install check prereqs models up down smoke dev seed e2e

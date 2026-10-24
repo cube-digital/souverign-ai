@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!**/pnpm-lock.yaml", "!**/*.md", "!docs/**"]
+    "includes": ["**", "!**/pnpm-lock.yaml", "!**/*.md", "!docs"]
   },
   "formatter": {
     "indentStyle": "space",
@@ -23,6 +23,11 @@
     "formatter": {
       "quoteStyle": "double",
       "semicolons": "always"
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   }
 }

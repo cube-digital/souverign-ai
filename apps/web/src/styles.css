@@ -1,0 +1,43 @@
+@import "tailwindcss";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+
+@theme {
+  --color-bg: #0e1014;
+  --color-panel: #14171d;
+  --color-panel-2: #1a1e26;
+  --color-line: #262b35;
+  --color-text: #e8eaee;
+  --color-soft: #c9ced8;
+  --color-muted: #9ba3b1;
+  --color-teal: #2fd3b5;
+  --color-teal-ink: #06201b;
+  --color-teal-soft: #10231f;
+  --color-teal-text: #7be8d3;
+  --color-agent: #131c1e;
+  --color-agent-line: #1e3a35;
+  --color-amber: #f2b44b;
+  --color-amber-ink: #1a1204;
+  --color-amber-soft: #1b1710;
+  --color-amber-line: #5a4520;
+  --color-amber-text: #f7cd7e;
+  --color-danger: #d9363e;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+}

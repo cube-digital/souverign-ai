@@ -1,0 +1,16 @@
+{
+  "name": "@sa/client",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@sa/crypto": "workspace:^",
+    "@sa/protocol": "workspace:^"
+  }
+}
