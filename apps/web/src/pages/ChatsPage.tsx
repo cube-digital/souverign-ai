@@ -43,8 +43,6 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
   let main: React.ReactNode;
   if (s.phase === "starting") {
     main = <Centered>Setting up your secure session…</Centered>;
-  } else if (s.phase === "error") {
-    main = <Centered>Couldn't connect. Reload the page to try again.</Centered>;
   } else if (!active || !s.engine) {
     main = <Centered>Pick a chat or start a new one</Centered>;
   } else {
@@ -87,6 +85,24 @@ export function ChatsPage({ onSwitchUser }: { onSwitchUser: () => void }) {
             onSelect={setActiveId}
             onNew={() => setNewChat(true)}
           />
+        }
+        banner={
+          s.phase === "error" && (
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-3 border-b border-amber-line bg-amber-soft px-4 py-2 text-sm text-amber-text"
+            >
+              <span>Not connected: {s.error ?? "unknown error"}</span>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={s.retry}
+                className="cursor-pointer font-semibold underline"
+              >
+                Retry
+              </button>
+            </div>
+          )
         }
         aside={<RelayPanel />}
       >

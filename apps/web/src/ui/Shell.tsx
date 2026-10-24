@@ -8,12 +8,14 @@ export function Shell({
   nav,
   children,
   aside,
+  banner,
 }: {
   userName: string;
   onSwitchUser: () => void;
   nav?: ReactNode;
   children: ReactNode;
   aside?: ReactNode;
+  banner?: ReactNode;
 }) {
   return (
     <div className="flex h-full flex-col">
@@ -36,6 +38,7 @@ export function Shell({
           </button>
         </div>
       </header>
+      {banner}
       <div className="flex min-h-0 flex-1 flex-wrap">
         <nav
           aria-label="Chats"

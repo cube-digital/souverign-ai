@@ -1,15 +1,20 @@
 import type { RelayRecentRow } from "@sa/protocol";
 import { useEffect, useState } from "react";
 import { formatSize, shortId, timeOf } from "../lib/format";
+import { useSession } from "../state/session";
 
 export function RelayPanel() {
   const [rows, setRows] = useState<RelayRecentRow[]>([]);
+  const { ticket, deviceId } = useSession();
 
   useEffect(() => {
+    if (!deviceId) return;
     let alive = true;
     const poll = async () => {
       try {
-        const res = await fetch("/relay/debug/recent?limit=50");
+        const res = await fetch("/relay/debug/recent?limit=50", {
+          headers: { Authorization: `Bearer ${await ticket()}` },
+        });
         if (res.ok && alive) setRows((await res.json()) as RelayRecentRow[]);
       } catch {
         // relay unreachable: keep the last rows
@@ -21,7 +26,7 @@ export function RelayPanel() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [ticket, deviceId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3.5 p-4">
