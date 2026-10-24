@@ -22,21 +22,24 @@ const JOINED = 1_700_000_000_000;
 const nora: ScopeAgent = { id: "nora", scope: "personal", ownerUserId: "ana", share: "always" };
 const max: ScopeAgent = { id: "max", scope: "workspace", ownerUserId: null, share: "always" };
 
-const input = (over: Partial<ScopeInput> & { agent: ScopeAgent; chat: Partial<ScopeChat> }) =>
-  ({
-    shared: [],
-    noTaught: false,
-    approverAvailable: true,
-    ...over,
-    chat: {
-      id: "project",
-      kind: "group",
-      agentJoinedAt: JOINED,
-      humans: ["ana", "bob"],
-      agents: [over.agent.id],
-      ...over.chat,
-    },
-  }) as ScopeInput;
+type InputOver = Partial<Omit<ScopeInput, "agent" | "chat">> & {
+  agent: ScopeAgent;
+  chat: Partial<ScopeChat>;
+};
+const input = (over: InputOver): ScopeInput => ({
+  shared: [],
+  noTaught: false,
+  approverAvailable: true,
+  ...over,
+  chat: {
+    id: "project",
+    kind: "group",
+    agentJoinedAt: JOINED,
+    humans: ["ana", "bob"],
+    agents: [over.agent.id],
+    ...over.chat,
+  },
+});
 
 const namespaces = (s: MemoryScope[]) => s.map((x) => x.namespace);
 const agentScope = (s: MemoryScope[]) => s.find((x) => x.namespace.startsWith("agent:"));
