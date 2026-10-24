@@ -1,8 +1,10 @@
+import { requireMasterKey } from "./agents/secrets.js";
 import { buildApp } from "./app.js";
 import { openDb } from "./db.js";
 import { migrate } from "./migrate.js";
 import { httpRelayAdmin } from "./relay-admin.js";
 
+requireMasterKey();
 const relayAdmin = httpRelayAdmin();
 const db = await openDb();
 await migrate(db);

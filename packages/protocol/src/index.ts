@@ -198,3 +198,4 @@ export const ApiError = z.object({
   missing_devices: z.array(z.string()).optional(),
 });
 export type ApiError = z.infer<typeof ApiError>;
+export { signTicket, verifyTicket } from "./ticket.js";
