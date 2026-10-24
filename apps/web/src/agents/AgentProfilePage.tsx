@@ -106,6 +106,7 @@ export function AgentProfilePage() {
         idPrefix="agent-tab"
         onChange={(id) => setParams(id === "overview" ? {} : { tab: id }, { replace: true })}
       />
+      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: the tab panel is focusable per the ARIA tabs pattern */}
       <div role="tabpanel" id="agent-panel" aria-labelledby={`agent-tab-${tab}`} tabIndex={0}>
         {tab === "overview" && <Overview agent={agent} />}
         {tab === "activity" && <ActivityTab agent={agent} />}
