@@ -2,8 +2,8 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { ChatEngine, type ChatMessage } from "@sa/client";
 import { cryptoReady, deviceIdFor, newDeviceKeys } from "@sa/crypto";
-import { ROSTER, SEED_CHANNELS } from "@sa/protocol";
 import type { RelayMemberChange } from "@sa/protocol";
+import { ROSTER, SEED_CHANNELS } from "@sa/protocol";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 // The in-memory relay is shared with the client package's own tests.
 import { FakeRelay } from "../../../packages/client/test/fake-relay.js";
