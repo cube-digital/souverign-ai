@@ -20,12 +20,14 @@ import {
 } from "react";
 import {
   chats as fetchChats,
+  hello,
   registerDevice,
   relayTicket,
   type Session,
   SHARED_TICKET_KEY,
 } from "../api";
 import { IdbKeyStore } from "../lib/idb-keystore";
+import { buildView, type ChatView } from "./threads";
 
 export type ActivityState = Record<string, Record<string, { body: ActivityBody; ts: number }>>;
 const ACTIVITY_TTL_MS = 90_000;
@@ -46,14 +48,21 @@ export type SessionValue = {
   chats: Chat[];
   messages: Record<string, ChatMessage[]>;
   unread: Record<string, number>;
-  /** Live agent activity: chat id, then sender device. */
-  activity: ActivityState;
   refreshChats(): Promise<Chat[]>;
+  /** Threads and reactions of a chat, derived from its messages. */
+  view(chatId: string): ChatView;
   /** Marks a chat as the one on screen (clears its unread count). */
   openChat(chatId: string | null): void;
 };
 
 const Ctx = createContext<SessionValue | null>(null);
+// Live activity ticks often; it has its own context so message consumers do not re-render on it.
+const ActivityCtx = createContext<ActivityState>({});
+
+/** Live agent activity: chat id, then sender device. */
+export function useActivity(): ActivityState {
+  return useContext(ActivityCtx);
+}
 
 export function useSession(): SessionValue {
   const v = useContext(Ctx);
@@ -75,9 +84,18 @@ function loadDevice(userId: string, store: IdbKeyStore): Promise<StoredDevice> {
       return device;
     })();
     devices.set(userId, p);
+    p.catch(() => devices.delete(userId));
   }
   return p;
 }
+
+// The device registers once per page load, even when React mounts the provider twice (StrictMode).
+// A failure drops the entry so Retry registers again.
+const registered = new Map<string, Promise<unknown>>();
+// The "hello" catch-up ping goes out once per page load per user.
+const greeted = new Set<string>();
+
+const EMPTY: ChatMessage[] = [];
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const RETRIES = 3;
@@ -134,8 +152,12 @@ export function SessionProvider({ session, children }: { session: Session; child
     });
   }, []);
 
+  const refreshSeq = useRef(0);
   const refreshChats = useCallback(async () => {
+    const seq = ++refreshSeq.current;
     const list = await fetchChats();
+    // A newer refresh started while this one was in flight: its answer wins.
+    if (seq !== refreshSeq.current) return chatsRef.current;
     known.current = new Set(list.map((c) => c.id));
     chatsRef.current = list;
     setChats(list);
@@ -162,10 +184,16 @@ export function SessionProvider({ session, children }: { session: Session; child
           sessionStorage.setItem(SHARED_TICKET_KEY, r.ticket);
           return r.ticket;
         };
-        await withRetries(
-          () => registerDevice({ device_id: dev.deviceId, public_key: dev.keys.publicKey }),
-          () => cancelled,
-        );
+        let reg = registered.get(dev.deviceId);
+        if (!reg) {
+          reg = withRetries(
+            () => registerDevice({ device_id: dev.deviceId, public_key: dev.keys.publicKey }),
+            () => false,
+          );
+          registered.set(dev.deviceId, reg);
+          reg.catch(() => registered.delete(dev.deviceId));
+        }
+        await reg;
         if (cancelled) return;
         const scheme = location.protocol === "https:" ? "wss" : "ws";
         client = await withRetries(
@@ -175,7 +203,10 @@ export function SessionProvider({ session, children }: { session: Session; child
               deviceId: dev.deviceId,
               getTicket: fresh,
             });
-            const off = c.onStatus(setRelayStatus);
+            const off = c.onStatus((st) => {
+              if (!cancelled) setRelayStatus(st);
+            });
+            offs.push(off);
             try {
               await Promise.race([
                 c.connect(),
@@ -188,7 +219,6 @@ export function SessionProvider({ session, children }: { session: Session; child
               c.close();
               throw e;
             }
-            offs.push(off);
             return c;
           },
           () => cancelled,
@@ -202,13 +232,15 @@ export function SessionProvider({ session, children }: { session: Session; child
           store,
           device: dev,
           isTrustedKeySender: async (chatId, senderDevice) => {
-            const isOwnerDevice = (list: Chat[]) =>
+            const isHumanMember = (list: Chat[]) =>
               list
                 .find((c) => c.id === chatId)
-                ?.members.find((m) => m.role === "owner")
-                ?.devices.some((d) => d.device_id === senderDevice) ?? false;
-            // A new owner device may postdate the cached chats: refresh once and recheck.
-            return isOwnerDevice(chatsRef.current) || isOwnerDevice(await refreshChats());
+                ?.members.some(
+                  (m) =>
+                    m.member_type === "user" && m.devices.some((d) => d.device_id === senderDevice),
+                ) ?? false;
+            // A new member device may postdate the cached chats: refresh once and recheck.
+            return isHumanMember(chatsRef.current) || isHumanMember(await refreshChats());
           },
         });
         offs.push(
@@ -223,9 +255,9 @@ export function SessionProvider({ session, children }: { session: Session; child
               return { ...prev, [m.chatId]: next };
             });
             if (m.status === "ok") clearActivity(m.chatId, m.senderDevice);
-            const isSystem = m.body?.type === "system";
+            const quiet = m.body?.type === "system" || m.body?.type === "reaction";
             if (
-              !isSystem &&
+              !quiet &&
               m.senderDevice !== dev.deviceId &&
               m.chatId !== active.current &&
               !counted.current.has(m.id)
@@ -233,10 +265,10 @@ export function SessionProvider({ session, children }: { session: Session; child
               counted.current.add(m.id);
               setUnread((u) => ({ ...u, [m.chatId]: (u[m.chatId] ?? 0) + 1 }));
             }
-            if (m.status === "ok" && isSystem) void refreshChats().catch(() => {});
+            if (m.status === "ok" && m.body?.type === "system") void refreshChats().catch(() => {});
           }),
           eng.onActivity((a) => {
-            if (a.body.phase === "done") {
+            if (a.body.phase === "done" || a.body.phase === "stopped") {
               clearActivity(a.chatId, a.senderDevice);
               return;
             }
@@ -260,7 +292,13 @@ export function SessionProvider({ session, children }: { session: Session; child
         setDevice(dev);
         setEngine(eng);
         await refreshChats();
-        if (!cancelled) setPhase("ready");
+        if (!cancelled) {
+          setPhase("ready");
+          if (!greeted.has(userId)) {
+            greeted.add(userId);
+            hello().catch(() => {});
+          }
+        }
       } catch (e) {
         if (!cancelled) {
           setError(reasonOf(e));
@@ -282,6 +320,20 @@ export function SessionProvider({ session, children }: { session: Session; child
     active.current = chatId;
     if (chatId) setUnread((u) => (u[chatId] ? { ...u, [chatId]: 0 } : u));
   }, []);
+
+  const views = useRef(new Map<string, { src: ChatMessage[]; dev: string; view: ChatView }>());
+  const view = useCallback(
+    (chatId: string) => {
+      const src = messages[chatId] ?? EMPTY;
+      const dev = device?.deviceId ?? "";
+      const hit = views.current.get(chatId);
+      if (hit && hit.src === src && hit.dev === dev) return hit.view;
+      const next = buildView(src, dev, hit?.view);
+      views.current.set(chatId, { src, dev, view: next });
+      return next;
+    },
+    [messages, device],
+  );
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const ticket = useCallback(async () => {
@@ -309,8 +361,8 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
-      activity,
       refreshChats,
+      view,
       openChat,
     }),
     [
@@ -325,10 +377,14 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
-      activity,
       refreshChats,
+      view,
       openChat,
     ],
   );
-  return createElement(Ctx.Provider, { value }, children);
+  return createElement(
+    Ctx.Provider,
+    { value },
+    createElement(ActivityCtx.Provider, { value: activity }, children),
+  );
 }
