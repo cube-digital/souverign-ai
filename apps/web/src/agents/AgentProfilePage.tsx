@@ -80,6 +80,7 @@ export function AgentProfilePage() {
   const [agent, setAgent] = useState<Agent | null | undefined>(undefined);
   useEffect(() => {
     let live = true;
+    setAgent(undefined);
     fetchAgents()
       .then((l) => live && setAgent(l.find((a) => a.id === agentId) ?? null))
       .catch(() => live && setAgent(null));
