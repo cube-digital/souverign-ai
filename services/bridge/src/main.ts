@@ -1,3 +1,5 @@
+import { TICKET_TTL_MS } from "@sa/protocol";
+import { signTicket } from "@sa/protocol/ticket";
 import { EchoRuntime } from "./agents/echo.js";
 import { HermesRuntime } from "./agents/hermes.js";
 import { AgentHost } from "./agents/host.js";
@@ -33,7 +35,7 @@ const ctx: PluginContext = {
   db,
   relayAdmin,
   relayInternalUrl,
-  adminToken,
+  ticketFor: (deviceId) => signTicket(adminToken, deviceId, TICKET_TTL_MS).ticket,
   opsSimUrl,
   agentHost,
   log: (msg, extra) => logLine("info", msg, extra),
@@ -47,14 +49,17 @@ for (const p of plugins) {
 }
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(sig, () => {
-    for (const p of plugins) {
-      try {
-        p.stop?.();
-      } catch (e) {
-        logLine("error", "plugin stop failed", { plugin: p.name, error: (e as Error).message });
+    void (async () => {
+      for (const p of plugins) {
+        try {
+          await p.stop?.();
+        } catch (e) {
+          logLine("error", "plugin stop failed", { plugin: p.name, error: (e as Error).message });
+        }
       }
-    }
-    void agentHost.stopAll().finally(() => process.exit(0));
+      await agentHost.stopAll().catch(() => {});
+      process.exit(0);
+    })();
   });
 }
 const app = buildApp({

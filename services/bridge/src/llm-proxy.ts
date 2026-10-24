@@ -34,7 +34,15 @@ export function registerLlmProxy(app: FastifyInstance, db: Db): void {
 
   /** Returns the agent's template, or null after replying 403/404. */
   const admit = async (req: FastifyRequest, reply: FastifyReply): Promise<string | null> => {
-    if (!LOOPBACK.has(req.socket.remoteAddress ?? "")) {
+    // A browser or a reverse proxy in front of the bridge is not a gateway: refuse forwarded
+    // requests and any Host that is not a loopback name (DNS rebinding).
+    const host = (req.headers.host ?? "").replace(/:\d+$/, "");
+    const forwarded = Object.keys(req.headers).some((h) => h.startsWith("x-forwarded-"));
+    if (
+      !LOOPBACK.has(req.socket.remoteAddress ?? "") ||
+      forwarded ||
+      !["127.0.0.1", "localhost", "[::1]"].includes(host)
+    ) {
       await reply.code(403).send({ error: "forbidden" });
       return null;
     }
@@ -59,48 +67,52 @@ export function registerLlmProxy(app: FastifyInstance, db: Db): void {
     }
   });
 
-  app.post("/llm/:agentId/v1/chat/completions", async (req, reply) => {
-    const template = await admit(req, reply);
-    if (!template) return;
-    const agentId = (req.params as { agentId: string }).agentId;
-    const started = Date.now();
-    const body = (req.body ?? {}) as Completion;
-    const forced =
-      !NO_FORCE_TEMPLATES.has(template) &&
-      forceFirstTool(agentId) &&
-      Array.isArray(body.tools) &&
-      body.tools.length > 0 &&
-      body.tool_choice === undefined &&
-      !(body.messages ?? []).some((m) => m.role === "tool");
-    const abort = new AbortController();
-    reply.raw.on("close", () => {
-      if (!reply.raw.writableFinished) abort.abort();
-      console.log(
-        JSON.stringify({
-          level: "info",
-          msg: "llm proxy",
-          agent: agentId,
-          template,
-          forced,
-          ms: Date.now() - started,
-        }),
-      );
-    });
-    let up: Response;
-    try {
-      up = await fetch(`${llmTarget().baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(forced ? { ...body, tool_choice: "required" } : body),
-        signal: abort.signal,
+  app.post(
+    "/llm/:agentId/v1/chat/completions",
+    { bodyLimit: 16 * 1024 * 1024 },
+    async (req, reply) => {
+      const template = await admit(req, reply);
+      if (!template) return;
+      const agentId = (req.params as { agentId: string }).agentId;
+      const started = Date.now();
+      const body = (req.body ?? {}) as Completion;
+      const forced =
+        !NO_FORCE_TEMPLATES.has(template) &&
+        forceFirstTool(agentId) &&
+        Array.isArray(body.tools) &&
+        body.tools.length > 0 &&
+        (body.tool_choice === undefined || body.tool_choice === "auto") &&
+        !(body.messages ?? []).some((m) => m.role === "tool");
+      const abort = new AbortController();
+      reply.raw.on("close", () => {
+        if (!reply.raw.writableFinished) abort.abort();
+        console.log(
+          JSON.stringify({
+            level: "info",
+            msg: "llm proxy",
+            agent: agentId,
+            template,
+            forced,
+            ms: Date.now() - started,
+          }),
+        );
       });
-    } catch {
-      return reply.code(502).send({ error: "model_unavailable" });
-    }
-    reply.code(up.status);
-    const type = up.headers.get("content-type");
-    if (type) reply.header("content-type", type);
-    if (!up.body) return reply.send();
-    return reply.send(Readable.fromWeb(up.body as never));
-  });
+      let up: Response;
+      try {
+        up = await fetch(`${llmTarget().baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(forced ? { ...body, tool_choice: "required" } : body),
+          signal: abort.signal,
+        });
+      } catch {
+        return reply.code(502).send({ error: "model_unavailable" });
+      }
+      reply.code(up.status);
+      const type = up.headers.get("content-type");
+      if (type) reply.header("content-type", type);
+      if (!up.body) return reply.send();
+      return reply.send(Readable.fromWeb(up.body as never));
+    },
+  );
 }

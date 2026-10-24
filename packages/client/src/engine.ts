@@ -296,6 +296,8 @@ export class ChatEngine {
     } catch {
       return;
     }
+    // The first key stored for an epoch stays: a later envelope cannot swap it.
+    if (await this.store.getChatKey(env.chat_id, env.epoch)) return;
     if (!(await this.isTrustedKeySender(env.chat_id, env.sender_device))) {
       console.warn("key_untrusted", env.chat_id, env.sender_device);
       return;

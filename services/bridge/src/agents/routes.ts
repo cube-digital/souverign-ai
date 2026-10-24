@@ -41,6 +41,8 @@ const AGENT_SELECT = `select a.id, a.name, a.template, a.soul, a.owner_user_id, 
 export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps): void {
   const { db, relayAdmin, agentHost, hooks, authenticate, memberGuard, loadChat, log } = deps;
 
+  const dmLocks = new Map<string, Promise<void>>();
+
   const agentById = async (id: string): Promise<AgentRow | undefined> =>
     (await db.query<AgentRow>(`${AGENT_SELECT} where a.id = $1`, [id]))[0];
 
@@ -117,6 +119,8 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
     if (!agent || (agent.scope === "personal" && agent.owner_user_id !== g.userId)) {
       return reply.code(404).send({ error: "not_found" });
     }
+    // Personal agents: the owner of both. Workspace agents: any member (the d10 acceptance test
+    // requires a non-owner member to add one to a group).
     if (agent.scope === "personal" && g.role !== "owner") {
       return reply.code(403).send({ error: "forbidden" });
     }
@@ -124,7 +128,7 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
     await relayAdmin.setMember({ chat_id: g.chatId, device_id: agent.device_id, op: "add" });
     await db.query(
       `insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'agent', $2, 'member')
-       on conflict (chat_id, member_type, member_id) do update set removed_at = null, joined_at = now()`,
+       on conflict (chat_id, member_type, member_id) do update set removed_at = null, joined_at = now(), role = 'member'`,
       [g.chatId, agent.id],
     );
     log("agent added", { chat: g.chatId, agent: agent.id });
@@ -142,9 +146,14 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
     );
     const agent = active ? await agentById(agentId) : undefined;
     if (!agent) return reply.code(404).send({ error: "not_found" });
-    if (agent.scope === "personal") {
-      if (agent.owner_user_id !== g.userId) return reply.code(404).send({ error: "not_found" });
-      if (g.role !== "owner") return reply.code(403).send({ error: "forbidden" });
+    // The chat owner may remove any agent; an agent's own owner may remove it; in a room any
+    // member may remove a workspace agent.
+    if (g.role !== "owner" && agent.owner_user_id !== g.userId) {
+      const [chat] = await db.query<{ kind: string }>("select kind from sa.chats where id = $1", [
+        g.chatId,
+      ]);
+      if (agent.scope === "personal") return reply.code(404).send({ error: "not_found" });
+      if (chat?.kind !== "room") return reply.code(403).send({ error: "forbidden" });
     }
     await relayAdmin.setMember({ chat_id: g.chatId, device_id: agent.device_id, op: "remove" });
     await db.query(
@@ -165,45 +174,61 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
       await reply.code(404).send({ error: "not_found" });
       return;
     }
-    const [existing] = await db.query<{ id: string }>(
-      `select c.id from sa.chats c
-       join sa.chat_members me on me.chat_id = c.id and me.member_type = 'user'
-         and me.member_id = $1 and me.removed_at is null
-       join sa.chat_members ag on ag.chat_id = c.id and ag.member_type = 'agent'
-         and ag.member_id = $2 and ag.removed_at is null
-       where c.kind = 'dm'
-         and (select count(*) from sa.chat_members x where x.chat_id = c.id and x.removed_at is null) = 2
-       order by c.created_at, c.id limit 1`,
-      [userId, agent.id],
+    // One bridge process: a per-(user, agent) lock makes concurrent DM requests share one chat.
+    const lockKey = `${userId}:${agent.id}`;
+    const prev = dmLocks.get(lockKey) ?? Promise.resolve();
+    const run = prev.then(async (): Promise<{ chatId: string; created: boolean } | "missing"> => {
+      const [existing] = await db.query<{ id: string }>(
+        `select c.id from sa.chats c
+           join sa.chat_members me on me.chat_id = c.id and me.member_type = 'user'
+             and me.member_id = $1 and me.removed_at is null
+           join sa.chat_members ag on ag.chat_id = c.id and ag.member_type = 'agent'
+             and ag.member_id = $2 and ag.removed_at is null
+           where c.kind = 'dm'
+             and (select count(*) from sa.chat_members x where x.chat_id = c.id and x.removed_at is null) = 2
+           order by c.created_at, c.id limit 1`,
+        [userId, agent.id],
+      );
+      let chatId = existing?.id;
+      const created = !chatId;
+      if (!chatId) {
+        const devices = await db.query<{ id: string }>(
+          "select id from sa.devices where owner_type = 'user' and owner_id = $1",
+          [userId],
+        );
+        if (devices.length === 0) {
+          await reply.code(409).send({ error: "missing_devices", missing_devices: [userId] });
+          return "missing";
+        }
+        chatId = randomBytes(12).toString("base64url");
+        // Relay first (idempotent): a failure leaves no chat row, so the client can retry.
+        for (const d of devices) {
+          await relayAdmin.setMember({ chat_id: chatId, device_id: d.id, op: "add" });
+        }
+        await relayAdmin.setMember({ chat_id: chatId, device_id: agent.device_id, op: "add" });
+        await db.query(
+          "insert into sa.chats (id, title, kind, created_by) values ($1, $2, 'dm', $3)",
+          [chatId, agent.name, userId],
+        );
+        await db.query(
+          "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'owner'), ($1, 'agent', $3, 'member')",
+          [chatId, userId, agent.id],
+        );
+        log("agent dm created", { chat: chatId, agent: agent.id });
+        await agentHost?.onAgentAdded(chatId, agent.id);
+      }
+      return { chatId, created };
+    });
+    dmLocks.set(
+      lockKey,
+      run.then(
+        () => {},
+        () => {},
+      ),
     );
-    let chatId = existing?.id;
-    const created = !chatId;
-    if (!chatId) {
-      const devices = await db.query<{ id: string }>(
-        "select id from sa.devices where owner_type = 'user' and owner_id = $1",
-        [userId],
-      );
-      if (devices.length === 0) {
-        await reply.code(409).send({ error: "missing_devices", missing_devices: [userId] });
-        return;
-      }
-      chatId = randomBytes(12).toString("base64url");
-      // Relay first (idempotent): a failure leaves no chat row, so the client can retry.
-      for (const d of devices) {
-        await relayAdmin.setMember({ chat_id: chatId, device_id: d.id, op: "add" });
-      }
-      await relayAdmin.setMember({ chat_id: chatId, device_id: agent.device_id, op: "add" });
-      await db.query(
-        "insert into sa.chats (id, title, kind, created_by) values ($1, $2, 'dm', $3)",
-        [chatId, agent.name, userId],
-      );
-      await db.query(
-        "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'owner'), ($1, 'agent', $3, 'member')",
-        [chatId, userId, agent.id],
-      );
-      log("agent dm created", { chat: chatId, agent: agent.id });
-      await agentHost?.onAgentAdded(chatId, agent.id);
-    }
+    const result = await run;
+    if (result === "missing") return;
+    const { chatId, created } = result;
     const dmChat = chatId;
     void Promise.resolve(hooks?.onAgentDm?.(userId, agent.id, dmChat, created)).catch((e) =>
       log("agent dm hook failed", { agent: agent.id, error: (e as Error).message }),

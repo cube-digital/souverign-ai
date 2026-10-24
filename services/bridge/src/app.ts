@@ -30,6 +30,8 @@ type DeviceRow = { id: string; owner_id: string; public_key: string };
 
 const LOGIN_WINDOW_MS = 60_000;
 const LOGIN_MAX_FAILURES = 5;
+const EPOCH_CLAIMS_PER_MIN = 10;
+const MAX_EPOCH_JUMP = 8;
 
 export function buildApp({
   db,
@@ -49,6 +51,7 @@ export function buildApp({
   hooks?: BridgeHooks;
 }): FastifyInstance {
   const failedLogins = new Map<string, number[]>();
+  const epochClaims = new Map<string, number[]>();
   const recentFailures = (user: string): number[] => {
     const cutoff = Date.now() - LOGIN_WINDOW_MS;
     const live = (failedLogins.get(user) ?? []).filter((t) => t > cutoff);
@@ -196,7 +199,7 @@ export function buildApp({
     const body = LoginRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     const [u] = await db.query<{ id: string; display_name: string; pin_hash: string }>(
-      "select id, display_name, pin_hash from sa.users where id = $1",
+      "select id, display_name, pin_hash from sa.users where id = $1 and kind = 'person'",
       [body.data.user_id],
     );
     if (recentFailures(body.data.user_id).length >= LOGIN_MAX_FAILURES) {
@@ -232,7 +235,7 @@ export function buildApp({
     }
     // Relay first (add is idempotent): a failure leaves no device row, so the client can retry.
     const mine = await db.query<{ chat_id: string }>(
-      "select chat_id from sa.chat_members where member_type = 'user' and member_id = $1",
+      "select chat_id from sa.chat_members where member_type = 'user' and member_id = $1 and removed_at is null",
       [userId],
     );
     for (const c of mine) {
@@ -358,7 +361,7 @@ export function buildApp({
     await relayFor(g.chatId, target, "add");
     await db.query(
       `insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'member')
-       on conflict (chat_id, member_type, member_id) do update set removed_at = null, joined_at = now()`,
+       on conflict (chat_id, member_type, member_id) do update set removed_at = null, joined_at = now(), role = 'member'`,
       [g.chatId, target],
     );
     await hooks?.onMemberAdded?.(g.chatId, target);
@@ -383,7 +386,24 @@ export function buildApp({
        where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null`,
       [g.chatId, target],
     );
-    log("member removed", { chat: g.chatId });
+    // The removed person's personal agents leave with them (they could still read the chat).
+    const theirAgents = await db.query<{ id: string; device_id: string }>(
+      `select a.id, ad.device_id from sa.chat_members m
+       join sa.agents a on a.id = m.member_id and a.owner_user_id = $2
+       join sa.agent_devices ad on ad.agent_id = a.id
+       where m.chat_id = $1 and m.member_type = 'agent' and m.removed_at is null`,
+      [g.chatId, target],
+    );
+    for (const a of theirAgents) {
+      await relayAdmin.setMember({ chat_id: g.chatId, device_id: a.device_id, op: "remove" });
+      await db.query(
+        `update sa.chat_members set removed_at = now()
+         where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null`,
+        [g.chatId, a.id],
+      );
+      await agentHost?.onAgentRemoved(g.chatId, a.id);
+    }
+    log("member removed", { chat: g.chatId, agents: theirAgents.length });
     return loadChat(g.chatId);
   });
 
@@ -392,11 +412,20 @@ export function buildApp({
     if (!g) return;
     const body = EpochClaimRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
+    const now = Date.now();
+    const recent = (epochClaims.get(g.chatId) ?? []).filter((t) => t > now - 60_000);
+    if (recent.length >= EPOCH_CLAIMS_PER_MIN) {
+      return reply.code(429).send({ error: "too_many_claims" });
+    }
+    epochClaims.set(g.chatId, [...recent, now]);
+    // A claim may not jump far past the current epoch: that would burn the epoch space.
     const [row] = await db.query<{ key_epoch: number }>(
-      "update sa.chats set key_epoch = greatest(key_epoch + 1, $2) where id = $1 returning key_epoch",
+      `update sa.chats set key_epoch = greatest(key_epoch + 1, $2)
+       where id = $1 and $2 <= key_epoch + ${MAX_EPOCH_JUMP} returning key_epoch`,
       [g.chatId, body.data.min],
     );
-    return { epoch: Number(row?.key_epoch) };
+    if (!row) return reply.code(400).send({ error: "epoch_out_of_range" });
+    return { epoch: Number(row.key_epoch) };
   });
 
   registerLlmProxy(app, db);
