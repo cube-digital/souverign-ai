@@ -10,20 +10,51 @@ export type ChatMessage = { role: "system" | "user" | "assistant"; content: stri
 
 export type ChatResult = { content: string; reasoning?: string };
 
+/** `signal` aborts the turn (Stop); a user abort rejects with an `AbortError`, a model time limit
+ * with a `TimeoutError`. */
+export type ChatOptions = { signal?: AbortSignal };
+
 export interface AgentRuntime {
   ensureStarted(agent: RuntimeAgent): Promise<void>;
-  chat(agent: RuntimeAgent, chatId: string, messages: ChatMessage[]): Promise<ChatResult>;
+  chat(
+    agent: RuntimeAgent,
+    chatId: string,
+    messages: ChatMessage[],
+    opts?: ChatOptions,
+  ): Promise<ChatResult>;
   /** Like `chat`, but reports content deltas as they arrive; hosts fall back to `chat` without it. */
   chatStream?(
     agent: RuntimeAgent,
     chatId: string,
     messages: ChatMessage[],
     onDelta: (text: string) => void,
+    opts?: ChatOptions,
   ): Promise<ChatResult>;
+  /** Short model name for the receipts footer (basename of the model id). */
+  modelName?(): string;
   stop(agent: RuntimeAgent): Promise<void>;
   stopAll(): Promise<void>;
   /** Stops gateways a dead bridge left behind; called once at startup. */
   reapStale?(): Promise<void>;
+}
+
+/** The error a runtime throws when the turn was stopped through its signal. */
+export const abortError = (): Error => Object.assign(new Error("aborted"), { name: "AbortError" });
+
+/** Resolves after `ms`, or rejects with an `AbortError` as soon as `signal` aborts. */
+export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(abortError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(abortError());
+    };
+    const t = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** Splits `<think>…</think>` blocks out of model content. */

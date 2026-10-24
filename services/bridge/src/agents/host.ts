@@ -4,16 +4,31 @@ import {
   RelayClient,
   type RelayLink,
 } from "@sa/client";
-import { cryptoReady } from "@sa/crypto";
-import { type ActivityBody, TICKET_TTL_MS, type TraceStep } from "@sa/protocol";
+import { cryptoReady, randomId } from "@sa/crypto";
+import {
+  type ActivityBody,
+  type MessageBody,
+  type TextMeta,
+  TICKET_TTL_MS,
+  type TraceStep,
+  type TurnTrigger,
+} from "@sa/protocol";
 import { signTicket } from "@sa/protocol/ticket";
 import type { Db } from "../db.js";
 import { ToolLog } from "../mcp/tool-log.js";
 import { waitForRelay } from "../relay-ready.js";
-import type { AgentHostApi } from "./api.js";
+import { ACCESS_RE, accessSummary, agentTools } from "./access.js";
+import type { AgentHostApi, ProactiveRequest, StopResult } from "./api.js";
 import { PgKeyStore } from "./pg-keystore.js";
-import type { AgentRuntime, ChatMessage, RuntimeAgent } from "./runtime.js";
+import {
+  type AgentRuntime,
+  abortableSleep,
+  abortError,
+  type ChatMessage,
+  type RuntimeAgent,
+} from "./runtime.js";
 import { decrypt, encrypt } from "./secrets.js";
+import { setForceFirstTool } from "./turn-policy.js";
 import { describeImage } from "./vision.js";
 
 const MIN_GAP_MS = 3000;
@@ -21,7 +36,16 @@ const CONTEXT_MESSAGES = 20;
 const WRITING_GAP_MS = 400;
 const DRAFT_MAX = 8000;
 const IMAGE_WINDOW = 5;
+const THREAD_REPLIES = 10;
 const DOWN = "I can't answer right now (the local model is not available).";
+const LIMIT =
+  "I stopped after 3 minutes without finishing. I can only read through my tools and cannot create files or run commands. Try a narrower question.";
+/** Older envelopes are seeded history or replays and never trigger a turn. */
+const TRIGGER_MAX_AGE_MS = 5 * 60_000;
+/** How long the same person may follow up in a thread without a tag. */
+const FOLLOWUP_MS = 10 * 60_000;
+const KEY_WAIT_MS = 30_000;
+const DONE_EMOJI = { done: "✅", stopped: "⏹️", error: "⚠️" } as const;
 
 export type AgentHostOptions = {
   db: Db;
@@ -48,6 +72,34 @@ type Device = {
   lastReadyAt: number;
 };
 
+/** One turn, from its trigger to the final reply. */
+type Turn = {
+  id: string;
+  agentId: string;
+  chatId: string;
+  trigger: TurnTrigger;
+  /** what the agent is asked: the trigger message text, or the proactive prompt */
+  text: string;
+  /** whether the first model round must call a tool (bug 4) */
+  force: boolean;
+  /** the trigger message; reactions go on it. Absent for proactive turns. */
+  messageId?: string;
+  /** seq of the trigger message; the chat context ends there */
+  seq?: number;
+  /** thread root the reply goes to; absent for a top-level reply */
+  replyTo?: string;
+  /** owner of the verified sender device, never taken from text or tool args */
+  requesterUserId?: string;
+  requesterName?: string;
+  abort: AbortController;
+  stoppedBy?: string;
+  /** the 👀 reaction, so the final reactions are sent after it */
+  eyes: Promise<void>;
+  started: number;
+};
+
+type TurnSeed = Omit<Turn, "id" | "agentId" | "abort" | "eyes" | "started" | "stoppedBy">;
+
 const HEALTH_INTERVAL_MS = 15_000;
 const DEAD_AFTER_MS = 30_000;
 
@@ -72,6 +124,11 @@ export class AgentHost implements AgentHostApi {
   private toolLog: ToolLog;
   private health: ReturnType<typeof setInterval> | null = null;
   private rebuilding = new Set<string>();
+  /** Turns that can still be stopped, by turn id. */
+  private turns = new Map<string, Turn>();
+  /** "chat|root" → the agent that last answered in that thread, whom it answered, and until when
+   * that person may follow up without a tag. Shared by every agent device. */
+  private threadOwner = new Map<string, { agentId: string; userId: string; until: number }>();
 
   constructor(private opts: AgentHostOptions) {
     this.toolLog = opts.toolLog ?? new ToolLog();
@@ -286,128 +343,299 @@ export class AgentHost implements AgentHostApi {
       );
       if (fresh.length === 0) return;
       if (m.body.type !== "text" || m.senderDevice === dev.deviceId) return;
-      const text = m.body.text;
-      if (!new RegExp(`@${escapeRe(dev.agent.name)}(?![\\p{L}\\p{N}_])`, "iu").test(text)) return;
-      dev.turns = dev.turns.then(() => this.turn(dev, m.chatId, text)).catch(() => {});
+      const seed = await this.triggerFor(dev, m, m.body);
+      if (!seed) return;
+      if (ACCESS_RE.test(seed.text)) {
+        await this.answerAccess(dev, seed);
+        return;
+      }
+      const turn = this.newTurn(dev, seed);
+      dev.turns = dev.turns
+        .then(() => this.runTurn(dev, turn))
+        .then(
+          () => {},
+          () => {},
+        );
     } catch (e) {
       log("agent message failed", { agent: dev.agent.id, error: (e as Error).message });
     }
   }
 
-  private async turn(dev: Device, chatId: string, text: string): Promise<void> {
-    const { db, runtime } = this.opts;
-    const describe = this.opts.describe ?? describeImage;
-    const { agent } = dev;
+  /** The answer rules (Decisions, in order). Null when this agent should stay quiet. */
+  private async triggerFor(
+    dev: Device,
+    m: EngineMessage,
+    body: Extract<MessageBody, { type: "text" }>,
+  ): Promise<TurnSeed | null> {
+    const { db } = this.opts;
+    // 1. Only people trigger turns: agent devices never do, which prevents loops.
+    const [sender] = await db.query<{ owner_id: string; display_name: string | null }>(
+      `select d.owner_id, u.display_name from sa.devices d
+       left join sa.users u on u.id = d.owner_id
+       where d.id = $1 and d.owner_type = 'user'`,
+      [m.senderDevice],
+    );
+    if (!sender) return null;
+    // 2. Seeded history and replays are older than 5 minutes.
+    if (Date.now() - m.ts > TRIGGER_MAX_AGE_MS) return null;
+    const [chat] = await db.query<{ kind: string; users: number; agents: number; me: boolean }>(
+      `select c.kind,
+         count(*) filter (where m.member_type = 'user')::int as users,
+         count(*) filter (where m.member_type = 'agent')::int as agents,
+         bool_or(m.member_type = 'agent' and m.member_id = $2) as me
+       from sa.chats c join sa.chat_members m on m.chat_id = c.id and m.removed_at is null
+       where c.id = $1 group by c.kind`,
+      [m.chatId, dev.agent.id],
+    );
+    if (!chat?.me) return null;
+    const base = {
+      chatId: m.chatId,
+      text: body.text,
+      messageId: m.id,
+      seq: m.seq,
+      requesterUserId: sender.owner_id,
+      requesterName: sender.display_name ?? sender.owner_id,
+    };
+    const thread = body.reply_to;
+    // 3. In a DM with exactly one person, every message is for the agent.
+    if (chat.kind === "dm" && Number(chat.users) === 1 && Number(chat.agents) === 1) {
+      return thread
+        ? { ...base, trigger: "dm", replyTo: thread, force: false }
+        : { ...base, trigger: "dm", force: true };
+    }
+    // 4. A tag is answered in the thread under the message (or the thread it is in).
+    if (mentions(dev.agent.name, body.text))
+      return { ...base, trigger: "mention", replyTo: thread ?? m.id, force: true };
+    // 5. An untagged reply wakes only the agent that last answered this person in the thread.
+    if (!thread) return null;
+    const owner = this.threadOwner.get(`${m.chatId}|${thread}`);
+    if (owner?.agentId !== dev.agent.id || owner.userId !== sender.owner_id) return null;
+    if (Date.now() > owner.until) return null;
+    const agents = await db.query<{ name: string }>(
+      `select a.name from sa.chat_members m join sa.agents a on a.id = m.member_id
+       where m.chat_id = $1 and m.member_type = 'agent' and m.removed_at is null`,
+      [m.chatId],
+    );
+    if (agents.some((a) => mentions(a.name, body.text))) return null;
+    return { ...base, trigger: "followup", replyTo: thread, force: false };
+  }
+
+  /** Registers a stoppable turn and puts 👀 on its trigger message right away. */
+  private newTurn(dev: Device, seed: TurnSeed): Turn {
+    const turn: Turn = {
+      ...seed,
+      id: randomId(),
+      agentId: dev.agent.id,
+      abort: new AbortController(),
+      eyes: Promise.resolve(),
+      started: Date.now(),
+    };
+    this.turns.set(turn.id, turn);
+    if (turn.messageId) turn.eyes = this.react(dev, turn, "👀", "add");
+    return turn;
+  }
+
+  private async react(dev: Device, turn: Turn, emoji: string, op: "add" | "remove") {
+    if (!turn.messageId) return;
+    try {
+      await dev.engine.sendReaction(turn.chatId, turn.messageId, emoji, op);
+    } catch (e) {
+      log("agent reaction failed", { agent: dev.agent.id, error: (e as Error).message });
+    }
+  }
+
+  /** Only the person who triggered a turn can stop it; proactive turns without one cannot be. */
+  stopTurn(turnId: string, userId: string): StopResult {
+    const turn = this.turns.get(turnId);
+    if (!turn) return "not_found";
+    if (!turn.requesterUserId || turn.requesterUserId !== userId) return "forbidden";
+    turn.stoppedBy = turn.requesterName ?? userId;
+    this.turns.delete(turnId);
+    turn.abort.abort();
+    log("agent turn stop requested", { agent: turn.agentId, turn: turnId });
+    return "stopped";
+  }
+
+  /** One unprompted turn, posted top-level once the agent holds the chat key. */
+  async runProactive(req: ProactiveRequest): Promise<boolean> {
+    const { db } = this.opts;
+    const dev = await this.deviceFor(req.agentId);
+    if (!dev) return false;
     const [member] = await db.query(
       "select 1 from sa.chat_members where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null",
-      [chatId, agent.id],
+      [req.chatId, req.agentId],
     );
-    if (!member) return;
-    if (Date.now() - (dev.lastReply.get(chatId) ?? 0) < MIN_GAP_MS) return;
+    if (!member) return false;
+    const deadline = Date.now() + KEY_WAIT_MS;
+    while ((await dev.engine.latestEpoch(req.chatId)) <= 0) {
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    let requester = {};
+    if (req.requesterUserId) {
+      const [u] = await db.query<{ display_name: string }>(
+        "select display_name from sa.users where id = $1",
+        [req.requesterUserId],
+      );
+      requester = {
+        requesterUserId: req.requesterUserId,
+        requesterName: u?.display_name ?? req.requesterUserId,
+      };
+    }
+    const turn = this.newTurn(dev, {
+      chatId: req.chatId,
+      trigger: req.kind,
+      text: req.prompt,
+      force: true,
+      ...requester,
+    });
+    const run = dev.turns.then(() => this.runTurn(dev, turn));
+    dev.turns = run.then(
+      () => {},
+      () => {},
+    );
+    return run.catch(() => false);
+  }
 
+  /** "What can you access here?" is answered by the bridge from facts, never by the model. */
+  private async answerAccess(dev: Device, seed: TurnSeed): Promise<void> {
+    const { db } = this.opts;
     const started = Date.now();
+    const [row] = await db.query<{
+      title: string;
+      joined_at: string | Date;
+      roster_id: string | null;
+      template: string;
+    }>(
+      `select c.title, m.joined_at, a.roster_id, a.template
+       from sa.chats c
+       join sa.chat_members m on m.chat_id = c.id and m.member_type = 'agent'
+         and m.member_id = $2 and m.removed_at is null
+       join sa.agents a on a.id = m.member_id
+       where c.id = $1`,
+      [seed.chatId, dev.agent.id],
+    );
+    if (!row) return;
+    const [count] = await db.query<{ n: number }>(
+      `select count(*)::int as n from sa.messages_plain
+       where device_id = $1 and chat_id = $2 and body->>'type' in ('text', 'file')`,
+      [dev.deviceId, seed.chatId],
+    );
+    const text = accessSummary({
+      agentName: dev.agent.name,
+      chatTitle: row.title,
+      joinedAt: new Date(row.joined_at),
+      seen: Number(count?.n ?? 0),
+      tools: agentTools(row.roster_id, row.template),
+    });
+    const meta: TextMeta = { trigger: "access", local: true, ms: Date.now() - started };
+    this.claimThread(dev, seed);
+    try {
+      await dev.engine.sendText(
+        seed.chatId,
+        text,
+        meta,
+        seed.replyTo ? { replyTo: seed.replyTo } : undefined,
+      );
+      log("agent access answered", { agent: dev.agent.id, chat: seed.chatId });
+    } catch (e) {
+      log("agent send failed", { agent: dev.agent.id, error: (e as Error).message });
+    }
+  }
+
+  /** This agent now owns the thread for untagged follow-ups from the same person. */
+  private claimThread(
+    dev: Device,
+    t: { chatId: string; replyTo?: string; requesterUserId?: string },
+  ) {
+    if (!t.replyTo || !t.requesterUserId) return;
+    this.threadOwner.set(`${t.chatId}|${t.replyTo}`, {
+      agentId: dev.agent.id,
+      userId: t.requesterUserId,
+      until: Date.now() + FOLLOWUP_MS,
+    });
+  }
+
+  /** Runs one turn to its single final reply. Resolves true when a reply was posted. */
+  private async runTurn(dev: Device, turn: Turn): Promise<boolean> {
+    const { db, runtime } = this.opts;
+    const { agent } = dev;
+    const { chatId } = turn;
+    const abort = turn.abort.signal;
     // Live signals are sent in order, never block the turn and are safe to lose.
     let signals: Promise<void> = Promise.resolve();
-    const signal = (body: ActivityBody) => {
-      signals = signals.then(() => dev.engine.sendActivity(chatId, body)).catch(() => {});
+    const act = (body: Omit<ActivityBody, "type">) => {
+      const full: ActivityBody = { type: "activity", ...body, turn_id: turn.id };
+      if (turn.replyTo) full.reply_to = turn.replyTo;
+      if (turn.requesterUserId) full.requester = turn.requesterUserId.slice(0, 64);
+      signals = signals.then(() => dev.engine.sendActivity(chatId, full)).catch(() => {});
     };
-    signal({ type: "activity", phase: "thinking" });
     const onTool = (agentId: string, name: string) => {
-      if (agentId === agent.id)
-        signal({ type: "activity", phase: "tool", tool: name.slice(0, 64) });
+      if (agentId === agent.id) act({ phase: "tool", tool: name.slice(0, 64) });
     };
-    this.toolLog.on("tool", onTool);
-    let failed = false;
-    let body: { text: string; meta: { tools: string[]; ms: number; trace?: TraceStep[] } };
+    let outcome: "done" | "stopped" | "error" = "done";
+    let text: string;
+    let read = 0;
+    let steps: TraceStep[] = [];
+    const meta: TextMeta = { local: true, turn_id: turn.id, trigger: turn.trigger };
+    const model = runtime.modelName?.();
+    if (model) meta.model = model.slice(0, 80);
     try {
-      await runtime.ensureStarted(agent);
-      const [chat] = await db.query<{ title: string }>("select title from sa.chats where id = $1", [
-        chatId,
-      ]);
-      const recent = await db.query<{
-        id: string;
-        name: string | null;
-        body: Record<string, unknown>;
-      }>(
-        `select p.id, coalesce(u.display_name, a.name, p.sender_device) as name, p.body
-         from sa.messages_plain p
-         left join sa.devices d on d.id = p.sender_device
-         left join sa.users u on d.owner_type = 'user' and u.id = d.owner_id
-         left join sa.agents a on d.owner_type = 'agent' and a.id = d.owner_id
-         where p.device_id = $1 and p.chat_id = $2 and p.body->>'type' in ('text', 'file')
-         order by p.seq desc limit ${CONTEXT_MESSAGES}`,
-        [dev.deviceId, chatId],
+      // The 3 s gap between two replies in a chat delays the turn; it never drops it.
+      const gap = MIN_GAP_MS - (Date.now() - (dev.lastReply.get(chatId) ?? 0));
+      if (gap > 0) await abortableSleep(gap, abort);
+      const [member] = await db.query(
+        "select 1 from sa.chat_members where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null",
+        [chatId, agent.id],
       );
-      // Newest first; index 0 is the addressing message.
-      const imageSteps: TraceStep[] = [];
-      for (const r of recent.slice(1, 1 + IMAGE_WINDOW)) {
-        const b = r.body;
-        if (b.type !== "file" || !isImage(b.mime) || typeof b.description === "string") continue;
-        const fname = String(b.name);
-        signal({ type: "activity", phase: "tool", tool: "describe_image" });
-        const t0 = Date.now();
-        let result: string;
-        try {
-          const bytes = await dev.engine.downloadFile(b as never);
-          const description = (await describe(bytes, String(b.mime), fname)).trim();
-          if (!description) throw new Error("empty description");
-          b.description = description;
-          await db.query(
-            "update sa.messages_plain set body = body || jsonb_build_object('description', $3::text) where device_id = $1 and id = $2",
-            [dev.deviceId, r.id, description],
-          );
-          result = description;
-        } catch (e) {
-          log("describe image failed", { agent: agent.id, error: (e as Error).message });
-          result = "could not be read";
-        }
-        imageSteps.push({
-          kind: "tool",
-          name: "describe_image",
-          args: fname.slice(0, 500),
-          result: result.slice(0, 1500),
-          ms: Date.now() - t0,
-        });
+      if (!member) {
+        this.turns.delete(turn.id);
+        await turn.eyes;
+        await this.react(dev, turn, "👀", "remove");
+        return false;
       }
-      const history = recent.reverse().map((r) => {
-        const b = r.body;
-        if (b.type !== "file") return `${r.name}: ${b.text}`;
-        if (!isImage(b.mime)) return `${r.name}: [file ${b.name}, ${formatSize(Number(b.size))}]`;
-        return typeof b.description === "string"
-          ? `${r.name}: [image ${b.name}] ${b.description}`
-          : `${r.name}: [image ${b.name}, could not be read]`;
-      });
-      const messages: ChatMessage[] = [
-        {
-          role: "system",
-          content: [
-            `You are ${agent.name} in the chat "${chat?.title ?? ""}" (chat_id ${chatId}). Messages you can see, oldest first:`,
-            ...history,
-          ].join("\n"),
-        },
-        { role: "user", content: text },
-      ];
-      this.toolLog.begin(agent.id, chatId);
+      act({ phase: "thinking" });
+      this.toolLog.on("tool", onTool);
+      await runtime.ensureStarted(agent);
+      if (abort.aborted) throw abortError();
+      const context = await this.context(dev, turn, act);
+      read = context.read;
+      act({ phase: "reading", count: read });
+      this.toolLog.begin(
+        agent.id,
+        chatId,
+        turn.requesterUserId ? { requesterUserId: turn.requesterUserId } : {},
+      );
+      setForceFirstTool(agent.id, turn.force);
       let reply: Awaited<ReturnType<AgentRuntime["chat"]>>;
-      let steps: TraceStep[];
       try {
         let draft = "";
-        let sent = "";
+        let shown = "";
         let lastSent = 0;
         const flush = () => {
-          if (draft === sent) return;
-          sent = draft;
+          if (draft === shown || abort.aborted) return;
+          shown = draft;
           lastSent = Date.now();
-          signal({ type: "activity", phase: "writing", draft });
+          act({ phase: "writing", draft });
         };
         const streamed = runtime.chatStream?.bind(runtime);
-        if (!streamed) {
-          reply = await runtime.chat(agent, chatId, messages);
-        } else
-          reply = await streamed(agent, chatId, messages, (t) => {
-            draft = (draft + t).slice(0, DRAFT_MAX);
-            if (Date.now() - lastSent >= WRITING_GAP_MS) flush();
-          });
+        reply = streamed
+          ? await streamed(
+              agent,
+              chatId,
+              context.messages,
+              (t) => {
+                if (abort.aborted) return;
+                draft = (draft + t).slice(0, DRAFT_MAX);
+                if (Date.now() - lastSent >= WRITING_GAP_MS) flush();
+              },
+              { signal: abort },
+            )
+          : await runtime.chat(agent, chatId, context.messages, { signal: abort });
+        // Past this point the turn can no longer be stopped; a result that arrives after Stop
+        // (the non-streaming fallback cannot be interrupted) is discarded.
+        this.turns.delete(turn.id);
+        if (abort.aborted) throw abortError();
         flush();
       } finally {
         steps = this.toolLog.end(agent.id);
@@ -415,43 +643,180 @@ export class AgentHost implements AgentHostApi {
       const trace: TraceStep[] = [];
       if (reply.reasoning?.trim())
         trace.push({ kind: "thinking", text: reply.reasoning.slice(0, 4000) });
-      trace.push(...imageSteps, ...steps);
-      body = {
-        text: reply.content.slice(0, 8000) || "(no answer)",
-        meta: {
-          tools: steps.flatMap((s) => (s.kind === "tool" ? [s.name] : [])).slice(0, 20),
-          ms: Date.now() - started,
-          trace: trace.slice(0, 30),
-        },
-      };
+      trace.push(...context.imageSteps, ...steps);
+      meta.trace = trace.slice(0, 30);
+      text = reply.content.slice(0, 8000) || "(no answer)";
     } catch (e) {
-      log("agent turn failed", {
-        agent: agent.id,
-        error: (e as Error).name,
-        status: (e as { status?: unknown }).status,
-      });
-      failed = true;
-      await db.query("update sa.agents set status = 'error' where id = $1", [agent.id]);
-      body = { text: DOWN, meta: { tools: [], ms: Date.now() - started } };
+      const name = (e as Error).name;
+      if (abort.aborted) {
+        outcome = "stopped";
+        meta.stopped_by = (turn.stoppedBy ?? turn.requesterName ?? "the requester").slice(0, 80);
+        text = `Stopped by ${meta.stopped_by}.`;
+        log("agent turn stopped", { agent: agent.id, turn: turn.id });
+      } else if (name === "TimeoutError") {
+        // Bug 2: the time limit is not an outage, so the agent status stays as it was.
+        outcome = "error";
+        text = LIMIT;
+        log("agent turn timed out", { agent: agent.id, turn: turn.id });
+      } else {
+        outcome = "error";
+        text = DOWN;
+        log("agent turn failed", {
+          agent: agent.id,
+          error: name,
+          status: (e as { status?: unknown }).status,
+        });
+        await db.query("update sa.agents set status = 'error' where id = $1", [agent.id]);
+      }
+    } finally {
+      this.turns.delete(turn.id);
+      this.toolLog.off("tool", onTool);
     }
-    this.toolLog.off("tool", onTool);
-    if (failed) signal({ type: "activity", phase: "error" });
+    meta.tools = steps.flatMap((s) => (s.kind === "tool" ? [s.name] : [])).slice(0, 20);
+    meta.read = read;
+    meta.ms = Date.now() - turn.started;
     await signals;
     dev.lastReply.set(chatId, Date.now());
+    this.claimThread(dev, turn);
     let sent = true;
     try {
-      await dev.engine.sendText(chatId, body.text, body.meta);
+      await dev.engine.sendText(
+        chatId,
+        text,
+        meta,
+        turn.replyTo ? { replyTo: turn.replyTo } : undefined,
+      );
       log("agent replied", {
         agent: agent.id,
         chat: chatId,
-        ms: body.meta.ms,
-        size: body.text.length,
+        turn: turn.id,
+        outcome,
+        ms: meta.ms,
+        size: text.length,
       });
     } catch (e) {
       sent = false;
       log("agent send failed", { agent: agent.id, error: (e as Error).message });
     }
-    if (!failed) signal({ type: "activity", phase: sent ? "done" : "error" });
+    const final = sent ? outcome : "error";
+    if (turn.messageId) {
+      await turn.eyes;
+      await this.react(dev, turn, "👀", "remove");
+      await this.react(dev, turn, DONE_EMOJI[final], "add");
+    }
+    act({ phase: final });
     await signals;
+    return sent;
+  }
+
+  /** The chat context: the last messages up to the trigger, plus the thread being answered. */
+  private async context(
+    dev: Device,
+    turn: Turn,
+    act: (body: Omit<ActivityBody, "type">) => void,
+  ): Promise<{ messages: ChatMessage[]; read: number; imageSteps: TraceStep[] }> {
+    const { db } = this.opts;
+    const describe = this.opts.describe ?? describeImage;
+    const { agent } = dev;
+    const { chatId } = turn;
+    const [chat] = await db.query<{ title: string }>("select title from sa.chats where id = $1", [
+      chatId,
+    ]);
+    const select = `select p.id, coalesce(u.display_name, a.name, p.sender_device) as name, p.body
+       from sa.messages_plain p
+       left join sa.devices d on d.id = p.sender_device
+       left join sa.users u on d.owner_type = 'user' and u.id = d.owner_id
+       left join sa.agents a on d.owner_type = 'agent' and a.id = d.owner_id
+       where p.device_id = $1 and p.chat_id = $2 and p.body->>'type' in ('text', 'file')`;
+    type Row = { id: string; name: string | null; body: Record<string, unknown> };
+    // The context ends at the trigger message, even when the turn waited behind another one.
+    const upTo = turn.seq !== undefined ? `and p.seq <= ${Number(turn.seq)}` : "";
+    const recent = await db.query<Row>(
+      `${select} ${upTo} order by p.seq desc limit ${CONTEXT_MESSAGES}`,
+      [dev.deviceId, chatId],
+    );
+    // Newest first; with a trigger message, index 0 is that message.
+    const imageSteps: TraceStep[] = [];
+    const skip = turn.messageId ? 1 : 0;
+    for (const r of recent.slice(skip, skip + IMAGE_WINDOW)) {
+      const b = r.body;
+      if (b.type !== "file" || !isImage(b.mime) || typeof b.description === "string") continue;
+      const fname = String(b.name);
+      act({ phase: "tool", tool: "describe_image" });
+      const t0 = Date.now();
+      let result: string;
+      try {
+        const bytes = await dev.engine.downloadFile(b as never);
+        const description = (await describe(bytes, String(b.mime), fname)).trim();
+        if (!description) throw new Error("empty description");
+        b.description = description;
+        await db.query(
+          "update sa.messages_plain set body = body || jsonb_build_object('description', $3::text) where device_id = $1 and id = $2",
+          [dev.deviceId, r.id, description],
+        );
+        result = description;
+      } catch (e) {
+        log("describe image failed", { agent: agent.id, error: (e as Error).message });
+        result = "could not be read";
+      }
+      imageSteps.push({
+        kind: "tool",
+        name: "describe_image",
+        args: fname.slice(0, 500),
+        result: result.slice(0, 1500),
+        ms: Date.now() - t0,
+      });
+    }
+    const line = (r: Row) => {
+      const b = r.body;
+      if (b.type !== "file") return `${r.name}: ${b.text}`;
+      if (!isImage(b.mime)) return `${r.name}: [file ${b.name}, ${formatSize(Number(b.size))}]`;
+      return typeof b.description === "string"
+        ? `${r.name}: [image ${b.name}] ${b.description}`
+        : `${r.name}: [image ${b.name}, could not be read]`;
+    };
+    // In a thread, the root and its latest replies are context too; recent lines that belong to
+    // the thread are marked, and thread messages older than the window are added once.
+    let thread: Row[] = [];
+    let opening = "";
+    if (turn.replyTo) {
+      thread = await db.query<Row>(
+        `${select} ${upTo} and (p.id = $3 or p.body->>'reply_to' = $3)
+         order by (p.id = $3) desc, p.seq desc limit ${THREAD_REPLIES + 1}`,
+        [dev.deviceId, chatId, turn.replyTo],
+      );
+      const root = thread.find((r) => r.id === turn.replyTo);
+      const rootText = String(root?.body.text ?? root?.body.name ?? "").slice(0, 300);
+      opening = root
+        ? `You are replying in a thread that starts with ${root.name}: "${rootText}". Lines marked (thread) belong to it.`
+        : "You are replying in a thread. Lines marked (thread) belong to it.";
+    }
+    const inThread = new Set(thread.map((r) => r.id));
+    const inRecent = new Set(recent.map((r) => r.id));
+    const label = (r: Row) => (inThread.has(r.id) ? `(thread) ${line(r)}` : line(r));
+    // Root first, then the replies oldest first.
+    const ordered = [
+      ...thread.filter((r) => r.id === turn.replyTo),
+      ...thread.filter((r) => r.id !== turn.replyTo).reverse(),
+    ];
+    const earlier = ordered.filter((r) => !inRecent.has(r.id)).map(label);
+    const history = [...earlier, ...recent.reverse().map(label)];
+    const system = [
+      `You are ${agent.name} in the chat "${chat?.title ?? ""}" (chat_id ${chatId}).`,
+      ...(opening ? [opening] : []),
+      "Messages you can see, oldest first:",
+      ...history,
+    ];
+    return {
+      messages: [
+        { role: "system", content: system.join("\n") },
+        { role: "user", content: turn.text },
+      ],
+      read: history.length,
+      imageSteps,
+    };
   }
 }
+
+const mentions = (name: string, text: string) =>
+  new RegExp(`@${escapeRe(name)}(?![\\p{L}\\p{N}_])`, "iu").test(text);

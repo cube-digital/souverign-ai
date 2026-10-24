@@ -17,6 +17,7 @@ import { signTicket } from "@sa/protocol/ticket";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import type { AgentHostApi, BridgeHooks } from "./agents/api.js";
 import { registerAgentRoutes } from "./agents/routes.js";
+import { registerTurnRoutes } from "./agents/turn-routes.js";
 import { hashToken, newToken, SESSION_HOURS, verifyPin } from "./auth.js";
 import type { Db } from "./db.js";
 import { registerLlmProxy } from "./llm-proxy.js";
@@ -409,6 +410,7 @@ export function buildApp({
     loadChat,
     log,
   });
+  registerTurnRoutes(app, { authenticate, agentHost });
 
   if (toolLog) registerMcp(app, { db, toolLog, opsSimUrl: opsSimUrl ?? "http://127.0.0.1:8649" });
   for (const p of plugins ?? []) {

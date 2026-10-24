@@ -17,7 +17,9 @@ import { parse, stringify } from "yaml";
 import type { Db } from "../db.js";
 import {
   type AgentRuntime,
+  abortError,
   type ChatMessage,
+  type ChatOptions,
   type ChatResult,
   type RuntimeAgent,
   splitThink,
@@ -46,6 +48,28 @@ type ModelsConfig = {
 function turnSession(agentId: string, chatId: string): string {
   return `${agentId}:${chatId}:${Date.now().toString(36)}`;
 }
+
+const TURN_TIMEOUT_MS = 180_000;
+
+/** The turn's signal combined with the 180 s limit, and a mapper that turns whatever the aborted
+ * fetch threw into `AbortError` (Stop) or `TimeoutError` (limit). */
+function turnSignal(opts?: ChatOptions): {
+  signal: AbortSignal;
+  normalize: (e: unknown) => unknown;
+} {
+  const timeout = AbortSignal.timeout(TURN_TIMEOUT_MS);
+  const signal = opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+  const normalize = (e: unknown) => {
+    if (opts?.signal?.aborted) return abortError();
+    if (timeout.aborted)
+      return Object.assign(new Error("model time limit"), { name: "TimeoutError" });
+    return e;
+  };
+  return { signal, normalize };
+}
+
+const isAbortOrTimeout = (e: unknown) =>
+  (e as Error)?.name === "AbortError" || (e as Error)?.name === "TimeoutError";
 
 export function llmTarget(): { baseUrl: string; model: string } {
   const cfg = parse(readFileSync(join(ROOT, "config", "models.yaml"), "utf8")) as ModelsConfig;
@@ -308,25 +332,36 @@ export class HermesRuntime implements AgentRuntime {
    * streaming form, so they are not needed here. `<think>` blocks in the content are still split
    * out as a fallback.
    */
-  async chat(agent: RuntimeAgent, chatId: string, messages: ChatMessage[]): Promise<ChatResult> {
+  async chat(
+    agent: RuntimeAgent,
+    chatId: string,
+    messages: ChatMessage[],
+    opts?: ChatOptions,
+  ): Promise<ChatResult> {
     const g = this.gateways.get(agent.id);
     const port = g?.port ?? (await this.allocatePort(agent.id));
-    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${hermesApiKey(agent.id)}`,
-        "x-hermes-session-id": turnSession(agent.id, chatId),
-      },
-      body: JSON.stringify({ model: "hermes-agent", messages }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    if (!res.ok) throw new Error(`hermes chat failed: ${res.status}`);
-    const data = (await res.json()) as {
+    const { signal, normalize } = turnSignal(opts);
+    let data: {
       choices?: {
         message?: { content?: string; reasoning_content?: string; reasoning?: string };
       }[];
     };
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${hermesApiKey(agent.id)}`,
+          "x-hermes-session-id": turnSession(agent.id, chatId),
+        },
+        body: JSON.stringify({ model: "hermes-agent", messages }),
+        signal,
+      });
+      if (!res.ok) throw new Error(`hermes chat failed: ${res.status}`);
+      data = (await res.json()) as typeof data;
+    } catch (e) {
+      throw normalize(e);
+    }
     const msg = data.choices?.[0]?.message ?? {};
     const split = splitThink(msg.content ?? "");
     const field = (msg.reasoning_content ?? msg.reasoning ?? "").trim();
@@ -337,15 +372,19 @@ export class HermesRuntime implements AgentRuntime {
   /**
    * Streaming chat: SSE `data:` lines from `/v1/chat/completions` with `stream: true`. Content
    * deltas go to `onDelta`; reasoning deltas are only collected. If the stream fails before the
-   * first delta, the non-streaming `chat` runs once instead.
+   * first delta, the non-streaming `chat` runs once instead, except after Stop or the time limit:
+   * closing the SSE stream is what makes Hermes interrupt its agent, so an aborted stream never
+   * starts an uninterruptible non-streaming run.
    */
   async chatStream(
     agent: RuntimeAgent,
     chatId: string,
     messages: ChatMessage[],
     onDelta: (text: string) => void,
+    opts?: ChatOptions,
   ): Promise<ChatResult> {
     let gotDelta = false;
+    const { signal, normalize } = turnSignal(opts);
     try {
       const g = this.gateways.get(agent.id);
       const port = g?.port ?? (await this.allocatePort(agent.id));
@@ -357,7 +396,7 @@ export class HermesRuntime implements AgentRuntime {
           "x-hermes-session-id": turnSession(agent.id, chatId),
         },
         body: JSON.stringify({ model: "hermes-agent", messages, stream: true }),
-        signal: AbortSignal.timeout(180_000),
+        signal,
       });
       if (!res.ok || !res.body) throw new Error(`hermes stream failed: ${res.status}`);
       let content = "";
@@ -402,9 +441,18 @@ export class HermesRuntime implements AgentRuntime {
       const split = splitThink(content);
       const all = [reasoning.trim(), split.reasoning].filter(Boolean).join("\n\n");
       return all ? { content: split.content, reasoning: all } : { content: split.content };
-    } catch (e) {
-      if (gotDelta) throw e;
-      return this.chat(agent, chatId, messages);
+    } catch (raw) {
+      const e = normalize(raw);
+      if (gotDelta || isAbortOrTimeout(e)) throw e;
+      return this.chat(agent, chatId, messages, opts);
+    }
+  }
+
+  modelName(): string {
+    try {
+      return llmTarget().model.split("/").pop() || "local";
+    } catch {
+      return "local";
     }
   }
 
