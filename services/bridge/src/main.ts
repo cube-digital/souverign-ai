@@ -12,13 +12,16 @@ import { migrate } from "./migrate.js";
 import type { PluginContext } from "./plugin-api.js";
 import { loadPlugins, mergeHooks } from "./plugin-loader.js";
 import { httpRelayAdmin } from "./relay-admin.js";
+import { windowGuard } from "./workspace/custodian.js";
 
 const logLine = (level: string, msg: string, extra: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ level, msg, ...extra }));
 
 requireMasterKey();
-const relayAdmin = httpRelayAdmin();
+const rawRelayAdmin = httpRelayAdmin();
 const db = await openDb();
+// D-12: every relay add with a history window goes through the guard, once, for all callers.
+const relayAdmin = windowGuard(db, rawRelayAdmin);
 await migrate(db);
 await db.query("update sa.agents set api_port = null"); // no gateway survives a restart
 const runtime: AgentRuntime =

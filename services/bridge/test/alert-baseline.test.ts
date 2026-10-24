@@ -29,7 +29,7 @@ it("posts nothing until a baseline exists, then treats active alerts as seen", a
     db,
     relayAdmin: { setMember: async () => {} },
     relayInternalUrl: "",
-    adminToken: "",
+    ticketFor: async () => "t",
     opsSimUrl: `http://127.0.0.1:${(sim.address() as AddressInfo).port}`,
     agentHost: {
       onAgentAdded: async () => {},

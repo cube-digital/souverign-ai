@@ -1,7 +1,6 @@
 import { ChatEngine, RelayClient, type RelayLink, type StoredDevice } from "@sa/client";
 import { randomId, sealKey } from "@sa/crypto";
-import { type DevicePublic, TICKET_TTL_MS } from "@sa/protocol";
-import { signTicket } from "@sa/protocol/ticket";
+import type { DevicePublic } from "@sa/protocol";
 import { PgKeyStore } from "../agents/pg-keystore.js";
 import { decrypt, encrypt } from "../agents/secrets.js";
 import type { Db } from "../db.js";
@@ -136,7 +135,7 @@ export async function openHeldEngine(
     const client = new RelayClient({
       url,
       deviceId: device.deviceId,
-      getTicket: async () => signTicket(deps.adminToken, device.deviceId, TICKET_TTL_MS).ticket,
+      getTicket: () => deps.ticketFor(device.deviceId),
     });
     base = client;
     closeSocket = () => client.close();
