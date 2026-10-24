@@ -11,10 +11,10 @@ llm:
   port: 8000
   profiles:
     fast:
-      repo: mlx-community/Qwen3.5-9B-8bit
+      repo: mlx-community/Qwen3.5-9B-4bit # 4-bit beat 8-bit on the ops benchmark: 9/9 vs 6/9, 54 vs 34 tok/s
       tool_call_parser: qwen # fallback if tool calls do not parse: auto
       reasoning_parser: qwen3
-      approx_gb: 10.0
+      approx_gb: 5.5
     quality:
       repo: mlx-community/gemma-4-26b-a4b-it-4bit
       tool_call_parser: auto # auto tries the Gemma 4 format first

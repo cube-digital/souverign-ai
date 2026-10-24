@@ -120,7 +120,7 @@ path.l { fill: none; stroke-width: 1.6; }
 <g transform="translate(1034 66)"><g class="ico" style="stroke:var(--d-orange)"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></g></g>
 <text class="t1" x="1068" y="82">Local model server</text>
 <text class="t2" x="1036" y="114">vllm-mlx · continuous batching</text>
-<text class="t2" x="1036" y="136">Qwen3.5 9B · fast</text>
+<text class="t2" x="1036" y="136">Qwen3.5 9B 4-bit · fast</text>
 <text class="t2" x="1036" y="158">Gemma 4 26B · quality</text>
 <text class="t2" x="1036" y="180">one model resident</text>
 <text class="t2" x="1134" y="226" text-anchor="middle">prompt ⇄ completion</text>
@@ -145,7 +145,7 @@ path.l { fill: none; stroke-width: 1.6; }
 <text class="t2" x="1036" y="332">0.15 s first token</text>
 <text class="t2" x="1036" y="354">1.07 s STT for 11.9 s audio</text>
 <text class="t2" x="1036" y="376">40 / 40 memory recall@3</text>
-<text class="t2" x="1036" y="398">30.5 / 32 GiB memory</text>
+<text class="t2" x="1036" y="398">25.6 / 32 GiB memory</text>
 <text class="t2" x="1036" y="420">0 bytes to the internet</text>
 
 <!-- legend -->

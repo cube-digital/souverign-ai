@@ -22,7 +22,9 @@ if [[ $profile == quality ]]; then
   fi
 fi
 
-args=(serve "$repo" --host "$host" --port "$port" --continuous-batching
+# --disable-prefix-cache: with the prefix cache on, repeating an identical request made the model
+# skip its tool call and invent the answer; with it off the same request is 5/5 and deterministic.
+args=(serve "$repo" --host "$host" --port "$port" --continuous-batching --disable-prefix-cache
   --enable-auto-tool-choice --tool-call-parser "$tool_parser")
 if [[ -n $reasoning_parser ]]; then args+=(--reasoning-parser "$reasoning_parser"); fi
 

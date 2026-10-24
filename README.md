@@ -73,7 +73,7 @@ pipeline) will wait for the owner's approval (planned).
 | Client engine | `packages/client` | TypeScript (browser + Node) | keys, encrypt/decrypt, sync |
 | Protocol / crypto | `packages/protocol`, `packages/crypto` | zod, libsodium | |
 | Hermes profiles | `infra/hermes` | Hermes Agent | one per agent, MCP only |
-| Local LLM | `infra/models`, `config/models.yaml` | vllm-mlx, Qwen3.5 9B / Gemma 4 26B | |
+| Local LLM | `infra/models`, `config/models.yaml` | vllm-mlx, Qwen3.5 9B 4-bit (Gemma 4 26B optional) | 54 tokens/s, prefix cache off |
 | Memory | `services/memory` | Python, EmbeddingGemma 2, pgvector | service built, wiring next |
 | Audio API | `services/audio-api` | whisper.cpp, Kokoro, Piper | service built, voice in chat next |
 | Ops backend simulator | `services/ops-sim` | Node | stand-in for real systems |
@@ -88,7 +88,7 @@ pipeline) will wait for the owner's approval (planned).
 | LLM time to first token | 0.15 s |
 | Speech-to-text, 11.9 s of audio | 1.07 s |
 | Memory recall@3 (EN + FR/DE questions) | 40 / 40 |
-| Memory used with every model loaded | 30.5 of 32 GiB |
+| Memory used with every model loaded | 25.6 of 32 GiB |
 | Egress during the smoke run | 0 bytes |
 
 ## Quick start

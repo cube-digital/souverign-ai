@@ -5,7 +5,7 @@ Data: 2026-10-24. Răspunsurile la §2 și §14 din
 
 | # | Întrebare | Decizie |
 |---|---|---|
-| D-1 | Profil LLM implicit | Ambele profile rulează **local, pe Mac**; diferă doar mărimea modelului. `fast` (Qwen3.5-9B, ~10 GB) cât agenții de cod pornesc și testează aplicația; `quality` (Gemma 4 26B-A4B, ~14,5 GB, multimodal) pentru demo. Comutare: `make up PROFILE=quality` sau `LLM_PROFILE` în `.env`. Dacă tool calling-ul pe Gemma 4 nu trece smoke-ul, demo-ul rulează pe `fast`. |
+| D-1 | Profil LLM implicit | Ambele profile rulează **local, pe Mac**; diferă doar mărimea modelului. `fast` (Qwen3.5-9B, ~10 GB) cât agenții de cod pornesc și testează aplicația; `quality` (Gemma 4 26B-A4B, ~14,5 GB, multimodal) pentru demo. Comutare: `make up PROFILE=quality` sau `LLM_PROFILE` în `.env`. Dacă tool calling-ul pe Gemma 4 nu trece smoke-ul, demo-ul rulează pe `fast`. **Actualizare 2026-10-24:** `fast` rulează Qwen3.5 9B pe **4 biți** (benchmark ops 9/9 față de 6/9 pe 8 biți, 54 față de 34 token/s, −2,6 GiB), cu prefix cache-ul vllm-mlx oprit (făcea modelul să sară peste tool-uri). |
 | D-2 | Vocea / limba | **Engleza e limba principală** (UI, demo, voci). Kokoro pentru en/fr/es/it, Piper pentru de/ro. XTTS-ro iese din scop. |
 | D-3 | Vizibilitatea notițelor din apel | Private la owner-ul agentului; ajung în chat doar după „Approve” (gated, ca `chat.send`). |
 | D-4 | Agenți care vorbesc în apel | Nu acum. Se decide la SP7 (stretch). |
