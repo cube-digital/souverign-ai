@@ -1,11 +1,17 @@
 import type { Agent, SharePolicy } from "@sa/protocol";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { setSharing } from "../api";
 
 export function SharingSetting({ agent }: { agent: Agent }) {
+  return <SharingSettingFor key={agent.id} agent={agent} />;
+}
+
+function SharingSettingFor({ agent }: { agent: Agent }) {
   const labelId = useId();
   const [value, setValue] = useState<SharePolicy>(agent.share_private_in_chats ?? "always");
   const [error, setError] = useState(false);
+  const saved = useRef<SharePolicy>(agent.share_private_in_chats ?? "always");
+  const latest = useRef(0);
   const options: { id: SharePolicy; label: string; hint: string }[] = [
     {
       id: "always",
@@ -24,14 +30,17 @@ export function SharingSetting({ agent }: { agent: Agent }) {
   ];
 
   async function choose(next: SharePolicy) {
-    const prev = value;
+    const req = ++latest.current;
     setValue(next);
     setError(false);
     try {
       await setSharing(agent.id, next);
+      saved.current = next;
     } catch {
-      setValue(prev);
-      setError(true);
+      if (req === latest.current) {
+        setValue(saved.current);
+        setError(true);
+      }
     }
   }
 

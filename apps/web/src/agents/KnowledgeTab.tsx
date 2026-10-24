@@ -17,11 +17,18 @@ import { SourceViewer } from "./SourceViewer";
 const MAX_LESSON = 500;
 const GROUPS: { kind: KnowledgeItem["kind"]; title: string }[] = [
   { kind: "document", title: "Documents" },
+];
+const AFTER: { kind: KnowledgeItem["kind"]; title: string }[] = [
   { kind: "note", title: "Notes" },
   { kind: "correction", title: "Corrections" },
 ];
 
-type Doomed = { title: string; run: () => Promise<unknown>; done: () => void };
+type Doomed = {
+  group: string;
+  title: string;
+  run: () => Promise<unknown>;
+  done: () => void;
+};
 
 function uploadError(e: unknown, name: string): string {
   const status = e instanceof ApiFailure ? e.status : 0;
@@ -33,7 +40,15 @@ function uploadError(e: unknown, name: string): string {
   return `Couldn't teach ${name}.`;
 }
 
-export function KnowledgeTab({
+export function KnowledgeTab(props: {
+  agent: Agent;
+  itemId?: string | undefined;
+  onCloseItem: () => void;
+}) {
+  return <KnowledgeTabFor key={props.agent.id} {...props} />;
+}
+
+function KnowledgeTabFor({
   agent,
   itemId,
   onCloseItem,
@@ -51,7 +66,30 @@ export function KnowledgeTab({
   const [doomed, setDoomed] = useState<Doomed | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [opened, setOpen] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const alive = useRef(true);
+  const [refocus, setRefocus] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!refocus) return;
+    const t = setTimeout(() => {
+      const root = rootRef.current;
+      const el =
+        root?.querySelector<HTMLElement>(`[data-group="${refocus}"] h3`) ??
+        root?.querySelector<HTMLElement>("[data-knows]");
+      el?.focus();
+      setRefocus(null);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [refocus]);
 
   useEffect(() => {
     let live = true;
@@ -76,8 +114,10 @@ export function KnowledgeTab({
     setReading(file.name);
     try {
       const created = await teachDocument(agent.id, file);
+      if (!alive.current) return;
       setItems((l) => [created, ...(l ?? [])]);
     } catch (err) {
+      if (!alive.current) return;
       setError(uploadError(err, file.name));
     }
     setReading(null);
@@ -90,9 +130,11 @@ export function KnowledgeTab({
     setError(null);
     try {
       const created = await addLesson(agent.id, t);
+      if (!alive.current) return;
       setLessonList((l) => [created, ...l]);
       setText("");
     } catch {
+      if (!alive.current) return;
       setError("Couldn't add the lesson.");
     }
     setAdding(false);
@@ -103,9 +145,12 @@ export function KnowledgeTab({
     setDeleting(true);
     try {
       await doomed.run();
+      if (!alive.current) return;
       doomed.done();
       setDoomed(null);
+      setRefocus(doomed.group);
     } catch {
+      if (!alive.current) return;
       setError("Couldn't delete it.");
       setDoomed(null);
     }
@@ -114,21 +159,59 @@ export function KnowledgeTab({
 
   const askDeleteItem = (i: KnowledgeItem) =>
     setDoomed({
+      group: i.kind,
       title: i.title,
       run: () => deleteKnowledge(agent.id, i.id),
       done: () => setItems((l) => (l ?? []).filter((x) => x.id !== i.id)),
     });
   const askDeleteLesson = (l: Lesson) =>
     setDoomed({
+      group: "lesson",
       title: "this lesson",
       run: () => deleteLesson(agent.id, l.id),
       done: () => setLessonList((ls) => ls.filter((x) => x.id !== l.id)),
     });
 
+  const renderGroups = (list: typeof GROUPS) =>
+    list.map((g) => {
+      const rows = (items ?? []).filter((i) => i.kind === g.kind);
+      if (rows.length === 0) return null;
+      return (
+        <section key={g.kind} data-group={g.kind}>
+          <h3 tabIndex={-1} className="mb-1 text-[12px] font-semibold text-text-2 outline-none">
+            {g.title}
+          </h3>
+          <ul className="flex flex-col gap-2">
+            {rows.map((i) => {
+              const parts = knowledgeParts(i);
+              return (
+                <Row key={i.id} onDelete={() => askDeleteItem(i)}>
+                  <button
+                    type="button"
+                    onClick={() => setOpen(i.id)}
+                    className="cursor-pointer text-left text-text-0 hover:underline"
+                  >
+                    {i.title}
+                  </button>
+                  <p className="text-[12px] text-text-3">{knowledgeMeta(i)}</p>
+                  {(parts || i.truncated) && (
+                    <p className="flex items-center gap-2 text-[12px] text-text-3">
+                      {parts && <span>{parts}</span>}
+                      {i.truncated && <Chip>truncated</Chip>}
+                    </p>
+                  )}
+                </Row>
+              );
+            })}
+          </ul>
+        </section>
+      );
+    });
+
   const empty = items !== null && items.length === 0 && lessonList.length === 0;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div ref={rootRef} className="flex flex-col gap-4">
       <SharingSetting agent={agent} />
       {error && (
         <p role="alert" className="text-[12px] text-danger">
@@ -174,44 +257,19 @@ export function KnowledgeTab({
         </div>
       </section>
 
-      <h2 className="text-[13px] font-semibold text-text-0">{`What ${agent.name} knows`}</h2>
+      <h2
+        data-knows
+        tabIndex={-1}
+        className="text-[13px] font-semibold text-text-0 outline-none"
+      >{`What ${agent.name} knows`}</h2>
       {items === null && !error && <EmptyState>Loading…</EmptyState>}
       {empty && <EmptyState>Nothing taught yet. Teach a document or a lesson.</EmptyState>}
-      {GROUPS.map((g) => {
-        const rows = (items ?? []).filter((i) => i.kind === g.kind);
-        if (rows.length === 0) return null;
-        return (
-          <section key={g.kind}>
-            <h3 className="mb-1 text-[12px] font-semibold text-text-2">{g.title}</h3>
-            <ul className="flex flex-col gap-2">
-              {rows.map((i) => {
-                const parts = knowledgeParts(i);
-                return (
-                  <Row key={i.id} onDelete={() => askDeleteItem(i)}>
-                    <button
-                      type="button"
-                      onClick={() => setOpen(i.id)}
-                      className="cursor-pointer text-left text-text-0 hover:underline"
-                    >
-                      {i.title}
-                    </button>
-                    <p className="text-[12px] text-text-3">{knowledgeMeta(i)}</p>
-                    {(parts || i.truncated) && (
-                      <p className="flex items-center gap-2 text-[12px] text-text-3">
-                        {parts && <span>{parts}</span>}
-                        {i.truncated && <Chip>truncated</Chip>}
-                      </p>
-                    )}
-                  </Row>
-                );
-              })}
-            </ul>
-          </section>
-        );
-      })}
+      {renderGroups(GROUPS)}
       {lessonList.length > 0 && (
-        <section>
-          <h3 className="mb-1 text-[12px] font-semibold text-text-2">Lessons</h3>
+        <section data-group="lesson">
+          <h3 tabIndex={-1} className="mb-1 text-[12px] font-semibold text-text-2 outline-none">
+            Lessons
+          </h3>
           <ul className="flex flex-col gap-2">
             {lessonList.map((l) => (
               <Row key={l.id} onDelete={() => askDeleteLesson(l)}>
@@ -224,6 +282,8 @@ export function KnowledgeTab({
           </ul>
         </section>
       )}
+
+      {renderGroups(AFTER)}
 
       {doomed && (
         <Modal
