@@ -18,6 +18,7 @@ export class RelayClient implements RelayLink {
   private backoff = 500;
   private everReady = false;
   private closed = false;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly Ws: typeof WebSocket;
 
   constructor(private opts: { url: string; deviceId: string; WebSocketImpl?: typeof WebSocket }) {
@@ -61,13 +62,13 @@ export class RelayClient implements RelayLink {
           if (msg.op === "ready") {
             this.backoff = 500;
             this.setStatus("ready");
-            const reconnected = this.everReady;
             this.everReady = true;
             if (first) {
               first = false;
               resolve();
             }
-            if (reconnected) for (const cb of this.reconnectCbs) cb();
+            // Fires on every ready (including the first) so syncs requested earlier are not lost.
+            for (const cb of this.reconnectCbs) cb();
             return;
           }
           this.handle(msg);
@@ -79,7 +80,10 @@ export class RelayClient implements RelayLink {
           if (this.closed) return;
           const delay = this.backoff;
           this.backoff = Math.min(this.backoff * 2, 8000);
-          setTimeout(open, delay);
+          this.retryTimer = setTimeout(() => {
+            this.retryTimer = null;
+            if (!this.closed) open();
+          }, delay);
         };
         ws.onerror = () => {
           if (first && !this.everReady && this.closed) reject(new Error("connect_failed"));
@@ -91,6 +95,8 @@ export class RelayClient implements RelayLink {
 
   close(): void {
     this.closed = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.ws?.close();
   }
 
