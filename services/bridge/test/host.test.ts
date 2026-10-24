@@ -20,7 +20,13 @@ process.env.BRIDGE_MASTER_KEY = "test-master-key";
 const auth = (t: string) => ({ authorization: `Bearer ${t}` });
 const DOWN = "I can't answer right now (the local model is not available).";
 
-type Seen = { senderDevice: string; status: string; body: MessageBody | null };
+type Seen = {
+  id: string;
+  ts: number;
+  senderDevice: string;
+  status: string;
+  body: MessageBody | null;
+};
 
 let db: Db;
 let relay: FakeRelay;
@@ -123,8 +129,15 @@ async function addAgent(
 const textOf = (m: Seen) => (m.body as { text: string }).text;
 const metaOf = (m: Seen) =>
   (m.body as { meta?: { tools?: string[]; ms?: number; trace?: unknown[] } }).meta;
+// Join intros are chips, not answers; reactions are not answers either.
 const from = (seen: Seen[], deviceId: string) =>
-  seen.filter((m) => m.senderDevice === deviceId && m.status === "ok");
+  seen.filter(
+    (m) =>
+      m.senderDevice === deviceId &&
+      m.status === "ok" &&
+      m.body?.type === "text" &&
+      (m.body as { meta?: { trigger?: string } }).meta?.trigger !== "intro",
+  );
 
 afterEach(async () => {
   await host.stopAll();
@@ -136,7 +149,7 @@ describe("agent host", () => {
     await setup(new EchoRuntime());
   });
 
-  it("replies only when addressed by name, at most once per 3 seconds", async () => {
+  it("replies only when addressed by name, in a thread, and waits out the 3 second gap instead of dropping the turn", async () => {
     const ana = await anaInChat();
     const agent = await addAgent(ana, "Scout");
     await ana.engine.createEpoch(ana.chatId, [
@@ -158,17 +171,22 @@ describe("agent host", () => {
     await ana.engine.sendText(ana.chatId, "@scout ping one");
     await expect.poll(() => from(ana.seen, agent.device_id).length, { timeout: 5000 }).toBe(1);
     await ana.engine.sendText(ana.chatId, "@SCOUT ping two");
-    await new Promise((r) => setTimeout(r, 500));
+    await expect.poll(() => from(ana.seen, agent.device_id).length, { timeout: 10000 }).toBe(2);
 
     const replies = from(ana.seen, agent.device_id);
-    expect(replies).toHaveLength(1);
+    const one = ana.seen.find((m) => (m.body as { text?: string }).text === "@scout ping one");
+    const two = ana.seen.find((m) => (m.body as { text?: string }).text === "@SCOUT ping two");
     expect(textOf(replies[0] as Seen).endsWith("| @scout ping one")).toBe(true);
+    expect(textOf(replies[1] as Seen).endsWith("| @SCOUT ping two")).toBe(true);
+    expect((replies[0]?.body as { reply_to?: string }).reply_to).toBe(one?.id);
+    expect((replies[1]?.body as { reply_to?: string }).reply_to).toBe(two?.id);
+    expect((replies[1]?.ts ?? 0) - (replies[0]?.ts ?? 0)).toBeGreaterThanOrEqual(2900);
     expect(metaOf(replies[0] as Seen)?.tools).toEqual([]);
     expect(metaOf(replies[0] as Seen)?.trace?.[0]).toEqual({
       kind: "thinking",
-      text: expect.stringMatching(/^echo: looked at 2 messages$/),
+      text: expect.stringMatching(/^echo: looked at \d+ messages$/),
     });
-  });
+  }, 20000);
 
   it("never shows the agent messages from before it was invited", async () => {
     const ana = await anaInChat();
