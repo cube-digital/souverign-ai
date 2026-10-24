@@ -1,0 +1,32 @@
+[project]
+name = "sovereign-agents"
+version = "0.0.0"
+requires-python = ">=3.12,<3.14"
+dependencies = []
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
+
+[tool.uv.workspace]
+members = ["infra/py"]
+
+[tool.uv.sources]
+sa-infra = { workspace = true }
+
+[dependency-groups]
+dev = ["pytest>=8.3", "ruff>=0.6", "sa-infra"]
+live = ["sa-infra[live]"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["docs"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+addopts = "-q -m 'not live'"
+markers = ["live: needs the running local stack (make models + make up)"]
+testpaths = ["infra/py/tests"]
