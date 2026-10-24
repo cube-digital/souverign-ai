@@ -58,6 +58,7 @@ export class RelayClient implements RelayLink {
       let first = true;
       const open = () => {
         this.setStatus("connecting");
+        let immediateRetry = false;
         const ws = new this.Ws(this.opts.url);
         this.ws = ws;
         ws.onopen = () => void this.hello(ws);
@@ -71,6 +72,7 @@ export class RelayClient implements RelayLink {
           if (msg.op === "ready") {
             this.backoff = 500;
             this.ticketRetried = false;
+            immediateRetry = false;
             this.setStatus("ready");
             this.everReady = true;
             if (first) {
@@ -82,10 +84,11 @@ export class RelayClient implements RelayLink {
             return;
           }
           if (msg.op === "error" && msg.code === "bad_ticket" && !msg.ref) {
-            // One immediate retry with a fresh ticket, then normal backoff.
+            // The relay closes the socket after bad_ticket: flag the next onclose to
+            // reconnect at once (fresh ticket), a single time, then normal backoff.
             if (!this.ticketRetried) {
               this.ticketRetried = true;
-              void this.hello(ws);
+              immediateRetry = true;
             }
             return;
           }
@@ -96,8 +99,8 @@ export class RelayClient implements RelayLink {
           this.setStatus("offline");
           this.failAll(new Error("offline"));
           if (this.closed) return;
-          const delay = this.backoff;
-          this.backoff = Math.min(this.backoff * 2, 8000);
+          const delay = immediateRetry ? 0 : this.backoff;
+          if (!immediateRetry) this.backoff = Math.min(this.backoff * 2, 8000);
           this.retryTimer = setTimeout(() => {
             this.retryTimer = null;
             if (!this.closed) open();
