@@ -233,7 +233,12 @@ export async function rekey(
     ...people.map((p) => p.pub),
     ...(await Promise.all(agents.map((a) => agentPub(w, a.device_id)))),
   ];
-  await minter.engine.createEpoch(chatId, pubs);
+  // like the web: claim the next epoch from the bridge before minting the key
+  const [claim] = await w.db.query<{ key_epoch: number }>(
+    "update sa.chats set key_epoch = key_epoch + 1 where id = $1 returning key_epoch",
+    [chatId],
+  );
+  await minter.engine.createEpoch(chatId, pubs, claim?.key_epoch);
 }
 
 type Text = { type: "text"; text: string; reply_to?: string; meta?: Record<string, any> };

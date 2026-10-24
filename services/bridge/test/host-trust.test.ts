@@ -2,7 +2,7 @@ import { cryptoReady } from "@sa/crypto";
 import { expect, it, vi } from "vitest";
 import { AgentHost } from "../src/agents/host.js";
 
-type Trust = (chatId: string, sender: string) => Promise<boolean>;
+type Trust = (chatId: string, sender: string, epoch?: number) => Promise<boolean>;
 const captured: { trust?: Trust } = {};
 
 vi.mock("@sa/client", async (orig) => {
@@ -80,6 +80,10 @@ it("accepts epoch keys from any active human member's devices, never from agents
   expect(await captured.trust?.("c1", "dev-ag")).toBe(false);
   expect(await captured.trust?.("c1", "dev-eve")).toBe(false);
   expect(await captured.trust?.("c1", "dev-gone")).toBe(false);
+  // an unclaimed future epoch is rejected even from an active member; the claimed one is accepted
+  await db.query("update sa.chats set key_epoch = 2 where id = 'c1'");
+  expect(await captured.trust?.("c1", "dev-bob", 2)).toBe(true);
+  expect(await captured.trust?.("c1", "dev-bob", 3)).toBe(false);
   await host.stopAll();
   await db.close();
 });

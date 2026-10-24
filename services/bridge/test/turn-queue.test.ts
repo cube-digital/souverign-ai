@@ -97,4 +97,27 @@ describe("turn queue", () => {
     };
     expect(waiting.map(eyesBeforeWait)).toEqual([true, true]);
   }, 40000);
+
+  it("does not let one requester's pile of turns delay another requester past two of theirs", async () => {
+    w = await createWorld(new EchoRuntime({ delayMs: 600 }), ["ana", "bob"]);
+    const ana = await person(w, "ana");
+    const bob = await person(w, "bob");
+    const chat = await startChat(w, ana, "Ops room", [bob]);
+    const names = ["Aa", "Bb", "Cc", "Dd", "Ee"];
+    const pile = [];
+    for (const n of names) pile.push(await addPersonalAgent(w, ana, chat, n));
+    const late = await addPersonalAgent(w, ana, chat, "Zed");
+    await rekey(w, chat, ana, [ana, bob], [...pile, late]);
+
+    await ana.engine.sendText(chat, "@Aa @Bb @Cc @Dd @Ee all five");
+    await new Promise((r) => setTimeout(r, 300));
+    await bob.engine.sendText(chat, "@Zed one question");
+    await expect.poll(() => textsFrom(ana, late.device_id).length, { timeout: 30000 }).toBe(1);
+
+    const bobsAt = textsFrom(ana, late.device_id)[0]?.ts ?? 0;
+    const anaBefore = pile.filter((a) =>
+      textsFrom(ana, a.device_id).some((m) => m.ts < bobsAt),
+    ).length;
+    expect(anaBefore).toBeLessThanOrEqual(3);
+  }, 60000);
 });
