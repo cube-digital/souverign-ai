@@ -1,9 +1,9 @@
 import type { Agent } from "@sa/protocol";
 import { AUTONOMY, rosterEntry, TEMPLATE_INFO } from "@sa/protocol/roster";
-import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
-import { agentDm, agents as fetchAgents } from "../api";
 import { AgentAvatar, Chip, StatusDot, Tabs } from "../ds";
+import { openAgentDm } from "../state/agentDm";
+import { useAgents } from "../state/agents";
 import { useSession } from "../state/session";
 import { ActivityTab } from "./ActivityTab";
 import { RoutinesTab } from "./RoutinesTab";
@@ -16,7 +16,8 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 function Overview({ agent }: { agent: Agent }) {
-  const { chats, user } = useSession();
+  const session = useSession();
+  const { chats, user } = session;
   const navigate = useNavigate();
   const entry = rosterEntry(agent.roster_id);
   const info = entry ?? TEMPLATE_INFO[agent.template] ?? { tools: [], examples: [] };
@@ -28,7 +29,7 @@ function Overview({ agent }: { agent: Agent }) {
     return [{ id: c.id, text: `${c.title} · can read from ${when}` }];
   });
   async function open(prompt: string) {
-    const dm = await agentDm(agent.id);
+    const dm = await openAgentDm(session, agent.id);
     navigate(`/c/${encodeURIComponent(dm.id)}`, { state: { compose: { text: prompt } } });
   }
   return (
@@ -77,17 +78,9 @@ function Overview({ agent }: { agent: Agent }) {
 export function AgentProfilePage() {
   const { agentId = "" } = useParams();
   const [params, setParams] = useSearchParams();
-  const [agent, setAgent] = useState<Agent | null | undefined>(undefined);
-  useEffect(() => {
-    let live = true;
-    setAgent(undefined);
-    fetchAgents()
-      .then((l) => live && setAgent(l.find((a) => a.id === agentId) ?? null))
-      .catch(() => live && setAgent(null));
-    return () => {
-      live = false;
-    };
-  }, [agentId]);
+  const { agents, failed } = useAgents();
+  const agent =
+    agents === null ? (failed ? null : undefined) : (agents.find((a) => a.id === agentId) ?? null);
 
   if (agent === undefined) return null;
   if (agent === null) return <p className="p-4 text-[13px] text-text-2">Agent not found.</p>;

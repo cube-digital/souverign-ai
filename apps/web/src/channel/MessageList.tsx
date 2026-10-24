@@ -15,16 +15,16 @@ const dayLabel = (ts: number) =>
 
 export function DayDivider({ ts }: { ts: number }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-2 text-[12px] text-text-2">
+    <li className="flex items-center gap-3 px-4 py-2 text-[12px] text-text-2">
       <hr className="flex-1 border-border-soft" />
       <span>{dayLabel(ts)}</span>
       <hr className="flex-1 border-border-soft" />
-    </div>
+    </li>
   );
 }
 
 export function SystemLine({ text }: { text: string }) {
-  return <div className="px-4 py-1.5 text-center text-[12px] text-text-2">{text}</div>;
+  return <li className="px-4 py-1.5 text-center text-[12px] text-text-2">{text}</li>;
 }
 
 /** The top-level messages of a chat, grouped by sender and day. */
@@ -101,7 +101,7 @@ function MessageListInner({ chat }: { chat: Chat }) {
       className="flex min-h-0 flex-1 flex-col overflow-auto py-2"
     >
       <div ref={content} className="flex flex-col">
-        {rows}
+        <ul className="m-0 flex list-none flex-col p-0">{rows}</ul>
         <LiveStatus chatId={chat.id} chat={chat} />
       </div>
       <LiveAnnouncer chat={chat} />

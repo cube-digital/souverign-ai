@@ -17,7 +17,8 @@ export function ReceiptsFooter({ meta }: { meta: TextMeta }) {
   const [open, setOpen] = useState(false);
   const line = receiptsLine(meta);
   const steps = (meta.trace ?? []).filter((s) => s.kind === "tool");
-  if (!line && !meta.stopped_by) return null;
+  // a stopped turn says so in its own text ("Stopped by Ana."), so it is not repeated here
+  if (!line) return null;
   return (
     <div className="mt-2 text-[12px] text-text-2">
       {line && (
@@ -30,7 +31,6 @@ export function ReceiptsFooter({ meta }: { meta: TextMeta }) {
           {line}
         </button>
       )}
-      {meta.stopped_by && <p className="mt-0.5">{`Stopped by ${meta.stopped_by}`}</p>}
       {open && (
         <ol className="mt-1.5 flex flex-col gap-1.5">
           {steps.map((s, i) => (

@@ -7,6 +7,7 @@ import { AgentAvatar, Chip, ChipButton, StatusDot } from "../ds";
 import { cn } from "../lib/cn";
 import type { Reaction } from "../state/threads";
 import { ReceiptsFooter } from "./ReceiptsFooter";
+import { agentLabel } from "./shared";
 
 type TextBody = Extract<MessageBody, { type: "text" }>;
 
@@ -104,17 +105,13 @@ export function AgentMessage({
   const shown = short && !more ? short : body.text;
   const thinking = (meta?.trace ?? []).filter((s) => s.kind === "thinking");
   const tools = meta?.tools?.length ?? 0;
-  const owner =
-    member.agent_scope === "workspace"
-      ? "Workspace agent"
-      : `${member.owner_display_name ?? "Someone"}'s agent`;
   return (
     <div className="min-w-0 max-w-[640px] rounded-lg border border-ai-glow bg-ai-bg px-3 py-2">
       <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
         <AgentAvatar name={member.display_name} id={member.member_id} size={18} />
         <strong className="font-semibold text-text-0">{member.display_name}</strong>
         <Chip tone="ai">AI</Chip>
-        <Chip>{owner}</Chip>
+        <Chip>{agentLabel(member)}</Chip>
         <AgentStatusChip status={member.status} />
         {tools > 0 && !meta?.seeded && <Chip>{`${tools} tool${tools === 1 ? "" : "s"}`}</Chip>}
         <span className="text-text-2">{time}</span>

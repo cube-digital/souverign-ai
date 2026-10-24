@@ -1,7 +1,11 @@
 import { useState } from "react";
+import { BrowserRouter } from "react-router";
 import { getSession, type Session, setSession } from "./api";
-import { ChatsPage } from "./pages/ChatsPage";
+import { AppFrame } from "./app/routes";
+import { ToastProvider } from "./ds";
 import { Login } from "./pages/Login";
+import { RailProvider } from "./shell/rail";
+import { resetAgents } from "./state/agents";
 import { SessionProvider } from "./state/session";
 
 export function App() {
@@ -10,12 +14,19 @@ export function App() {
   if (!session) return <Login onSignedIn={setSessionState} />;
   return (
     <SessionProvider session={session}>
-      <ChatsPage
-        onSwitchUser={() => {
-          setSession(null);
-          setSessionState(null);
-        }}
-      />
+      <BrowserRouter>
+        <RailProvider>
+          <ToastProvider>
+            <AppFrame
+              onSwitchUser={() => {
+                setSession(null);
+                resetAgents();
+                setSessionState(null);
+              }}
+            />
+          </ToastProvider>
+        </RailProvider>
+      </BrowserRouter>
     </SessionProvider>
   );
 }

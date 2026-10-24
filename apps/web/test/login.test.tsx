@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../src/App";
 
 const ana = { id: "ana", display_name: "Ana" };
@@ -9,6 +9,16 @@ function reply(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status });
 }
 
+beforeAll(() => {
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+});
 beforeEach(() => {
   sessionStorage.clear();
   vi.stubGlobal(
@@ -47,5 +57,5 @@ it("shows Wrong PIN for a bad PIN, then signs in with the right one", async () =
     token: "tok",
     user: ana,
   });
-  expect(await screen.findByText("switch user")).toBeTruthy();
+  expect(await screen.findByRole("button", { name: "User menu" })).toBeTruthy();
 });

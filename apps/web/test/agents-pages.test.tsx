@@ -88,7 +88,7 @@ vi.mock("../src/state/session", () => ({
     user: { id: "ana", display_name: "Ana" },
     chats: chatsList,
     messages: {},
-    engine: {},
+    engine: { latestEpoch: async () => 1, createEpoch: async () => {} },
     refreshChats: async () => chatsList,
     unread: {},
   }),

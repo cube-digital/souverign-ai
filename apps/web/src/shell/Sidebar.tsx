@@ -1,9 +1,9 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { Agent, Chat } from "@sa/protocol";
-import { useEffect, useState } from "react";
-import { agents as fetchAgents } from "../api";
+import { useEffect } from "react";
 import { AgentAvatar, Chip, EmptyState, IconButton, Icons, StatusDot } from "../ds";
 import { cn } from "../lib/cn";
+import { invalidateAgents, useAgents } from "../state/agents";
 import { useSession } from "../state/session";
 
 const POLL_MS = 15_000;
@@ -43,30 +43,22 @@ export function Sidebar({
   activeChatId,
   onOpenChat,
   onOpenAgent,
+  onOpenAgents,
   onNewChat,
 }: {
   activeChatId: string | null;
   onOpenChat: (chatId: string) => void;
   onOpenAgent: (agent: Agent) => void;
+  onOpenAgents?: () => void;
   onNewChat: () => void;
 }) {
   const { chats, unread } = useSession();
-  const [agents, setAgents] = useState<Agent[] | null>(null);
+  const { agents } = useAgents();
 
+  // status dots follow the agents' state, so the shared list is refreshed on a timer
   useEffect(() => {
-    let live = true;
-    const load = () => {
-      fetchAgents().then(
-        (list) => live && setAgents(list),
-        () => {},
-      );
-    };
-    load();
-    const t = setInterval(load, POLL_MS);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
+    const t = setInterval(() => void invalidateAgents(), POLL_MS);
+    return () => clearInterval(t);
   }, []);
 
   const channels = chats.filter((c) => c.kind === "room" || c.kind === "group");
@@ -106,7 +98,16 @@ export function Sidebar({
         {dms.length === 0 && <EmptyState>No direct messages yet</EmptyState>}
         {dms.map((c) => chatRow(c, <Icons.Users className="shrink-0 text-text-3" />))}
       </Group>
-      <Group title="Agents">
+      <Group
+        title="Agents"
+        action={
+          onOpenAgents && (
+            <IconButton label="All agents" onClick={onOpenAgents} className="h-4 w-4">
+              <Icons.Users width={12} height={12} />
+            </IconButton>
+          )
+        }
+      >
         {agents?.length === 0 && <EmptyState>No agents yet</EmptyState>}
         {(agents ?? []).map((a) => (
           <button

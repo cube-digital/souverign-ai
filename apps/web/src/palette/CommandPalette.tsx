@@ -1,8 +1,9 @@
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useMatch, useNavigate } from "react-router";
-import { agentDm, agents as fetchAgents } from "../api";
 import { Input, Kbd, Overlay, useToast } from "../ds";
 import { getTheme, setTheme } from "../shell/theme";
+import { openAgentDm } from "../state/agentDm";
+import { useAgents } from "../state/agents";
 import { useSession } from "../state/session";
 
 type Item = { id: string; group: "Chats" | "Agents" | "Actions"; label: string; run: () => void };
@@ -48,24 +49,14 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
 function Palette({ onClose }: { onClose: () => void }) {
   const s = useSession();
+  const { engine, refreshChats } = s;
   const toast = useToast();
   const navigate = useNavigate();
   const current = useMatch("/c/:chatId/*")?.params.chatId;
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const [agentList, setAgentList] = useState<{ id: string; name: string }[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    let live = true;
-    fetchAgents().then(
-      (a) => live && setAgentList(a.map((x) => ({ id: x.id, name: x.name }))),
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, []);
+  const agentList = useAgents().agents ?? [];
 
   const all = useMemo<Item[]>(() => {
     const act = (a: PaletteAction) => () => {
@@ -102,7 +93,7 @@ function Palette({ onClose }: { onClose: () => void }) {
           group: "Agents" as const,
           label: `Message ${a.name}`,
           run: () => {
-            agentDm(a.id).then(
+            openAgentDm({ engine, refreshChats }, a.id).then(
               (dm) => navigate(`/c/${encodeURIComponent(dm.id)}`),
               () => toast.push(`Could not open a chat with ${a.name}.`, "error"),
             );
@@ -125,7 +116,7 @@ function Palette({ onClose }: { onClose: () => void }) {
       },
       { id: "act:agents", group: "Actions", label: "Open agents", run: () => navigate("/agents") },
     ];
-  }, [s.chats, agentList, navigate, toast, current]);
+  }, [s.chats, agentList, navigate, toast, current, engine, refreshChats]);
   const items = useMemo(
     () =>
       all

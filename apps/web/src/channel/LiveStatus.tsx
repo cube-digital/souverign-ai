@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { stopTurn } from "../api";
 import { Button } from "../ds";
 import { useActivity, useSession } from "../state/session";
-import { nameOfDevice } from "./shared";
+import { describePhase, nameOfDevice } from "./shared";
 
 function Caret() {
   return (
@@ -16,25 +16,15 @@ function Caret() {
 }
 
 function line(name: string, b: ActivityBody): React.ReactNode {
-  switch (b.phase) {
-    case "queued":
-      return `${name} · queued, ${b.ahead ?? 0} ahead`;
-    case "thinking":
-      return `${name} is thinking`;
-    case "reading":
-      return `${name} · reading ${b.count ?? 0} messages`;
-    case "tool":
-      return `${name} · calling \`${b.tool ?? "a tool"}\``;
-    case "writing":
-      return (
-        <span className="whitespace-pre-wrap break-words">
-          {b.draft}
-          <Caret />
-        </span>
-      );
-    default:
-      return `${name} couldn't answer`;
+  if (b.phase === "writing") {
+    return (
+      <span className="whitespace-pre-wrap break-words">
+        {b.draft}
+        <Caret />
+      </span>
+    );
   }
+  return describePhase(b, name, "line") ?? `${name} couldn't answer`;
 }
 
 /** Live agent activity of a chat (top level) or of one thread. */
@@ -88,25 +78,6 @@ export function WorkingBadge({ chatId, messageId }: { chatId: string; messageId:
   return working ? <p className="mt-1 text-[12px] text-ai">working…</p> : null;
 }
 
-function announce(name: string, b: ActivityBody): string | null {
-  switch (b.phase) {
-    case "queued":
-      return `${name}: queued, ${b.ahead ?? 0} ahead`;
-    case "thinking":
-      return `${name} is thinking`;
-    case "reading":
-      return `${name} is reading`;
-    case "tool":
-      return `${name} is using a tool`;
-    case "writing":
-      return `${name} is writing`;
-    case "error":
-      return `${name} couldn't answer`;
-    default:
-      return null;
-  }
-}
-
 /**
  * One always-mounted polite live region per channel. It speaks phase and queue changes only;
  * drafts and tool names never reach it, so streaming text is not read out.
@@ -116,7 +87,7 @@ export function LiveAnnouncer({ chat }: { chat: Chat }) {
   const text = useMemo(
     () =>
       Object.entries(all ?? {})
-        .map(([device, a]) => announce(nameOfDevice(chat, device), a.body))
+        .map(([device, a]) => describePhase(a.body, nameOfDevice(chat, device), "speech"))
         .filter(Boolean)
         .join(". "),
     [all, chat],
