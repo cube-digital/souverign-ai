@@ -389,4 +389,20 @@ describe("relay", () => {
     ]);
     expect(alice.msgs.filter((m) => m.op !== "ready")).toEqual([]);
   });
+
+  it("rejects a status envelope sent via send and does not store it", async () => {
+    const { url } = await start();
+    const chat = randomId();
+    const alice = await Client.connect(url);
+    await member(url, chat, alice.device, "add");
+
+    const st = env(chat, alice.device, { kind: "status" });
+    const reply = await alice.ask({ op: "send", env: st }, (m) => m.op === "error");
+
+    expect(reply.find((m) => m.op === "error")).toMatchObject({
+      code: "bad_request",
+      ref: st.id,
+    });
+    expect(await recent(url)).toEqual([]);
+  });
 });

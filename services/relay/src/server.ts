@@ -169,6 +169,8 @@ export async function createRelay(
             return fail(ws, "bad_request", "already said hello");
           case "send": {
             const env = msg.env;
+            if (env.kind === "status")
+              return fail(ws, "bad_request", "status must use signal", env.id);
             const ok =
               env.sender_device === device &&
               db.isActive(env.chat_id, device) &&

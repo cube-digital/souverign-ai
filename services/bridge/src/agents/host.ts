@@ -332,6 +332,7 @@ export class AgentHost {
     if (failed) signal({ type: "activity", phase: "error" });
     await signals;
     dev.lastReply.set(chatId, Date.now());
+    let sent = true;
     try {
       await dev.engine.sendText(chatId, body.text, body.meta);
       log("agent replied", {
@@ -341,9 +342,10 @@ export class AgentHost {
         size: body.text.length,
       });
     } catch (e) {
+      sent = false;
       log("agent send failed", { agent: agent.id, error: (e as Error).message });
     }
-    if (!failed) signal({ type: "activity", phase: "done" });
+    if (!failed) signal({ type: "activity", phase: sent ? "done" : "error" });
     await signals;
   }
 }

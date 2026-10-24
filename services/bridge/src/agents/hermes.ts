@@ -94,13 +94,25 @@ export class HermesRuntime implements AgentRuntime {
 
   private bin = (): string => process.env.HERMES_BIN ?? "hermes";
 
-  private async allocatePort(agentId: string): Promise<number> {
-    const [own] = await this.deps.db.query<{ api_port: number | null }>(
-      "select api_port from sa.agents where id = $1",
-      [agentId],
+  private portLock: Promise<unknown> = Promise.resolve();
+
+  /** Serialized so concurrent pre-warms cannot pick the same port. */
+  private allocatePort(agentId: string): Promise<number> {
+    const run = this.portLock.then(() => this.pickPort(agentId));
+    this.portLock = run.catch(() => undefined);
+    return run;
+  }
+
+  private async pickPort(agentId: string): Promise<number> {
+    const rows = await this.deps.db.query<{ id: string; api_port: number | null }>(
+      "select id, api_port from sa.agents where api_port is not null",
     );
+    const own = rows.find((r) => r.id === agentId);
     if (own?.api_port) return own.api_port;
-    const used = new Set([...this.gateways.values()].map((g) => g.port));
+    const used = new Set([
+      ...[...this.gateways.values()].map((g) => g.port),
+      ...rows.map((r) => r.api_port),
+    ]);
     const port = PORTS.find((p) => !used.has(p));
     if (!port) throw new Error("no free agent port");
     await this.deps.db.query("update sa.agents set api_port = $1 where id = $2", [port, agentId]);
