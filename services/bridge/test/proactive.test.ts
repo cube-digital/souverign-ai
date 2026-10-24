@@ -98,7 +98,7 @@ beforeEach(async () => {
     db,
     relayAdmin: { setMember: async () => {} },
     relayInternalUrl: "http://127.0.0.1:1",
-    adminToken: "t",
+    ticketFor: async () => "ticket",
     opsSimUrl: `http://127.0.0.1:${(sim.address() as AddressInfo).port}`,
     agentHost: {
       onAgentAdded: async () => {},

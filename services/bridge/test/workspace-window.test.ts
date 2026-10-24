@@ -33,7 +33,7 @@ it("seals the history epoch, never older live ones, to a late device and refuses
     db,
     relayAdmin,
     relayInternalUrl: `http://127.0.0.1:${(http.address() as AddressInfo).port}`,
-    adminToken: "t",
+    ticketFor: async () => "t",
     opsSimUrl: "http://127.0.0.1:1",
     agentHost: { onAgentAdded: async () => {}, onAgentRemoved: async () => {} },
     log: () => {},

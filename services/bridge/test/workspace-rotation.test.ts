@@ -48,7 +48,7 @@ async function start() {
       },
     },
     relayInternalUrl: relayUrl,
-    adminToken: "t",
+    ticketFor: async () => "t",
     opsSimUrl: "http://127.0.0.1:1",
     agentHost: { onAgentAdded: async () => {}, onAgentRemoved: async () => {} },
     log: () => {},
