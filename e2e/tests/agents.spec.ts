@@ -1,4 +1,4 @@
-import { type Browser, type Page, expect, test } from "@playwright/test";
+import { type Browser, expect, type Page, test } from "@playwright/test";
 
 async function signIn(browser: Browser, name: string, pin: string): Promise<Page> {
   const page = await (await browser.newContext()).newPage();
@@ -36,10 +36,7 @@ test("an invited agent answers when addressed, sees only what followed its invit
   await dialog.getByLabel("Rareș").check();
   await dialog.getByRole("button", { name: "Create" }).click();
   const open = (p: Page) =>
-    p
-      .getByRole("navigation", { name: "Chats" })
-      .getByRole("button", { name: /Ops/ })
-      .click();
+    p.getByRole("navigation", { name: "Chats" }).getByRole("button", { name: /Ops/ }).click();
   await open(ana);
   await open(rares);
 

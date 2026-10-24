@@ -207,10 +207,12 @@ export class HermesRuntime implements AgentRuntime {
   }
 
   /**
-   * Reasoning source: the pinned Hermes (infra/hermes/VERSION) is read from, in order, the
-   * chat-completion message's `reasoning_content` / `reasoning` field. The Responses API
-   * reasoning items and Runs API events were not verified against a live gateway here; when the
-   * field is absent, reasoning stays empty (the UI shows tool steps only) apart from <think> blocks.
+   * Reasoning source, verified against a live gateway (Hermes v0.22.5, Qwen3.5-9B): the
+   * non-streaming chat completion carries the turn's reasoning in `message.reasoning_content`
+   * (the gateway derives it from the assistant messages it persisted; `message.reasoning` is
+   * absent). The Responses API reasoning items and Runs API events carry the same text only in
+   * streaming form, so they are not needed here. `<think>` blocks in the content are still split
+   * out as a fallback.
    */
   async chat(agent: RuntimeAgent, chatId: string, messages: ChatMessage[]): Promise<ChatResult> {
     const g = this.gateways.get(agent.id);
