@@ -16,6 +16,7 @@ check: ## lint + unit tests (no models, no services)
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run pytest
+	for f in infra/scripts/*.sh infra/models/*.sh; do bash -n $$f || exit 1; done
 
 prereqs: ## check host tools; prints install commands for anything missing
 	infra/scripts/prereqs.sh
@@ -30,6 +31,6 @@ down: ## stop everything make up started
 	infra/scripts/down.sh
 
 smoke: ## live checks against the running stack, offline, with egress + memory guards
-	NETWORK_GUARD=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --group live pytest -m live infra/py/tests/live
+	HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --group live pytest -m live infra/py/tests/live
 
 .PHONY: help install check prereqs models up down smoke

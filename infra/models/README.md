@@ -39,6 +39,9 @@ Switch with `make up PROFILE=quality` (stop the stack first: one LLM at a time).
   text-only use.
 - The `espeakng-loader` wheel (pulled by misaki) ships without phoneme data and aborts the process
   on first use. `sa_infra.make_fixtures.use_system_espeak()` points it at the Homebrew espeak-ng.
+- misaki (Kokoro English) loads spaCy `en_core_web_sm` and pip-downloads it when missing. It is
+  pinned as a direct-URL wheel in the `live` extra (`infra/py/pyproject.toml`, in `uv.lock`), so
+  `uv sync` installs it and nothing downloads at smoke time.
 - `mcp` 2.x renamed `FastMCP` to `MCPServer`; `mcp_echo.py` accepts both.
 - A running Hermes host gateway (the default profile) multiplexes every profile and refuses a
   second one. The smoke profile sets `gateway.standalone: true`; the host picks that up within

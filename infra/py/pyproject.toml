@@ -19,6 +19,8 @@ live = [
   "sentence-transformers>=5.1",
   "mlx-audio",
   "misaki[en]",
+  # misaki loads this at runtime and otherwise pip-downloads it; pinned so no smoke path hits the network
+  "en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
   "piper-tts>=1.3",
   "pillow", # EmbeddingGemma 2 processors import PIL and torchvision even for text-only use
   "torchvision",
@@ -33,3 +35,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sa_infra"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
