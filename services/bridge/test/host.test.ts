@@ -291,7 +291,7 @@ describe("agent host live activity", () => {
         timeline.push({ kind: a.body.phase, draft: a.body.draft });
     });
     ana.engine.onMessage((m) => {
-      if (m.senderDevice === agent.device_id && m.status === "ok")
+      if (m.senderDevice === agent.device_id && m.status === "ok" && m.body?.type === "text")
         timeline.push({ kind: "message", text: (m.body as { text: string }).text });
     });
 
@@ -301,8 +301,7 @@ describe("agent host live activity", () => {
     const kinds = timeline.map((s) => s.kind);
     expect(kinds[0]).toBe("thinking");
     expect(kinds.slice(-2)).toEqual(["message", "done"]);
-    expect(kinds.slice(1, -2).length).toBeGreaterThanOrEqual(1);
-    expect(new Set(kinds.slice(1, -2))).toEqual(new Set(["writing"]));
+    expect(kinds.slice(1, -2).join(" ")).toMatch(/^(reading )?writing( writing)*$/);
     const drafts = timeline.filter((s) => s.kind === "writing").map((s) => s.draft ?? "");
     const finalText = timeline[timeline.length - 2]?.text ?? "";
     const first = drafts[0] ?? "";

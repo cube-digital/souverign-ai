@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HermesRuntime } from "../src/agents/hermes.js";
 import { type Db, openDb } from "../src/db.js";
@@ -37,10 +36,10 @@ describe("hermes port allocation", () => {
 
 describe("hermes stale gateways", () => {
   it("reapStale stops a gateway left by a dead bridge, with its children, and removes the pid file", async () => {
-    const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-    const pidDir = join(root, ".run", "agents");
-    mkdirSync(pidDir, { recursive: true });
     const tmp = mkdtempSync(join(tmpdir(), "sa-fake-hermes-"));
+    const pidDir = join(tmp, "pids");
+    mkdirSync(pidDir, { recursive: true });
+    process.env.SA_AGENT_PID_DIR = pidDir;
     const childPidFile = join(tmp, "child.pid");
     writeFileSync(join(tmp, "hermes"), `#!/bin/sh\nsleep 60 &\necho $! > ${childPidFile}\nwait\n`, {
       mode: 0o755,
@@ -74,6 +73,7 @@ describe("hermes stale gateways", () => {
         )
         .toBe("dead");
     } finally {
+      delete process.env.SA_AGENT_PID_DIR;
       rmSync(pidFile, { force: true });
       rmSync(tmp, { recursive: true, force: true });
     }
