@@ -22,6 +22,13 @@ export default defineConfig({
       env: { PORT: "8658", RELAY_DB: join(run, "relay.sqlite"), RELAY_ADMIN_TOKEN: "e2e-token" },
     },
     {
+      command: "pnpm --filter @sa/rt-sim start",
+      cwd: root,
+      url: "http://127.0.0.1:8659/sim/healthz",
+      reuseExistingServer: false,
+      env: { PORT: "8659" },
+    },
+    {
       command: "bash e2e/start-bridge.sh",
       cwd: root,
       url: "http://127.0.0.1:8657/api/healthz",
