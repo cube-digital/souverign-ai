@@ -338,7 +338,7 @@ export function registerMcp(
     return row ? [chatRead, ...(BY_TEMPLATE[row.template] ?? [])] : null;
   }
 
-  function serverFor(agentId: string, tools: Tool[]): Server {
+  function serverFor(agentId: string, tools: Tool[], turnId?: string): Server {
     const server = new Server(
       { name: "sa-bridge", version: "0.1.0" },
       { capabilities: { tools: {} } },
@@ -360,6 +360,12 @@ export function registerMcp(
         return {
           isError: true,
           content: [{ type: "text" as const, text: `unknown tool: ${req.params.name}` }],
+        };
+      }
+      if (!toolLog.accepts(agentId, turnId)) {
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "no_active_turn" }) }],
         };
       }
       const args = (req.params.arguments ?? {}) as Args;
@@ -402,7 +408,12 @@ export function registerMcp(
       return reply.code(405).send({ error: "method_not_allowed" });
     }
     // Stateless: a fresh server and transport per request.
-    const server = serverFor(agentId, tools);
+    const turnHeader = req.headers["x-sa-turn"];
+    const server = serverFor(
+      agentId,
+      tools,
+      typeof turnHeader === "string" ? turnHeader : undefined,
+    );
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined } as never);
     reply.hijack();
     reply.raw.on("close", () => {

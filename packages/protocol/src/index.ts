@@ -271,7 +271,7 @@ export const CreateAgentRequest = z.object({
 });
 export const UpdateAgentRequest = z.object({ soul: z.string().max(2000) });
 export const AddAgentRequest = z.object({ agent_id: z.string().min(1) });
-export const EpochClaimRequest = z.object({ min: z.number().int().min(1) });
+export const EpochClaimRequest = z.object({ min: z.number().int().min(1).max(1_000_000) });
 export const EpochClaimResponse = z.object({ epoch: z.number().int().min(1) });
 export const HelloResponse = z.object({ catchup: z.boolean() });
 /** time_zone is set by the server on GET and ignored on PUT */

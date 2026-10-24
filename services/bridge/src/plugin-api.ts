@@ -18,7 +18,8 @@ export type PluginContext = {
   db: Db;
   relayAdmin: RelayAdmin;
   relayInternalUrl: string;
-  adminToken: string;
+  /** A relay ticket for one of the bridge's own devices; the admin token itself is not shared. */
+  ticketFor(deviceId: string): Promise<string>;
   opsSimUrl: string;
   agentHost: AgentHostApi;
   log: Log;
@@ -32,5 +33,5 @@ export type BridgePlugin = {
   hooks?: BridgeHooks;
   /** Runs after listen and after agentHost.start(). */
   start?(ctx: PluginContext): void;
-  stop?(): void;
+  stop?(): void | Promise<void>;
 };

@@ -11,9 +11,14 @@ export function hashPin(pin: string): string {
 export function verifyPin(pin: string, stored: string): boolean {
   const [scheme, saltB64, hashB64] = stored.split("$");
   if (scheme !== "scrypt" || !saltB64 || !hashB64) return false;
-  const expected = Buffer.from(hashB64, "base64");
-  const actual = scryptSync(pin, Buffer.from(saltB64, "base64"), expected.length);
-  return timingSafeEqual(actual, expected);
+  try {
+    const expected = Buffer.from(hashB64, "base64");
+    if (expected.length === 0) return false;
+    const actual = scryptSync(pin, Buffer.from(saltB64, "base64"), expected.length);
+    return timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
 }
 
 export function newToken(): string {

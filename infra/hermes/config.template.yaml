@@ -8,6 +8,7 @@ model:
   api_key: local-no-key
 agent:
   reasoning_effort: low
+  max_turns: 8
   disabled_toolsets: [] # filled from infra/hermes/toolsets.yaml
 gateway:
   standalone: true # own process: do not attach to the host multiplexing gateway

@@ -155,7 +155,7 @@ describe("roster tool allowlists", () => {
 describe("Hermes profile rendering", () => {
   it("runs on the local LLM with built-in tools off and the bridge MCP server attached", () => {
     const cfg = parse(renderHermesConfig({ agentId: "agent-devops-0001", port: 8701 }));
-    expect(cfg.model.base_url).toMatch(/^http:\/\/127\.0\.0\.1:8000/);
+    expect(cfg.model.base_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/llm\/agent-devops-0001\/v1$/);
     expect(cfg.agent.disabled_toolsets).toContain("terminal");
     expect(cfg.gateway.standalone).toBe(true);
     expect(cfg.gateway.api_server.port).toBe(8701);
