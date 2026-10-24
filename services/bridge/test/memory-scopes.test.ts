@@ -52,7 +52,15 @@ describe("recallScopes (D-9)", () => {
     const scopes = recallScopes(
       input({ agent: max, chat: { id: "project", agents: ["max", "nora"] } }),
     );
-    expect(namespaces(scopes)).toEqual(["agent:max", "chat:project"]);
+    expect(scopes).toHaveLength(3);
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        { namespace: "agent:max", origin_chat_ids: ["project"], since_ts: JOINED },
+        { namespace: "agent:max", origin_chat_ids: [null] },
+        { namespace: "chat:project", since_ts: JOINED },
+      ]),
+    );
+    expect(namespaces(scopes).sort()).toEqual(["agent:max", "agent:max", "chat:project"]);
   });
 
   it("(b) the chat scope starts at the agent's joined_at, so earlier messages are not recalled", async () => {
@@ -156,7 +164,7 @@ describe("recallScopes (D-9)", () => {
         shared: [{ id: "project", agentJoinedAt: JOINED + 10 }],
       }),
     );
-    expect(scopes).toHaveLength(6);
+    expect(scopes).toHaveLength(5);
     expect(scopes).toEqual(
       expect.arrayContaining([
         { namespace: "agent:max", origin_chat_ids: [null] },
