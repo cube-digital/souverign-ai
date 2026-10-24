@@ -10,6 +10,7 @@ agent:
   reasoning_effort: low
   disabled_toolsets: [] # filled from infra/hermes/toolsets.yaml
 gateway:
+  standalone: true # own process: do not attach to the host multiplexing gateway
   api_server:
     enabled: true
     host: 127.0.0.1

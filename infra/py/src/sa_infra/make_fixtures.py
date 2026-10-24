@@ -8,6 +8,7 @@ the reference texts live in infra/py/tests/live/fixtures/.
 from __future__ import annotations
 
 import io
+import shutil
 import wave
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,27 @@ from sa_infra import models_config as mc
 
 TEXTS = Path(__file__).resolve().parents[2] / "tests" / "live" / "fixtures"
 WARMUP = {"fr": "Bonjour à tous.", "es": "Hola a todos.", "it": "Ciao a tutti."}
+
+
+def use_system_espeak() -> None:
+    """Point misaki at the Homebrew espeak-ng (make prereqs).
+
+    The espeakng-loader wheel ships without its phoneme data (phontab missing) and the
+    process aborts on first use, so misaki must load the system library and data instead.
+    Call before the first Kokoro load.
+    """
+    import espeakng_loader
+
+    exe = shutil.which("espeak-ng")
+    if exe is None:
+        raise RuntimeError("espeak-ng not found (make prereqs)")
+    prefix = Path(exe).parents[1]
+    lib = prefix / "lib" / "libespeak-ng.dylib"
+    data = prefix / "share" / "espeak-ng-data"
+    if not lib.is_file() or not data.is_dir():
+        raise RuntimeError(f"espeak-ng library/data not found under {prefix}")
+    espeakng_loader.get_library_path = lambda: str(lib)
+    espeakng_loader.get_data_path = lambda: str(data)
 
 
 def to_16k(audio: np.ndarray, sr: int) -> np.ndarray:
@@ -49,6 +71,7 @@ def piper(text: str, lang: str, cfg: dict[str, Any]) -> tuple[np.ndarray, int]:
 def main() -> int:
     from mlx_audio.tts.utils import load_model
 
+    use_system_espeak()
     cfg = mc.load()
     out = mc.models_dir(cfg) / "fixtures"
     out.mkdir(parents=True, exist_ok=True)
