@@ -265,7 +265,7 @@ describe("agent host live activity", () => {
       ana.pub,
       { device_id: agent.device_id, public_key: agentRow?.public_key ?? "" },
     ]);
-    type Step = { kind: string; draft?: string; text?: string };
+    type Step = { kind: string; draft?: string | undefined; text?: string };
     const timeline: Step[] = [];
     ana.engine.onActivity((a) => {
       if (a.senderDevice === agent.device_id)
