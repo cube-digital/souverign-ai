@@ -100,8 +100,12 @@ export class ChatEngine {
     return epoch;
   }
 
-  sendText(chatId: string, text: string): Promise<void> {
-    return this.sendBody(chatId, { type: "text", text });
+  sendText(
+    chatId: string,
+    text: string,
+    meta?: Extract<MessageBody, { type: "text" }>["meta"],
+  ): Promise<void> {
+    return this.sendBody(chatId, meta ? { type: "text", text, meta } : { type: "text", text });
   }
 
   sendSystem(chatId: string, text: string): Promise<void> {
