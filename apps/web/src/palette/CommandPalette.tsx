@@ -53,7 +53,7 @@ function Palette({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [agentList, setAgentList] = useState<{ id: string; name: string }[]>([]);
-  const listRef = useRef<HTMLUListElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let live = true;
