@@ -1,4 +1,6 @@
 import type {
+  Agent,
+  AgentTemplate,
   ApiError,
   Chat,
   DevicePublic,
@@ -7,12 +9,19 @@ import type {
   UserSummary,
 } from "@sa/protocol";
 
-export const SESSION_KEY = "sa.session";
+/** Presenter view loads each user in an iframe with ?slot=N, so sessions must not collide. */
+export function sessionKey(): string {
+  const slot = new URLSearchParams(location.search).get("slot");
+  return slot && /^\d+$/.test(slot) ? `sa.session.${slot}` : "sa.session";
+}
+
+/** Latest relay ticket of any pane; the presenter view's relay strip reads it. */
+export const SHARED_TICKET_KEY = "sa.relay-ticket";
 
 export type Session = LoginResponse;
 
 export function getSession(): Session | null {
-  const raw = sessionStorage.getItem(SESSION_KEY);
+  const raw = sessionStorage.getItem(sessionKey());
   if (!raw) return null;
   try {
     return JSON.parse(raw) as Session;
@@ -22,8 +31,8 @@ export function getSession(): Session | null {
 }
 
 export function setSession(s: Session | null): void {
-  if (s) sessionStorage.setItem(SESSION_KEY, JSON.stringify(s));
-  else sessionStorage.removeItem(SESSION_KEY);
+  if (s) sessionStorage.setItem(sessionKey(), JSON.stringify(s));
+  else sessionStorage.removeItem(sessionKey());
 }
 
 export class ApiFailure extends Error {
@@ -51,6 +60,10 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     body = null;
   }
   if (!res.ok) {
+    if (res.status === 401 && path !== "/login") {
+      setSession(null);
+      location.reload();
+    }
     const err =
       body && typeof body === "object" && "error" in body
         ? (body as ApiError)
@@ -80,3 +93,17 @@ export const removeMember = (chatId: string, userId: string) =>
     json("DELETE"),
   );
 export const registerDevice = (reg: DevicePublic) => api<unknown>("/devices", json("POST", reg));
+export const relayTicket = (device_id: string) =>
+  api<{ ticket: string; expires_at: number }>("/relay-ticket", json("POST", { device_id }));
+export const agents = () => api<Agent[]>("/agents");
+export const createAgent = (name: string, template: AgentTemplate, soul: string) =>
+  api<Agent>("/agents", json("POST", { name, template, soul }));
+export const updateAgent = (id: string, soul: string) =>
+  api<Agent>(`/agents/${encodeURIComponent(id)}`, json("PATCH", { soul }));
+export const addAgentToChat = (chatId: string, agent_id: string) =>
+  api<Chat>(`/chats/${encodeURIComponent(chatId)}/agents`, json("POST", { agent_id }));
+export const removeAgentFromChat = (chatId: string, agentId: string) =>
+  api<Chat>(
+    `/chats/${encodeURIComponent(chatId)}/agents/${encodeURIComponent(agentId)}`,
+    json("DELETE"),
+  );
