@@ -1,0 +1,25 @@
+{
+  "name": "@sa/relay",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@sa/crypto": "workspace:^",
+    "@sa/protocol": "workspace:^",
+    "better-sqlite3": "^13.0.3",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15"
+  }
+}

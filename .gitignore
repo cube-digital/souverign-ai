@@ -9,3 +9,8 @@ __pycache__/
 .env
 *.log
 .DS_Store
+playwright-report/
+test-results/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
