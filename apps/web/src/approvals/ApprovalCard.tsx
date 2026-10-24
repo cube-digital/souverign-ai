@@ -164,25 +164,27 @@ export function ApprovalCard({
               {`Always approve ${a.tool} for ${a.agent_name}`}
             </label>
           )}
-          <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={!canAct || !isApprover} onClick={approve}>
-              {PRIMARY[a.tool] ?? "Approve"}
-            </Button>
-            {isApprover && a.preview.fields.some((f) => f.editable) && !editing && (
-              <Button disabled={!canAct} onClick={() => setEditing(true)}>
-                Edit first
+          {isApprover && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="primary" disabled={!canAct} onClick={approve}>
+                {PRIMARY[a.tool] ?? "Approve"}
               </Button>
-            )}
-            {isApprover && isRequester ? (
-              <Button disabled={!canAct} onClick={cancelNow}>
-                Cancel
-              </Button>
-            ) : (
-              <Button disabled={!canAct || !isApprover} onClick={deny}>
-                Deny
-              </Button>
-            )}
-          </div>
+              {a.preview.fields.some((f) => f.editable) && !editing && (
+                <Button disabled={!canAct} onClick={() => setEditing(true)}>
+                  Edit first
+                </Button>
+              )}
+              {isRequester ? (
+                <Button disabled={!canAct} onClick={cancelNow}>
+                  Cancel
+                </Button>
+              ) : (
+                <Button disabled={!canAct} onClick={deny}>
+                  Deny
+                </Button>
+              )}
+            </div>
+          )}
         </>
       ) : (
         <div className="text-[12px] text-text-1">{stamp}</div>

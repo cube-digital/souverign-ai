@@ -28,6 +28,8 @@ type Store = {
   putApproval(a: Approval): void;
   putPublic(p: ApprovalPublic): void;
   putQuestion(q: Question): void;
+  /** Loads every approval of mine once (history after a reload). */
+  loadAll(): void;
 };
 
 const Ctx = createContext<Store | null>(null);
@@ -56,6 +58,28 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
   );
   const putQuestion = useCallback((q: Question) => setQuestions((m) => withEntry(m, q.id, q)), []);
 
+  const questionsRef = useRef(questions);
+  questionsRef.current = questions;
+  const approvalsRef = useRef(approvals);
+  approvalsRef.current = approvals;
+  const allLoaded = useRef(false);
+
+  const loadAll = useCallback(() => {
+    if (allLoaded.current) return;
+    allLoaded.current = true;
+    fetchApprovals({ status: "all" })
+      .then((list) =>
+        setApprovals((m) => {
+          const next = new Map(m);
+          for (const a of list) next.set(a.id, a);
+          return next;
+        }),
+      )
+      .catch(() => {
+        allLoaded.current = false;
+      });
+  }, []);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: a different user needs a new stream
   useEffect(() => {
     const ctl = new AbortController();
@@ -71,13 +95,40 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
           fetchApprovals({ status: "pending" })
             .then((list) => {
               if (ctl.signal.aborted) return;
+              const fresh = new Set(list.map((a) => a.id));
+              // Entries I still hold as pending but the server no longer lists were decided or
+              // expired while the stream was down: take their status from the public shadow.
+              const stale = [...approvalsRef.current.values()].filter(
+                (a) => a.status === "pending" && !fresh.has(a.id),
+              );
               setApprovals((m) => {
                 const next = new Map(m);
                 for (const a of list) next.set(a.id, a);
                 return next;
               });
+              for (const old of stale) {
+                approvalPublic(old.id)
+                  .then((p) => {
+                    if (ctl.signal.aborted || !p) return;
+                    putPublic(p);
+                    setApprovals((m) => {
+                      const cur = m.get(old.id);
+                      return cur && cur.status === "pending"
+                        ? withEntry(m, old.id, { ...cur, status: p.status })
+                        : m;
+                    });
+                  })
+                  .catch(() => {});
+              }
             })
             .catch(() => {});
+          for (const id of questionsRef.current.keys()) {
+            getQuestion(id)
+              .then((q) => {
+                if (!ctl.signal.aborted && q) putQuestion(q);
+              })
+              .catch(() => {});
+          }
         },
       },
     );
@@ -85,8 +136,8 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
   }, [putApproval, putPublic, putQuestion, me]);
 
   const value = useMemo<Store>(
-    () => ({ me, approvals, publics, questions, putApproval, putPublic, putQuestion }),
-    [me, approvals, publics, questions, putApproval, putPublic, putQuestion],
+    () => ({ me, approvals, publics, questions, putApproval, putPublic, putQuestion, loadAll }),
+    [me, approvals, publics, questions, putApproval, putPublic, putQuestion, loadAll],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -191,3 +242,6 @@ export function useQuestion(id: string): {
   }, [id, known, putQuestion]);
   return { question: questions.get(id), put: putQuestion };
 }
+
+/** Loads the approver's decided approvals once, so a reload shows stamped cards. */
+export const useLoadAllApprovals = (): (() => void) => useStore().loadAll;

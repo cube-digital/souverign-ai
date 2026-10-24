@@ -3,6 +3,8 @@ import { EVENTS_PATH, getSession } from "../api";
 
 /** Reconnect delays in ms: 1, 2, 5 s, then every 10 s. */
 const BACKOFF = [1000, 2000, 5000, 10_000];
+/** The server pings about every 15 s; no bytes for 3 pings means a dead connection. */
+export const IDLE_MS = 45_000;
 
 /** Parses one SSE block (lines between blank lines); comments and invalid events give null. */
 function parseBlock(block: string): ServerEvent | null {
@@ -30,7 +32,9 @@ export function openEvents(
 ): void {
   const { signal } = opts;
   let attempt = 0;
+  let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let idle: ReturnType<typeof setTimeout> | undefined;
 
   const retry = () => {
     if (signal.aborted) return;
@@ -45,33 +49,51 @@ export function openEvents(
       const session = getSession();
       if (session) headers.set("Authorization", `Bearer ${session.token}`);
       headers.set("Accept", "text/event-stream");
-      const res = await fetch(EVENTS_PATH, { headers, signal });
-      if (res.status === 401) return;
-      if (!res.ok || !res.body) {
-        retry();
-        return;
-      }
-      attempt = 0;
-      opts.onOpen?.();
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-        let cut = buf.indexOf("\n\n");
-        while (cut >= 0) {
-          const ev = parseBlock(buf.slice(0, cut));
-          buf = buf.slice(cut + 2);
-          if (ev) onEvent(ev);
-          cut = buf.indexOf("\n\n");
-        }
+      const conn = new AbortController();
+      const onAbort = () => conn.abort();
+      signal.addEventListener("abort", onAbort, { once: true });
+      const arm = () => {
+        clearTimeout(idle);
+        idle = setTimeout(() => conn.abort(), IDLE_MS);
+      };
+      try {
+        await stream(headers, conn.signal, arm);
+      } finally {
+        clearTimeout(idle);
+        signal.removeEventListener("abort", onAbort);
       }
     } catch {
-      if (signal.aborted) return;
+      // dropped or idle: reconnect below
     }
-    retry();
+    if (!stopped) retry();
+  }
+
+  async function stream(headers: Headers, sig: AbortSignal, arm: () => void): Promise<void> {
+    arm();
+    const res = await fetch(EVENTS_PATH, { headers, signal: sig });
+    if (res.status === 401) {
+      stopped = true;
+      return;
+    }
+    if (!res.ok || !res.body) return;
+    attempt = 0;
+    opts.onOpen?.();
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      arm();
+      buf += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      let cut = buf.indexOf("\n\n");
+      while (cut >= 0) {
+        const ev = parseBlock(buf.slice(0, cut));
+        buf = buf.slice(cut + 2);
+        if (ev) onEvent(ev);
+        cut = buf.indexOf("\n\n");
+      }
+    }
   }
 
   signal.addEventListener("abort", () => clearTimeout(timer), { once: true });

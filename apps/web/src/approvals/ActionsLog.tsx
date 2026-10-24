@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { approvalGrants, approvals as fetchApprovals, revokeGrant } from "../api";
 import { Button, Chip, EmptyState } from "../ds";
 import { timeOf } from "../lib/format";
+import { useSession } from "../state/session";
 
 const TONE = {
   executed: "ok",
@@ -19,6 +20,13 @@ export function ActionsLog({ agentId }: { agentId: string }) {
   const [rows, setRows] = useState<Approval[] | null>(null);
   const [grants, setGrants] = useState<ApprovalGrant[]>([]);
   const [error, setError] = useState(false);
+  const { user } = useSession();
+  const decider = (r: Approval): string =>
+    r.decided_by === user.id
+      ? user.display_name
+      : r.decided_by === r.approver_user_id
+        ? r.approver_name
+        : "a teammate";
 
   useEffect(() => {
     let live = true;
@@ -78,7 +86,7 @@ export function ActionsLog({ agentId }: { agentId: string }) {
             {r.auto ? (
               <span className="text-text-2">auto-approved</span>
             ) : (
-              r.decided_by && <span className="text-text-2">{r.decided_by}</span>
+              r.decided_by && <span className="text-text-2">{decider(r)}</span>
             )}
             {r.result && <span className="text-text-1">{r.result}</span>}
           </div>

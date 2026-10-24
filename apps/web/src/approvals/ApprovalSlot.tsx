@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Chip } from "../ds";
 import { useSession } from "../state/session";
 import { ApprovalCard } from "./ApprovalCard";
-import { useApproval, useApprovalPublic, useCancel } from "./store";
+import { useApproval, useApprovalPublic, useCancel, useLoadAllApprovals } from "./store";
 
 /** Approval cards in a thread: the approver sees the card, everyone else a status chip. */
 export function ApprovalSlot({ ids }: { ids: string[] }) {
@@ -21,6 +21,13 @@ function SlotItem({ id }: { id: string }) {
   const pub = useApprovalPublic(id);
   const cancel = useCancel();
   const [failed, setFailed] = useState(false);
+  const loadAll = useLoadAllApprovals();
+  // After a reload a decided approval is no longer pushed: the approver loads the full record.
+  const maybeMine =
+    !full && pub && pub.status !== "pending" && pub.approver_name === user.display_name;
+  useEffect(() => {
+    if (maybeMine) loadAll();
+  }, [maybeMine, loadAll]);
 
   if (full && full.approver_user_id === user.id) return <ApprovalCard approval={full} />;
   const view = pub ?? (full && { ...full });
