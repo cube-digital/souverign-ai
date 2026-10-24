@@ -23,6 +23,26 @@ export type RosterEntry = {
 
 export const AUTONOMY = "reads and drafts · no writes";
 
+/** Memory tools every template gets (registered by the memory-tools plugin). */
+export const MEMORY_TOOLS = ["memory_recall", "memory_remember", "memory_forget"] as const;
+/** Free interaction tools every template gets (registered by the approvals plugin). */
+export const INTERACTION_TOOLS = ["ask_user"] as const;
+/** Extra wording for tools whose tier depends on the target. */
+export const TOOL_TIER_NOTES: Record<string, string> = {
+  memory_forget: "needs approval if someone else taught it",
+};
+/** Gated write tools per template (registered by the gated-tools plugin); each needs approval. */
+export const GATED_TOOLS: Record<string, readonly string[]> = {
+  general: ["chat_send", "notes_create"],
+  devops: [],
+  qa: [],
+  ops: [],
+  dev: ["ticket_comment"],
+  tech: ["notes_create"],
+  sales: ["email_send"],
+  scribe: ["chat_send", "notes_create"],
+};
+
 export const ROSTER: readonly RosterEntry[] = [
   {
     id: "ops",
