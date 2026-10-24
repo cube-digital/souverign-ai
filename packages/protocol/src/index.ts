@@ -17,7 +17,7 @@ export const Envelope = z
     /** only for kind "key": the device the sealed chat key is for */
     to_device: Id.optional(),
     epoch: z.number().int().min(1),
-    kind: z.enum(["msg", "key"]),
+    kind: z.enum(["msg", "key", "status"]),
     nonce: B64,
     ciphertext: B64.max(MAX_CIPHERTEXT_CHARS),
     ts: z.number().int().nonnegative(),
@@ -33,6 +33,7 @@ export const ClientOp = z.discriminatedUnion("op", [
   z.object({ op: z.literal("sync"), chat_id: Id, since: z.number().int().nonnegative() }),
   z.object({ op: z.literal("blob_put"), id: Id, chat_id: Id, data: B64 }),
   z.object({ op: z.literal("blob_get"), id: Id }),
+  z.object({ op: z.literal("signal"), env: Envelope }),
 ]);
 export type ClientOp = z.infer<typeof ClientOp>;
 
@@ -60,6 +61,7 @@ export const RelayOp = z.discriminatedUnion("op", [
     seq: z.number().int().nonnegative(),
     more: z.boolean(),
   }),
+  z.object({ op: z.literal("signal"), env: Envelope }),
   z.object({ op: z.literal("blob_ok"), id: Id }),
   z.object({ op: z.literal("blob"), id: Id, data: B64 }),
   z.object({
@@ -91,6 +93,14 @@ export const RelayRecentRow = z.object({
   ciphertext_prefix: z.string(),
 });
 export type RelayRecentRow = z.infer<typeof RelayRecentRow>;
+
+export const ActivityBody = z.object({
+  type: z.literal("activity"),
+  phase: z.enum(["thinking", "tool", "writing", "done", "error"]),
+  tool: z.string().max(64).optional(),
+  draft: z.string().max(8000).optional(),
+});
+export type ActivityBody = z.infer<typeof ActivityBody>;
 
 /** One step of an agent's reasoning trace, carried inside the encrypted message. */
 export const TraceStep = z.discriminatedUnion("kind", [
