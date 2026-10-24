@@ -1,4 +1,5 @@
-import { type RelayMemberChange, verifyTicket } from "@sa/protocol";
+import type { RelayMemberChange } from "@sa/protocol";
+import { verifyTicket } from "@sa/protocol/ticket";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../src/app.js";
 import { hashPin } from "../src/auth.js";
