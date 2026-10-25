@@ -161,6 +161,18 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+/** My approvals of one tool in one chat, oldest first (requests no message carries a card for). */
+export function useChatApprovals(chatId: string, tool: string): Approval[] {
+  const { approvals, me } = useStore();
+  return useMemo(
+    () =>
+      [...approvals.values()]
+        .filter((a) => a.chat_id === chatId && a.tool === tool && a.approver_user_id === me)
+        .sort((a, b) => a.created_at - b.created_at),
+    [approvals, me, chatId, tool],
+  );
+}
+
 /** The signed-in user's id. */
 export const useMe = (): string => useStore().me;
 

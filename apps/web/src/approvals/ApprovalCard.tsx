@@ -174,7 +174,8 @@ export function ApprovalCard({
                   Edit first
                 </Button>
               )}
-              {isRequester ? (
+              {/* the inviter is also the requester of her call notes, but declining them is a Deny */}
+              {isRequester && a.tool !== "call_notes_publish" ? (
                 <Button disabled={!canAct} onClick={cancelNow}>
                   Cancel
                 </Button>
