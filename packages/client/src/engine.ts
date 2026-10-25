@@ -166,19 +166,24 @@ export class ChatEngine {
     return this.sendBody(chatId, body, opts?.ts);
   }
 
-  sendReaction(chatId: string, target: string, emoji: string, op: "add" | "remove"): Promise<void> {
-    return this.sendBody(chatId, { type: "reaction", target, emoji, op }).then(() => undefined);
+  sendReaction(
+    chatId: string,
+    target: string,
+    emoji: string,
+    op: "add" | "remove",
+  ): Promise<string> {
+    return this.sendBody(chatId, { type: "reaction", target, emoji, op });
   }
 
-  sendSystem(chatId: string, text: string): Promise<void> {
-    return this.sendBody(chatId, { type: "system", text }).then(() => undefined);
+  sendSystem(chatId: string, text: string): Promise<string> {
+    return this.sendBody(chatId, { type: "system", text });
   }
 
   async sendFile(
     chatId: string,
     file: { name: string; mime: string; bytes: Uint8Array },
-    opts?: { replyTo?: string },
-  ): Promise<void> {
+    opts?: { replyTo?: string; voice?: { duration_ms: number } },
+  ): Promise<string> {
     await this.keyFor(chatId); // fail early with no_key
     const enc = encryptBytes(file.bytes);
     const blobId = randomId();
@@ -193,7 +198,13 @@ export class ChatEngine {
       nonce: enc.nonce,
     };
     if (opts?.replyTo) body.reply_to = opts.replyTo;
-    await this.sendBody(chatId, body);
+    if (opts?.voice) body.voice = opts.voice;
+    return this.sendBody(chatId, body);
+  }
+
+  /** Sends any message body; resolves the message id. */
+  sendMessage(chatId: string, body: MessageBody): Promise<string> {
+    return this.sendBody(chatId, body);
   }
 
   async downloadFile(body: FileBody): Promise<Uint8Array> {

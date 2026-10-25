@@ -1,4 +1,5 @@
-import type { TextMeta } from "@sa/protocol";
+import type { MessageBody, TextMeta } from "@sa/protocol";
+import type { ChatMessage } from "./runtime.js";
 
 export type ProactiveKind = "alert" | "catchup" | "routine" | "welcome" | "retry" | "answer";
 export type ProactiveRequest = {
@@ -27,6 +28,10 @@ export interface AgentHostApi {
     opts?: { replyTo?: string | null; meta?: TextMeta },
   ): Promise<string | null>;
   stopTurn?(turnId: string, userId: string): StopResult;
+  /** Sends one message from the agent's device in chatId; resolves the message id. */
+  sendAs?(agentId: string, chatId: string, body: MessageBody): Promise<string>;
+  /** One tool-less background completion for this agent on the shared LLM queue (proactive class). */
+  complete?(agentId: string, sessionKey: string, messages: ChatMessage[]): Promise<string>;
 }
 export type BridgeHooks = {
   onDeviceRegistered?(userId: string, deviceId: string): Promise<void>;
