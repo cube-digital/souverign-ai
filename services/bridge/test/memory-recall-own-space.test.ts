@@ -5,7 +5,7 @@ import { clearRegisteredTools, invokeTool, setToolDeps } from "../src/mcp/regist
 import { ToolLog } from "../src/mcp/tool-log.js";
 import { setMemoryForTests } from "../src/memory/client.js";
 import { registerMemoryTools } from "../src/memory/tools.js";
-import { recallsFor } from "../src/memory/turn-recalls.js";
+import { clearRecalls, recallsFor } from "../src/memory/turn-recalls.js";
 import { migrate } from "../src/migrate.js";
 import { FakeMemory } from "./fakes/memory-fake.js";
 
@@ -60,6 +60,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  clearRecalls("t1");
+  clearRecalls("t2");
   clearTurnHooks();
   clearRegisteredTools();
   setMemoryForTests(undefined);
