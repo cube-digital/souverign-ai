@@ -134,17 +134,19 @@ export const callNotesExecutor: Executor = {
     if (!send) throw new ExecError("I can't post right now.");
     const info = await notesInfo(ctx.db, String(args.notes_id));
     if (!info) throw new ExecError("These notes no longer exist.");
+    const actionItems = parseActionItems(text);
     const body: MessageBody = {
       type: "text",
       text,
       ...(info.anchor ? { reply_to: info.anchor } : {}),
-      meta: { meeting: { call_id: callId, action_items: parseActionItems(text) } },
+      meta: { meeting: { call_id: callId, action_items: actionItems } },
     };
-    // Claim first: two approvals for the same notes can never both post.
+    // Claim first: two approvals for the same notes can never both post. The claim stores the
+    // approved text, so the chat (meeting_transcript) only ever sees what the inviter approved.
     const [claimed] = await ctx.db.query(
-      `update sa.call_notes set status = 'published'
+      `update sa.call_notes set status = 'published', body_md = $2, action_items = $3::text::jsonb
         where id = $1 and status = 'pending_approval' returning id`,
-      [String(args.notes_id)],
+      [String(args.notes_id), text, JSON.stringify(actionItems)],
     );
     if (!claimed) throw new ExecError("These notes were already posted.");
     let messageId: string;
