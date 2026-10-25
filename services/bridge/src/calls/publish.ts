@@ -5,6 +5,7 @@ import {
   type ApproverRule,
   ArgsError,
   approvalDeps,
+  cancel,
   ExecError,
   type Executor,
   requestApproval,
@@ -288,11 +289,20 @@ async function requestFor(notesId: string, text: string): Promise<string | null>
     d.log("call notes approval refused", { notes: notesId, error: r.error });
     return null;
   }
-  await d.db.query(
+  // The notes may have left pending_approval meanwhile (a sweep, a deny): the new approval
+  // then has nothing to publish and is canceled rather than left to fail on approve.
+  const [attached] = await d.db.query(
     `update sa.call_notes set approval_id = $2, approval_requested_at = now(), reminded_at = null
-      where id = $1`,
+      where id = $1 and status = 'pending_approval' returning id`,
     [notesId, r.approval.id],
   );
+  if (!attached) {
+    d.log("call notes approval dropped", { notes: notesId });
+    await cancel(r.approval.id, info.invited_by).catch((e) =>
+      d.log("call notes approval cancel failed", { notes: notesId, error: (e as Error).name }),
+    );
+    return null;
+  }
   return r.approval.id;
 }
 
@@ -334,9 +344,11 @@ export async function republish(notesId: string, userId: string): Promise<Republ
   if (info.status !== "not_published" || tooOld) {
     return { ok: false, status: 409, code: "not_republishable" };
   }
-  // The guarded update lets exactly one click through.
+  // The guarded update lets exactly one click through. The old (denied or expired) approval is
+  // detached at once, so the sweep cannot mark the notes not published again meanwhile.
   const [claimed] = await d.db.query<{ body_md: string }>(
-    `update sa.call_notes set status = 'pending_approval', approval_requested_at = now(), reminded_at = null
+    `update sa.call_notes set status = 'pending_approval', approval_id = null,
+            approval_requested_at = now(), reminded_at = null
       where id = $1 and status = 'not_published' returning body_md`,
     [notesId],
   );
