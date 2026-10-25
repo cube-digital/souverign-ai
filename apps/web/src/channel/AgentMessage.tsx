@@ -3,6 +3,8 @@ import type { ChatMember, MessageBody } from "@sa/protocol";
 import { memo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { ApprovalSlot } from "../approvals/ApprovalSlot";
+import { QuestionCard } from "../approvals/QuestionCard";
 import { AgentAvatar, Chip, ChipButton, Icons, StatusDot } from "../ds";
 import { cn } from "../lib/cn";
 import type { Reaction } from "../state/threads";
@@ -139,7 +141,7 @@ export function AgentMessage({
         <span className="text-text-2">{time}</span>
       </div>
       <div className="mt-1 break-words text-text-0 [&_a]:underline [&_code]:font-mono [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:overflow-auto [&_ul]:list-disc [&_ul]:pl-5">
-        {meta?.held ? (
+        {meta?.question ? null : meta?.held ? (
           <div className="text-text-2">
             <span className="mb-0.5 flex items-center gap-1 text-[12px]">
               <Icons.Lock aria-hidden="true" width={12} height={12} />
@@ -151,6 +153,15 @@ export function AgentMessage({
           <AnswerMarkdown text={shown} />
         )}
       </div>
+      {meta?.question && (
+        <QuestionCard
+          questionId={meta.question.id}
+          text={body.text}
+          options={meta.question.options}
+        />
+      )}
+      {meta?.held && <ApprovalSlot ids={[meta.held]} />}
+      {meta?.approvals && meta.approvals.length > 0 && <ApprovalSlot ids={meta.approvals} />}
       {meta?.approval && (
         <p className="mt-1 flex items-center gap-1 text-[12px] text-text-2">
           <span aria-hidden="true">{STAMP[meta.approval.status] ?? "•"}</span>
