@@ -41,7 +41,7 @@ export class Speaker {
       const wav = concatWav(this.parts);
       return { wav, durationMs: wavDurationMs(wav), firstAudioAt: this.firstAudioAt };
     } catch (e) {
-      console.warn("voice: concat failed", (e as Error).message);
+      console.warn("voice: concat failed", (e as Error).name);
       return { wav: null, durationMs: 0, firstAudioAt: this.firstAudioAt };
     }
   }
@@ -63,7 +63,7 @@ export class Speaker {
         this.parts.push(wav);
         this.onChunk({ seq: this.seq++, text, wav });
       } catch (e) {
-        console.warn(`voice: tts failed (${text.length} chars)`, (e as Error).message);
+        console.warn(`voice: tts failed (${text.length} chars)`, (e as Error).name);
       }
     });
   }

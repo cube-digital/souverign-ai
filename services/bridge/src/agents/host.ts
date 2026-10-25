@@ -58,6 +58,14 @@ const DOWN = "I can't answer right now (the local model is not available).";
 const LIMIT =
   "I stopped after 3 minutes without finishing. I can only read through my tools and cannot create files or run commands. Try a narrower question.";
 /** Older envelopes are seeded history or replays and never trigger a turn. */
+/**
+ * What a voice failure logs: our own codes (voice_timeout, voice_too_large) or the error's name,
+ * never its message, which can echo an audio-api or engine response body.
+ */
+const voiceCode = (e: unknown): string => {
+  const msg = (e as Error)?.message ?? "";
+  return /^voice_[a-z_]{1,40}$/.test(msg) ? msg : String((e as Error)?.name ?? "Error");
+};
 const TRIGGER_MAX_AGE_MS = 5 * 60_000;
 /** How long the same person may follow up in a thread without a tag. */
 const FOLLOWUP_MS = 10 * 60_000;
@@ -586,7 +594,7 @@ export class AgentHost implements AgentHostApi {
             { replyTo: thread ?? m.id },
           );
       } catch (e2) {
-        log("voice reply failed", { agent: dev.agent.id, error: (e2 as Error).message });
+        log("voice reply failed", { agent: dev.agent.id, error: (e2 as Error).name });
       }
     };
 
@@ -601,7 +609,7 @@ export class AgentHost implements AgentHostApi {
       if (bytes.length > MAX_VOICE_BYTES) throw new Error("voice_too_large");
       transcript = await audio.transcribe(bytes, body.name, "auto");
     } catch (e) {
-      await fail((e as Error).message.slice(0, 80));
+      await fail(voiceCode(e));
       return;
     }
     const sttMs = Date.now() - receivedAt;
@@ -669,7 +677,7 @@ export class AgentHost implements AgentHostApi {
         pick.replyTo ? { replyTo: pick.replyTo } : undefined,
       );
     } catch (e) {
-      log("voice transcript send failed", { agent: pick.agentId, error: (e as Error).message });
+      log("voice transcript send failed", { agent: pick.agentId, error: (e as Error).name });
     }
     await this.noteReask(turn);
     void this.runTurn(answering, turn).catch(() => {});
@@ -1200,7 +1208,7 @@ export class AgentHost implements AgentHostApi {
             },
           );
         } catch (e) {
-          log("agent voice send failed", { agent: agent.id, error: (e as Error).message });
+          log("agent voice send failed", { agent: agent.id, error: (e as Error).name });
         }
       }
       latency = { stt_ms: voice.sttMs, total_ms: 0 };
