@@ -32,10 +32,6 @@ export async function loadScopeInput(
       where m.chat_id = $1 and m.removed_at is null`,
     [chatId],
   );
-  const [hist] = await db.query<{ h: boolean }>(
-    "select history_until_seq is not null as h from sa.chats where id = $1",
-    [chatId],
-  );
   const humans = members.filter((m) => m.member_type === "user").map((m) => m.member_id);
   const agents = members.filter((m) => m.member_type === "agent").map((m) => m.member_id);
   const self = members.find((m) => m.member_type === "agent" && m.member_id === agentId);
@@ -51,7 +47,6 @@ export async function loadScopeInput(
     kind: chat.kind,
     agentJoinedAt: self ? Number(self.joined_ms) : null,
     requesterJoinedAt: null as number | null,
-    historyShared: hist?.h === true,
     humans,
     agents,
   };
@@ -61,18 +56,20 @@ export async function loadScopeInput(
   const requester = human ?? opts.requesterUserId;
   const reqMember = members.find((m) => m.member_type === "user" && m.member_id === requester);
   if (reqMember) scopeChat.requesterJoinedAt = Number(reqMember.joined_ms);
+  else {
+    // Fail closed: no (active) requester, so bound by the latest active human join.
+    const joins = members.filter((m) => m.member_type === "user").map((m) => Number(m.joined_ms));
+    if (joins.length > 0) scopeChat.requesterJoinedAt = Math.max(...joins);
+  }
   if (human) {
     const rows = await db.query<{
       id: string;
       joined_ms: string;
       human_ms: string;
-      hist: boolean;
     }>(
       `select a.chat_id as id, (extract(epoch from a.joined_at) * 1000)::float8::text as joined_ms,
-              (extract(epoch from h.joined_at) * 1000)::float8::text as human_ms,
-              c.history_until_seq is not null as hist
+              (extract(epoch from h.joined_at) * 1000)::float8::text as human_ms
          from sa.chat_members a
-         join sa.chats c on c.id = a.chat_id
          join sa.chat_members h on h.chat_id = a.chat_id
         where a.member_type = 'agent' and a.member_id = $1 and a.removed_at is null
           and h.member_type = 'user' and h.member_id = $2 and h.removed_at is null`,
@@ -82,7 +79,6 @@ export async function loadScopeInput(
       id: r.id,
       agentJoinedAt: Number(r.joined_ms),
       requesterJoinedAt: Number(r.human_ms),
-      historyShared: r.hist,
     }));
   }
 

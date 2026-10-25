@@ -46,7 +46,12 @@ export class MemoryClient implements Memory {
     private base: string,
     private token: string,
     private timeoutMs = 120_000,
-  ) {}
+  ) {
+    const u = new URL(base);
+    const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
+    if (u.protocol !== "https:" && !(u.protocol === "http:" && loopback))
+      throw new Error("MEMORY_URL must be https or loopback http");
+  }
 
   private async call<T>(method: string, path: string, body: unknown): Promise<T> {
     const res = await fetch(`${this.base.replace(/\/$/, "")}${path}`, {

@@ -13,8 +13,6 @@ export type ScopeChat = {
   agentJoinedAt: number | null;
   /** epoch ms of the requester's (the 1:1 human's) join to this chat; absent = no extra bound */
   requesterJoinedAt?: number | null | undefined;
-  /** the chat carries shared history (D-12): its early messages are visible to every member */
-  historyShared?: boolean | undefined;
   /** active human member ids */
   humans: string[];
   /** active agent member ids */
@@ -25,21 +23,19 @@ export type SharedChat = {
   id: string;
   agentJoinedAt: number;
   requesterJoinedAt?: number | null | undefined;
-  historyShared?: boolean | undefined;
 };
 
 /**
  * Earliest message time the agent may recall from a chat for this requester: the later of the
- * agent's join and the requester's join (mirrors chat_digest), except in D-12 shared history.
- * Rounded up so it never lands before the real join.
+ * agent's join and the requester's join (mirrors chat_digest). No seed-room exemption: seeded
+ * history stays readable through chat_read/chat_digest only. Rounded up so it never lands before the real join.
  */
 export function chatSince(c: {
   agentJoinedAt: number;
   requesterJoinedAt?: number | null | undefined;
-  historyShared?: boolean | undefined;
 }): number {
   const agent = Math.ceil(c.agentJoinedAt);
-  if (c.historyShared || c.requesterJoinedAt == null) return agent;
+  if (c.requesterJoinedAt == null) return agent;
   return Math.max(agent, Math.ceil(c.requesterJoinedAt));
 }
 export type ScopeInput = {
@@ -76,16 +72,13 @@ export function recallScopes(inp: ScopeInput): MemoryScope[] {
         id: chat.id,
         agentJoinedAt: chat.agentJoinedAt,
         requesterJoinedAt: chat.requesterJoinedAt,
-        historyShared: chat.historyShared,
       },
       ...inp.shared.filter((s) => s.id !== chat.id),
     ];
     const chatScopes = chats.map((c) => ({ namespace: `chat:${c.id}`, since_ts: chatSince(c) }));
-    if (agent.scope === "personal")
-      return [{ namespace: own, origin_chat_ids: null }, ...chatScopes];
-    // Workspace 1:1 (D-13): taught notes (null origin) are always readable here. A 1:1 is not a
-    // shared chat, so the `never`/`ask` rules of D-9 (which gate taught text in shared chats) do
-    // not apply; notes learned in this DM and in chats the person shares follow those chats' bounds.
+    // 1:1 (D-13, personal and workspace): taught notes (null origin) are always readable here. A
+    // 1:1 is not a shared chat, so the `never`/`ask` rules of D-9 do not apply; notes learned in
+    // this DM and in chats the person shares follow those chats' bounds. Never unbounded.
     return [
       { namespace: own, origin_chat_ids: [null] },
       ...chats.map((c) => ({ namespace: own, origin_chat_ids: [c.id], since_ts: chatSince(c) })),

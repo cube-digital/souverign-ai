@@ -22,16 +22,15 @@ const base = (chat: Partial<ScopeInput["chat"]>): ScopeInput => ({
 });
 
 describe("scope bounds (fix round 1)", () => {
-  it("a chat scope starts at the later of the agent's and the requester's join, except shared history", () => {
+  it("a chat scope starts at the later of the agent's and the requester's join", () => {
     const since = (c: Partial<ScopeInput["chat"]>) =>
       recallScopes(base(c)).find((s) => s.namespace === "chat:ops")?.since_ts;
     expect(since({ requesterJoinedAt: 5000 })).toBe(5000);
     expect(since({ requesterJoinedAt: 500 })).toBe(1000);
-    expect(since({ requesterJoinedAt: 5000, historyShared: true })).toBe(1000);
     expect(since({ agentJoinedAt: 1000.4 })).toBe(1001);
   });
 
-  it("loadScopeInput reports the requester's join and whether the chat has shared history", async () => {
+  it("loadScopeInput reports the requester's join", async () => {
     const db = await openDb("pglite://memory");
     await migrate(db);
     for (const u of ["ana", "bob"])
@@ -54,12 +53,6 @@ describe("scope bounds (fix round 1)", () => {
     await add("user", "bob", "2026-01-05T00:00:00Z");
     const inp = await loadScopeInput(db, "max", "ops", { noTaught: false, requesterUserId: "bob" });
     expect(inp?.chat.requesterJoinedAt).toBe(Date.parse("2026-01-05T00:00:00Z"));
-    expect(inp?.chat.historyShared).toBe(false);
-    await db.query("update sa.chats set history_until_seq = 3 where id = 'ops'");
-    expect(
-      (await loadScopeInput(db, "max", "ops", { noTaught: false, requesterUserId: "bob" }))?.chat
-        .historyShared,
-    ).toBe(true);
     await db.close();
   });
 
