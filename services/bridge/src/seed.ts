@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { hashPin } from "./auth.js";
 import { openDb } from "./db.js";
 import { migrate } from "./migrate.js";
+import { parseDemoEmails } from "./oidc/config.js";
 
 const USERS = [
   ["ana", "Ana"],
@@ -41,6 +42,22 @@ for (const [id, name] of USERS) {
       id,
       name,
     ]);
+  }
+}
+for (const [id, email] of parseDemoEmails(process.env.SA_DEMO_EMAILS)) {
+  try {
+    const updated = await db.query(
+      "update sa.users set email = $2 where id = $1 and kind = 'person' returning id",
+      [id, email],
+    );
+    if (updated.length === 0) continue;
+    // Drop Google links made for the previous email so only the current demo email can log in.
+    await db.query("delete from sa.identities where user_id = $1 and email <> $2", [id, email]);
+    console.log(`demo email linked: ${id}`);
+  } catch (err) {
+    // 23505: the email already belongs to another user (unique on sa.users.email).
+    if ((err as { code?: string }).code !== "23505") throw err;
+    console.log(`demo email skipped, already in use: ${id}`);
   }
 }
 await db.close();
