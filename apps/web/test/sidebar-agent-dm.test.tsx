@@ -36,7 +36,12 @@ afterEach(cleanup);
 
 it("lists an agent with its own DM once, under Direct messages", async () => {
   render(
-    <Sidebar activeChatId={null} onOpenChat={() => {}} onOpenAgent={() => {}} onNewChat={() => {}} />,
+    <Sidebar
+      activeChatId={null}
+      onOpenChat={() => {}}
+      onOpenAgent={() => {}}
+      onNewChat={() => {}}
+    />,
   );
   const nav = screen.getByRole("navigation", { name: "Chats" });
   expect(await within(nav).findByRole("button", { name: /Ops/ })).toBeTruthy();
