@@ -38,9 +38,9 @@ async function chatIsDmOf(
 ): Promise<boolean> {
   const rows = await db.query(
     `select 1 from sa.chats ch
-     join sa.chat_members m on m.chat_id = ch.id and m.member_type = 'user' and m.member_id = $2
+     join sa.chat_members m on m.chat_id = ch.id and m.member_type = 'user' and m.member_id = $2 and m.removed_at is null
      where ch.id = $1 and ch.kind = 'dm'
-       and exists (select 1 from sa.chat_members a where a.chat_id = ch.id and a.member_type = 'agent' and a.member_id = $3)`,
+       and exists (select 1 from sa.chat_members a where a.chat_id = ch.id and a.member_type = 'agent' and a.member_id = $3 and a.removed_at is null)`,
     [chatId, userId, agentId],
   );
   return rows.length > 0;
@@ -108,13 +108,13 @@ export async function meetingTranscript(
   if (dm) {
     calls = await db.query<CallRow>(
       `${CALL_SQL} where n.invited_by = $2
-         and exists (select 1 from sa.chat_members m where m.chat_id = c.chat_id and m.member_type = 'user' and m.member_id = $2)
+         and exists (select 1 from sa.chat_members m where m.chat_id = c.chat_id and m.member_type = 'user' and m.member_id = $2 and m.removed_at is null)
        order by c.started_at desc limit 20`,
       [ctx.agentId, who],
     );
   } else {
     const chat = await db.query(
-      "select 1 from sa.chat_members where chat_id = $1 and member_type = 'user' and member_id = $2",
+      "select 1 from sa.chat_members where chat_id = $1 and member_type = 'user' and member_id = $2 and removed_at is null",
       [chatId, who],
     );
     if (chat.length === 0) return NONE;
