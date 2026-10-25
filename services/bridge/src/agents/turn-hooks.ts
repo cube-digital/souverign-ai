@@ -1,4 +1,5 @@
 import type { MessageBody, TextMeta, TurnTrigger } from "@sa/protocol";
+import { gatedTool } from "../approvals/service.js";
 
 type Log = (msg: string, extra?: Record<string, unknown>) => void;
 
@@ -111,6 +112,12 @@ export function endTurn(agentId: string, log: Log): void {
  * Runs every beforeReply hook in registration order; later hooks see the meta of earlier ones.
  * The first hold wins. A hook that throws holds the reply (fail closed).
  */
+/** The trace holds gated tools' args and results, which only the approver may see. */
+function stripGatedTrace(meta: TextMeta): TextMeta {
+  const named = (meta.trace ?? []).some((s) => s.kind === "tool" && gatedTool(s.name));
+  return named ? { ...meta, trace: undefined } : meta;
+}
+
 export async function runBeforeReply(
   ctx: TurnContext,
   draft: ReplyDraft,
@@ -124,10 +131,10 @@ export async function runBeforeReply(
       d = await h.beforeReply(ctx, { text: draft.text, meta });
     } catch (e) {
       log("before reply hook failed", { hook: h.name, error: (e as Error).message });
-      return { text: FAIL_CLOSED_NOTICE, meta, held: true, failed: true };
+      return { text: FAIL_CLOSED_NOTICE, meta: stripGatedTrace(meta), held: true, failed: true };
     }
     meta = { ...meta, ...(d.meta ?? {}) };
-    if (d.action === "hold") return { text: d.notice, meta, held: true };
+    if (d.action === "hold") return { text: d.notice, meta: stripGatedTrace(meta), held: true };
   }
-  return { text: draft.text, meta, held: false };
+  return { text: draft.text, meta: stripGatedTrace(meta), held: false };
 }
