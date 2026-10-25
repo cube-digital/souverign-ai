@@ -48,7 +48,7 @@ start whisper infra/models/start-whisper.sh
 wait_http llm "http://127.0.0.1:$(uv run --quiet sa-models get llm.port)/v1/models" 300
 wait_http whisper "http://127.0.0.1:$(uv run --quiet sa-models get stt.port)/" 60
 
-start memory uv run --quiet sa-memory
+start memory uv run --quiet --package sa-memory --extra models sa-memory
 wait_http memory "http://127.0.0.1:${MEMORY_PORT:-8646}/healthz" 180
 
 if command -v hermes >/dev/null 2>&1; then

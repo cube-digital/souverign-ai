@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from pathlib import Path
@@ -43,6 +44,14 @@ def run() -> None:
         raise SystemExit(1)
     dsn = os.environ.get("DATABASE_URL", DEFAULT_DSN)
     migrate(dsn)
+    if importlib.util.find_spec("sentence_transformers") is None:
+        print(
+            "sa-memory: embeddings UNAVAILABLE (torch/sentence-transformers not installed); "
+            "teach and ingest will fail. Start with: "
+            "uv run --package sa-memory --extra models sa-memory",
+            file=sys.stderr,
+            flush=True,
+        )
     app = create_app(PgVectorStore(dsn), EmbeddingGemma(), token)
     uvicorn.run(
         app,
