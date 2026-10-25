@@ -20,10 +20,14 @@ test("a held voice message gets a transcript and a spoken agent reply with a lat
   await signInAna(ana);
 
   // 1. Ana opens her DM with Scribe (in-app: a full page load would drop the session)
-  await ana
-    .getByRole("navigation", { name: "Chats" })
-    .getByRole("button", { name: /^Scribe\b/ })
-    .click();
+  // the DM is created right after sign-in: retry the click until the DM is the open chat
+  await expect(async () => {
+    await ana
+      .getByRole("navigation", { name: "Chats" })
+      .getByRole("button", { name: /^Scribe\b/ })
+      .click({ timeout: 2000 });
+    await expect(ana.getByLabel(/^Message .*Scribe/)).toBeVisible({ timeout: 2000 });
+  }).toPass({ timeout: 30_000 });
 
   // 2. she holds the mic button for 1.5 s
   const mic = ana.getByRole("button", { name: "Hold to talk" });
@@ -45,8 +49,9 @@ test("a held voice message gets a transcript and a spoken agent reply with a lat
   // 4. Scribe answers in the thread with a playable voice message and the latency pill
   await bubble.getByRole("button", { name: /\d+ repl/i }).click();
   const thread = ana.getByRole("complementary", { name: "Details" });
-  const reply = thread.getByLabel("voice message");
-  await expect(reply).toBeVisible({ timeout: 60_000 });
+  // the thread shows Ana's root voice bubble, then Scribe's spoken reply
+  await expect(thread.getByLabel("voice message")).toHaveCount(2, { timeout: 60_000 });
+  const reply = thread.getByLabel("voice message").last();
   await expect(thread.getByRole("button", { name: /voice to voice \d/ })).toBeVisible();
   await reply.getByRole("button", { name: "Play" }).click();
   await expect(reply.getByRole("button", { name: "Pause" })).toBeVisible();
