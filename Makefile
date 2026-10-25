@@ -69,7 +69,6 @@ voice-smoke: ## live: a voice message to Ops gets a spoken reply; prints latency
 	pnpm --filter @sa/e2e run voice-smoke
 
 call-smoke: ## live: two synthetic speakers, one decliner and the notetaker; SKIPPED without livekit-server
-	@command -v livekit-server >/dev/null 2>&1 || { echo "SKIPPED: livekit-server is not installed (human step: brew install livekit)"; exit 0; }
-	pnpm --filter @sa/e2e run call-smoke
+	@if command -v livekit-server >/dev/null 2>&1; then pnpm --filter @sa/e2e run call-smoke; else echo "SKIPPED: livekit-server is not installed (brew install livekit)"; fi
 
 .PHONY: livekit voice-smoke call-smoke help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke roster-smoke memory-smoke

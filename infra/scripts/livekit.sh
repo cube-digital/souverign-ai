@@ -25,6 +25,8 @@ case ${1:-start} in
       sleep 0.25
     done
     echo "calls: livekit did not answer on :7880, see $LOG" >&2
+    kill "$(cat "$PID")" 2>/dev/null || true
+    rm -f "$PID"
     exit 1
     ;;
   stop)

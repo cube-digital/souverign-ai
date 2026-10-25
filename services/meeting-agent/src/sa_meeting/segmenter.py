@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -13,6 +15,15 @@ from .config import WorkerConfig
 RATE = 16_000
 SPEECH_RMS = 0.01  # fraction of full scale
 START_MS = 100  # speech needed before a segment starts
+_VAD: Any = None  # shared Silero model
+_LOCK: asyncio.Lock | None = None
+
+
+def _vad_lock() -> asyncio.Lock:
+    global _LOCK
+    if _LOCK is None:
+        _LOCK = asyncio.Lock()
+    return _LOCK
 
 
 @dataclass
@@ -106,19 +117,26 @@ class SileroSegmenter:
     """Live segmenter: livekit-plugins-silero VAD end-of-speech events (needs the live extra)."""
 
     def __init__(self, cfg: WorkerConfig) -> None:
-        from livekit.plugins import silero  # lazy: only the live extra has it
-
         self.cfg = cfg
-        self._vad = silero.VAD.load(min_silence_duration=0.5, min_speech_duration=0.1)
+
+    async def _load_vad(self) -> Any:
+        """Load the model once per process, off the event loop, and share it across tracks."""
+        global _VAD
+        async with _vad_lock():
+            if _VAD is None:
+                from livekit.plugins import silero  # lazy: only the live extra has it
+
+                _VAD = await asyncio.to_thread(
+                    silero.VAD.load, min_silence_duration=0.5, min_speech_duration=0.1
+                )
+        return _VAD
 
     async def segments(self, frames: AsyncIterator[Frame]) -> AsyncIterator[Segment]:
-        import asyncio
-
         from livekit import rtc
         from livekit.agents import vad as lk_vad
 
         cfg = self.cfg
-        stream = self._vad.stream()
+        stream = (await self._load_vad()).stream()
         end_ms = 0  # end of the newest frame pushed, offset from track start
         done = object()
         out: asyncio.Queue[object] = asyncio.Queue()
@@ -155,14 +173,16 @@ class SileroSegmenter:
                 pcm = np.concatenate(
                     [np.frombuffer(fr.data, dtype=np.int16) for fr in ev.frames]  # type: ignore[attr-defined]
                 )
-                t1 = end_ms
-                t0 = t1 - len(pcm) * 1000 // RATE
+                t0 = end_ms - len(pcm) * 1000 // RATE
+                t1 = max(t0, end_ms - int(getattr(ev, "silence_duration", 0.0) * 1000))
                 step = cfg.max_segment_ms * RATE // 1000
                 for i in range(0, len(pcm), step):
                     chunk = pcm[i : i + step]
                     yield Segment(
                         t0_ms=t0 + i * 1000 // RATE,
-                        t1_ms=t0 + (i + len(chunk)) * 1000 // RATE,
+                        t1_ms=min(t1, t0 + (i + len(chunk)) * 1000 // RATE)
+                        if i + step >= len(pcm)
+                        else t0 + (i + len(chunk)) * 1000 // RATE,
                         pcm=chunk,
                     )
         finally:

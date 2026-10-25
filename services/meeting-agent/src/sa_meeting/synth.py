@@ -12,7 +12,8 @@ async def play(url: str, token: str, wav_path: str, delay_s: float = 0.0) -> Non
     from livekit import rtc  # lazy: only the live extra has it
 
     with wave.open(wav_path, "rb") as w:
-        assert w.getframerate() == 16000 and w.getnchannels() == 1 and w.getsampwidth() == 2
+        if w.getframerate() != 16000 or w.getnchannels() != 1 or w.getsampwidth() != 2:
+            raise ValueError("wav must be 16 kHz mono 16-bit")
         pcm = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
     room = rtc.Room()
     await room.connect(url, token)
