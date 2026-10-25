@@ -1,6 +1,6 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { ChatMessage } from "@sa/client";
-import type { Chat, MessageBody } from "@sa/protocol";
+import type { Chat } from "@sa/protocol";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { useSession } from "../state/session";
@@ -8,8 +8,8 @@ import { LiveAnnouncer, LiveStatus } from "./LiveStatus";
 import { MessageItem } from "./MessageItem";
 import { useRowActions } from "./rowActions";
 import { agentsOutside, useWorkspaceAgents } from "./shared";
+import { isHiddenVoiceRow, voiceProps, voiceRows } from "./voiceRows";
 
-type FileBody = Extract<MessageBody, { type: "file" }>;
 const GROUP_MS = 5 * 60 * 1000;
 const dayOf = (ts: number) => new Date(ts).toDateString();
 const dayLabel = (ts: number) =>
@@ -87,31 +87,11 @@ function MessageListInner({ chat }: { chat: Chat }) {
     return () => ro.disconnect();
   }, []);
 
-  // Transcripts show under their voice bubble and spoken replies as one player: hide those rows.
-  const { transcripts, audioIds, files } = useMemo(() => {
-    const transcripts = new Map<string, string>();
-    const audioIds = new Set<string>();
-    const files = new Map<string, FileBody>();
-    for (const m of v.top) {
-      const b = m.status === "ok" ? m.body : undefined;
-      if (b?.type === "text") {
-        if (b.meta?.transcript_of) transcripts.set(b.meta.transcript_of, b.text);
-        if (b.meta?.audio_id) audioIds.add(b.meta.audio_id);
-      } else if (b?.type === "file" && b.voice) files.set(m.id, b);
-    }
-    return { transcripts, audioIds, files };
-  }, [v.top]);
+  const vr = useMemo(() => voiceRows(v.top, deviceId), [v.top, deviceId]);
 
   let prev: ChatMessage | null = null;
-  let lastVoiceMine = false;
   const rows = v.top.map((m) => {
-    if (m.status === "ok" && m.body?.type === "text" && m.body.meta?.transcript_of) return null;
-    if (audioIds.has(m.id)) return null;
-    const audioId =
-      m.status === "ok" && m.body?.type === "text" ? m.body.meta?.audio_id : undefined;
-    // Only the person who spoke sees the timing pill on the answer.
-    const requester = audioId !== undefined && lastVoiceMine;
-    if (m.body?.type === "file" && m.body.voice) lastVoiceMine = m.senderDevice === deviceId;
+    if (isHiddenVoiceRow(m, vr.audioIds)) return null;
     const newDay = !prev || dayOf(prev.ts) !== dayOf(m.ts);
     const divider = newDay ? <DayDivider key={`d-${m.id}`} ts={m.ts} /> : null;
     if (m.status === "ok" && m.body?.type === "system") {
@@ -137,9 +117,7 @@ function MessageListInner({ chat }: { chat: Chat }) {
         others={others}
         actions={actions}
         highlight={lit === m.id}
-        transcript={transcripts.get(m.id)}
-        audio={audioId ? files.get(audioId) : undefined}
-        requester={requester}
+        {...voiceProps(m, vr)}
       />,
     ];
   });

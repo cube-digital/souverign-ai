@@ -30,11 +30,11 @@ function Group({
   );
 }
 
-function Badge({ count }: { count: number }) {
+function Badge({ count, mention }: { count: number; mention?: boolean }) {
   if (count <= 0) return null;
   return (
     <Chip tone="ai" className="ml-auto">
-      {count}
+      {mention ? `@ ${count}` : count}
     </Chip>
   );
 }
@@ -52,7 +52,7 @@ export function Sidebar({
   onOpenAgents?: () => void;
   onNewChat: () => void;
 }) {
-  const { chats, unread } = useSession();
+  const { chats, unread, mentions } = useSession();
   const { agents } = useAgents();
 
   // status dots follow the agents' state, so the shared list is refreshed on a timer
@@ -73,7 +73,7 @@ export function Sidebar({
     >
       {glyph}
       <span className="truncate">{c.title}</span>
-      <Badge count={unread[c.id] ?? 0} />
+      <Badge count={unread[c.id] ?? 0} mention={mentions?.[c.id] === true} />
     </button>
   );
 

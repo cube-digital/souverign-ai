@@ -18,26 +18,53 @@ type ToastApi = { push: (text: string, tone?: ToastTone, action?: ToastAction) =
 
 const Ctx = createContext<ToastApi | null>(null);
 const LIFETIME_MS = 4000;
+const ACTION_LIFETIME_MS = 10_000;
+
+function ToastRow({ item, onDone }: { item: ToastItem; onDone: (id: number) => void }) {
+  const [paused, setPaused] = useState(false);
+  const { id, action } = item;
+  useEffect(() => {
+    if (paused) return;
+    const t = setTimeout(() => onDone(id), action ? ACTION_LIFETIME_MS : LIFETIME_MS);
+    return () => clearTimeout(t);
+  }, [paused, id, action, onDone]);
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: hover and focus only pause the timer
+    <div
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={() => setPaused(false)}
+      className={cn(
+        "pointer-events-auto rounded-lg border bg-bg-1 px-3 py-2 text-[13px] shadow-[var(--shadow-2)]",
+        item.tone === "error" ? "border-danger text-danger" : "border-border-soft text-text-0",
+      )}
+    >
+      {item.text}
+      {action && (
+        <button
+          type="button"
+          onClick={() => {
+            action.onClick();
+            onDone(id);
+          }}
+          className="ml-3 cursor-pointer rounded-sm underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ai"
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
   const next = useRef(0);
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const push = useCallback((text: string, tone: ToastTone = "info", action?: ToastAction) => {
     const id = next.current++;
     setItems((prev) => [...prev, { id, text, tone, action }]);
-    const t = setTimeout(() => {
-      timers.current.delete(t);
-      setItems((prev) => prev.filter((i) => i.id !== id));
-    }, LIFETIME_MS);
-    timers.current.add(t);
   }, []);
-  useEffect(() => {
-    const all = timers.current;
-    return () => {
-      for (const t of all) clearTimeout(t);
-    };
-  }, []);
+  const done = useCallback((id: number) => setItems((prev) => prev.filter((i) => i.id !== id)), []);
   const api = useMemo(() => ({ push }), [push]);
   return (
     <Ctx.Provider value={api}>
@@ -48,24 +75,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         className="pointer-events-none fixed right-3 bottom-3 z-50 flex flex-col gap-2"
       >
         {items.map((i) => (
-          <div
-            key={i.id}
-            className={cn(
-              "pointer-events-auto rounded-lg border bg-bg-1 px-3 py-2 text-[13px] shadow-[var(--shadow-2)]",
-              i.tone === "error" ? "border-danger text-danger" : "border-border-soft text-text-0",
-            )}
-          >
-            {i.text}
-            {i.action && (
-              <button
-                type="button"
-                onClick={i.action.onClick}
-                className="ml-3 cursor-pointer underline"
-              >
-                {i.action.label}
-              </button>
-            )}
-          </div>
+          <ToastRow key={i.id} item={i} onDone={done} />
         ))}
       </div>
     </Ctx.Provider>

@@ -9,7 +9,7 @@ import { useSession } from "../state/session";
 import { firstAudio, markSent } from "../voice/latency";
 import { PushToTalk } from "../voice/PushToTalk";
 import type { Rec } from "../voice/recorder";
-import { VoicePlayer } from "../voice/voiceStream";
+import { type VoiceChunk, VoicePlayer } from "../voice/voiceStream";
 import { AddAgentPrompt, canAddAgent } from "./AddAgentPrompt";
 import { loadDraft, saveDraft } from "./drafts";
 import { type MentionOption, MentionPopover, mentionOptions } from "./MentionPopover";
@@ -54,18 +54,27 @@ function ComposerInner({ chat, replyTo, initial, prefill, autoFocus }: Props) {
   const lastPrefill = useRef(prefill?.key);
   const listId = useId();
   const players = useRef(new Map<string, VoicePlayer>());
+  const early_ = useRef(new Map<string, VoiceChunk[]>());
 
   // The spoken answer to a voice message streams in as voice.chunk events for that message id.
   useEffect(() => {
     const map = players.current;
+    const early = early_.current;
     const off = onBridgeEvent((ev) => {
       if (ev.type !== "voice.chunk" || ev.chat_id !== chat.id) return;
-      map.get(ev.source_id)?.push({ seq: ev.seq, wav_b64: ev.wav_b64, text: ev.text });
+      const chunk = { seq: ev.seq, wav_b64: ev.wav_b64, text: ev.text };
+      const player = map.get(ev.source_id);
+      if (player) player.push(chunk);
+      else if (early.size < 8 || early.has(ev.source_id)) {
+        // the answer can beat sendFile's promise: keep the chunks until the player exists
+        early.set(ev.source_id, [...(early.get(ev.source_id) ?? []), chunk]);
+      }
     });
     return () => {
       off();
       for (const p of map.values()) p.stop();
       map.clear();
+      early.clear();
     };
   }, [chat.id]);
 
@@ -252,10 +261,10 @@ function ComposerInner({ chat, replyTo, initial, prefill, autoFocus }: Props) {
       );
       markSent(id, releasedAt);
       players.current.get(id)?.stop();
-      players.current.set(
-        id,
-        new VoicePlayer(id, { onFirstAudio: () => void firstAudio(id, Date.now()) }),
-      );
+      const player = new VoicePlayer(id, { onFirstAudio: () => void firstAudio(id, Date.now()) });
+      players.current.set(id, player);
+      for (const c of early_.current.get(id) ?? []) player.push(c);
+      early_.current.delete(id);
     } catch {
       setError("Couldn't send the voice message. Try again in a moment.");
     }
