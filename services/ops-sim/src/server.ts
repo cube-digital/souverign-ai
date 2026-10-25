@@ -64,6 +64,45 @@ export async function createSim(
       });
       return;
     }
+    if (
+      req.method === "POST" &&
+      parts.length === 4 &&
+      parts.slice(0, 2).join("/") === "sim/tickets" &&
+      parts[3] === "comments"
+    ) {
+      const ticketId = parts[2] as string;
+      if (!(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+        return send(res, 415, { error: "unsupported_media_type" });
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      req.on("data", (c: Buffer) => {
+        size += c.length;
+        if (size <= 32768) chunks.push(c);
+      });
+      req.on("end", () => {
+        try {
+          const b = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+          const { author, body } = b;
+          if (
+            size > 32768 ||
+            typeof author !== "string" ||
+            typeof body !== "string" ||
+            author.length < 1 ||
+            author.length > 80 ||
+            body.length < 1 ||
+            body.length > 4000
+          ) {
+            return send(res, 400, { error: "bad_request" });
+          }
+          const c = sim.addComment(ticketId, author, body);
+          return c ? send(res, 201, c) : send(res, 404, { error: "unknown_ticket" });
+        } catch {
+          return send(res, 400, { error: "bad_request" });
+        }
+      });
+      return;
+    }
     if (req.method !== "GET" || parts[0] !== "sim") return send(res, 404, { error: "not_found" });
     const [, a, b = "", c = ""] = parts;
     const q = u.searchParams;
@@ -89,6 +128,10 @@ export async function createSim(
     if (a === "qa" && b === "flaky") return send(res, 200, sim.flaky());
     if (a === "release" && b === "status") return send(res, 200, sim.release());
     if (a === "tickets" && !b) return send(res, 200, sim.tickets(q.get("status") ?? "open"));
+    if (a === "tickets" && b !== "" && !c) {
+      const r = sim.ticket(b);
+      return r ? send(res, 200, r) : send(res, 404, { error: "unknown_ticket" });
+    }
     if (a === "dev" && b === "merge-requests" && !c) {
       const st = q.get("state");
       return send(res, 200, sim.mergeRequests(st === "merged" || st === "all" ? st : "open"));
