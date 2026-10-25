@@ -6,16 +6,19 @@ import { publish } from "../approvals/events.js";
 import type { Db } from "../db.js";
 import type { Log } from "../plugin-api.js";
 import { notCapturedCount } from "./consent.js";
-import { getCallInfo } from "./store.js";
+import { CAPTURED, getCallInfo } from "./store.js";
 import {
   chunkLines,
   composeNotes,
   fallbackNotes,
+  limitOwners,
   mergeMessages,
   notesHeader,
   notesMessages,
+  oneLine,
   parseActionItems,
   SINGLE_PASS_CHARS,
+  scrubNames,
   transcriptLines,
 } from "./summary.js";
 
@@ -88,7 +91,7 @@ export class NotesScheduler {
       try {
         await this.queue(n.id, false);
       } catch (e) {
-        log("interim notes failed", { notetaker: n.id, error: (e as Error).message });
+        log("interim notes failed", { notetaker: n.id, error: (e as Error).name });
       }
     }
   }
@@ -98,7 +101,7 @@ export class NotesScheduler {
     const existing = this.finals.get(notetakerId);
     if (existing) return existing;
     const run = this.queue(notetakerId, true).catch((e) => {
-      this.o.log("final notes failed", { notetaker: notetakerId, error: (e as Error).message });
+      this.o.log("final notes failed", { notetaker: notetakerId, error: (e as Error).name });
     });
     this.finals.set(notetakerId, run);
     return run;
@@ -151,8 +154,10 @@ export class NotesScheduler {
       text: string;
     }>(
       `select s.id, u.display_name as name, (extract(epoch from s.t0) * 1000)::float8 as t0_ms, s.text
-         from sa.call_segments s join sa.users u on u.id = s.speaker_user_id
-        where s.notetaker_id = $1 order by s.t0, s.id`,
+         from sa.call_segments s
+         join sa.call_notetakers n on n.id = s.notetaker_id
+         join sa.users u on u.id = s.speaker_user_id
+        where s.notetaker_id = $1 and ${CAPTURED} order by s.t0, s.id`,
       [notetakerId],
     );
     if (segs.length === 0) {
@@ -162,7 +167,11 @@ export class NotesScheduler {
     this.seen.set(notetakerId, Math.max(...segs.map((s) => Number(s.id))));
     const startMs = Math.round(Number(nt.started_ms));
     const lines = transcriptLines(
-      segs.map((s) => ({ speakerName: s.name, t0Ms: Math.round(Number(s.t0_ms)), text: s.text })),
+      segs.map((s) => ({
+        speakerName: oneLine(s.name, 40),
+        t0Ms: Math.round(Number(s.t0_ms)),
+        text: oneLine(s.text, 4000),
+      })),
       startMs,
     );
     const key = `call-notes:${notetakerId}`;
@@ -191,15 +200,20 @@ export class NotesScheduler {
       body = fallbackNotes(lines);
     }
     const call = await getCallInfo(db, nt.call_id);
+    const capturedNames = [...new Set(segs.map((s) => oneLine(s.name, 40)))];
+    const others = (call?.participants ?? [])
+      .filter((p) => p.consent !== "accepted")
+      .map((p) => p.name);
+    body = scrubNames(body, others, capturedNames);
     const endMs = nt.ended_ms === null ? this.clock.now() : Math.round(Number(nt.ended_ms));
     const header = notesHeader({
       chatTitle: nt.chat_title ?? "chat",
       startedAtMs: startMs,
       durationMs: endMs - startMs,
-      speakers: [...new Set(segs.map((s) => s.name))],
+      speakers: capturedNames,
       notCaptured: call ? notCapturedCount(call) : 0,
     });
-    const items = parseActionItems(body);
+    const items = limitOwners(parseActionItems(body), capturedNames);
     const text = composeNotes(header, body);
     const id = randomBytes(9).toString("base64url");
     const [row] = await db.query<{ version: number }>(

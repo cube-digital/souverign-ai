@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
 import type { MessageBody } from "@sa/protocol";
+import { ensureAgentDm } from "../agents/routes.js";
 import { publish } from "../approvals/events.js";
 import {
   type ApproverRule,
@@ -9,7 +9,7 @@ import {
   type Executor,
   requestApproval,
 } from "../approvals/service.js";
-import { humanMembers } from "../approvals/store.js";
+import { humanMembers, isHumanMember } from "../approvals/store.js";
 import type { Db } from "../db.js";
 import { memory } from "../memory/client.js";
 import type { RelayAdmin } from "../relay-admin.js";
@@ -73,6 +73,18 @@ export const callNotesExecutor: Executor = {
     const notesId = String(args.notes_id ?? "");
     const info = await notesInfo(ctx.db, notesId);
     if (!info || info.call_id !== args.call_id) throw new ArgsError("These notes no longer exist.");
+    // Re-checked on every execute: the inviter decides, is still in the chat, and Scribe is the poster.
+    if (info.invited_by !== ctx.approverUserId || info.agent_id !== ctx.agentId) {
+      throw new ArgsError("Only the person who invited the notetaker can publish these notes.");
+    }
+    if (!(await isHumanMember(ctx.db, info.chat_id, info.invited_by))) {
+      throw new ArgsError("You are no longer in this chat.");
+    }
+    const [scribe] = await ctx.db.query(
+      "select 1 from sa.agents where id = $1 and scope = 'workspace' and roster_id = 'scribe'",
+      [ctx.agentId],
+    );
+    if (!scribe) throw new ArgsError("These notes can only be posted by Scribe.");
     if (info.status !== "pending_approval") {
       throw new ArgsError("These notes are not waiting for approval.");
     }
@@ -127,12 +139,28 @@ export const callNotesExecutor: Executor = {
       ...(info.anchor ? { reply_to: info.anchor } : {}),
       meta: { meeting: { call_id: callId, action_items: parseActionItems(text) } },
     };
-    const messageId = await send.call(ctx.agentHost, agentId, chatId, body);
-    await ctx.db.query(
-      `update sa.call_notes set status = 'published', published_message_id = $2
-        where id = $1 and status = 'pending_approval'`,
-      [String(args.notes_id), messageId],
+    // Claim first: two approvals for the same notes can never both post.
+    const [claimed] = await ctx.db.query(
+      `update sa.call_notes set status = 'published'
+        where id = $1 and status = 'pending_approval' returning id`,
+      [String(args.notes_id)],
     );
+    if (!claimed) throw new ExecError("These notes were already posted.");
+    let messageId: string;
+    try {
+      messageId = await send.call(ctx.agentHost, agentId, chatId, body);
+    } catch (e) {
+      await ctx.db.query(
+        `update sa.call_notes set status = 'pending_approval'
+          where id = $1 and status = 'published' and published_message_id is null`,
+        [String(args.notes_id)],
+      );
+      throw e;
+    }
+    await ctx.db.query("update sa.call_notes set published_message_id = $2 where id = $1", [
+      String(args.notes_id),
+      messageId,
+    ]);
     const started = Math.round(Number(info.started_ms));
     let memoryOk = false;
     try {
@@ -173,44 +201,22 @@ export const callNotesExecutor: Executor = {
   },
 };
 
-/** The inviter's DM with Scribe; created through the relay when missing. Null when it cannot be. */
+/** The inviter's DM with Scribe, through T1's DM path (lock, relay membership, key epoch). */
 async function ensureDm(db: Db, userId: string, agentId: string): Promise<string | null> {
-  const [existing] = await db.query<{ id: string }>(
-    `select c.id from sa.chats c
-       join sa.chat_members me on me.chat_id = c.id and me.member_type = 'user'
-        and me.member_id = $1 and me.removed_at is null
-       join sa.chat_members ag on ag.chat_id = c.id and ag.member_type = 'agent'
-        and ag.member_id = $2 and ag.removed_at is null
-      where c.kind = 'dm'
-        and (select count(*) from sa.chat_members x where x.chat_id = c.id and x.removed_at is null) = 2
-      order by c.created_at, c.id limit 1`,
-    [userId, agentId],
-  );
-  if (existing) return existing.id;
   if (!relayAdmin) return null;
-  const devices = await db.query<{ id: string }>(
-    "select id from sa.devices where owner_type = 'user' and owner_id = $1",
-    [userId],
-  );
-  const [agent] = await db.query<{ name: string; device_id: string }>(
-    "select name, device_id from sa.agents where id = $1",
+  const [agent] = await db.query<{ name: string; device_id: string | null }>(
+    `select a.name, d.device_id from sa.agents a
+       left join sa.agent_devices d on d.agent_id = a.id where a.id = $1`,
     [agentId],
   );
-  if (devices.length === 0 || !agent) return null;
-  const chatId = randomBytes(12).toString("base64url");
-  for (const d of devices)
-    await relayAdmin.setMember({ chat_id: chatId, device_id: d.id, op: "add" });
-  await relayAdmin.setMember({ chat_id: chatId, device_id: agent.device_id, op: "add" });
-  await db.query(
-    "insert into sa.chats (id, title, kind, created_by, key_epoch) values ($1, $2, 'dm', $3, 1)",
-    [chatId, agent.name, userId],
-  );
-  await db.query(
-    "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'owner'), ($1, 'agent', $3, 'member')",
-    [chatId, userId, agentId],
-  );
-  await approvalDeps().agentHost.onAgentAdded(chatId, agentId);
-  return chatId;
+  if (!agent) return null;
+  const d = approvalDeps();
+  const r = await ensureAgentDm({ db, relayAdmin, agentHost: d.agentHost, log: d.log }, userId, {
+    id: agentId,
+    name: agent.name,
+    device_id: agent.device_id ?? "",
+  });
+  return r === "missing" ? null : r.chatId;
 }
 
 /** Notes pending approval become not_published (once) and the inviter gets one DM. */
@@ -346,7 +352,8 @@ export async function sweep(nowMs: number): Promise<void> {
   const d = approvalDeps();
   const dead = await d.db.query<{ id: string }>(
     `select n.id from sa.call_notes n join sa.approvals a on a.id = n.approval_id
-      where n.status = 'pending_approval' and a.status in ('expired', 'denied', 'failed', 'canceled')`,
+      where n.status = 'pending_approval' and n.published_message_id is null
+        and a.status in ('expired', 'denied', 'failed', 'canceled')`,
   );
   for (const n of dead) await markNotPublished(d.db, n.id);
 

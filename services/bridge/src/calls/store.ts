@@ -6,7 +6,7 @@ import { consentOf } from "./consent.js";
 /** A failure with an HTTP status and a short code (`{error: code}`). */
 export class CallError extends Error {
   constructor(
-    readonly status: 400 | 403 | 404 | 409 | 503,
+    readonly status: 400 | 403 | 404 | 409 | 429 | 503,
     readonly code: string,
   ) {
     super(code);
@@ -88,15 +88,21 @@ export async function latestNotetaker(db: Db, callId: string): Promise<Notetaker
   return n ?? null;
 }
 
+/** SQL: the user (column) is an active human member of the call's chat (column). */
+const activeMember = (chatCol: string, userCol: string): string =>
+  `exists (select 1 from sa.chat_members m where m.chat_id = ${chatCol} and m.member_type = 'user'
+     and m.member_id = ${userCol} and m.removed_at is null)`;
+
 export async function getCallInfo(db: Db, callId: string): Promise<CallInfo | null> {
   const c = await callRow(db, callId);
   if (!c) return null;
   const n = await latestNotetaker(db, callId);
-  const people = await db.query<{ user_id: string; name: string; left_at: unknown }>(
-    `select p.user_id, u.display_name as name, p.left_at
+  const people = await db.query<{ user_id: string; name: string; in_call: boolean }>(
+    `select p.user_id, u.display_name as name,
+            (p.left_at is null and ${activeMember("$2", "p.user_id")}) as in_call
        from sa.call_participants p join sa.users u on u.id = p.user_id
       where p.call_id = $1 order by p.joined_at, p.user_id`,
-    [callId],
+    [callId, c.chat_id],
   );
   const decisions: Record<string, "accepted" | "declined"> = {};
   if (n) {
@@ -118,7 +124,7 @@ export async function getCallInfo(db: Db, callId: string): Promise<CallInfo | nu
     participants: people.map((p) => ({
       user_id: p.user_id,
       name: p.name,
-      in_call: p.left_at === null,
+      in_call: p.in_call,
       consent: n ? consentOf(p.user_id, n.invited_by, decisions) : "pending",
     })),
     notetaker: n
@@ -170,7 +176,8 @@ export async function isParticipant(db: Db, callId: string, userId: string): Pro
 
 export async function participantsInCall(db: Db, callId: string): Promise<string[]> {
   const rows = await db.query<{ user_id: string }>(
-    "select user_id from sa.call_participants where call_id = $1 and left_at is null",
+    `select p.user_id from sa.call_participants p join sa.calls c on c.id = p.call_id
+      where p.call_id = $1 and p.left_at is null and ${activeMember("c.chat_id", "p.user_id")}`,
     [callId],
   );
   return rows.map((r) => r.user_id);
@@ -238,6 +245,13 @@ export async function setConsent(
      on conflict (notetaker_id, user_id) do update set decision = $3, decided_at = now()`,
     [notetakerId, userId, decision],
   );
+  // Withdrawing consent is retroactive: what that person said is deleted.
+  if (decision === "declined") {
+    await db.query(
+      "delete from sa.call_segments where notetaker_id = $1 and speaker_user_id = $2",
+      [notetakerId, userId],
+    );
+  }
 }
 
 /** Stops an active notetaker; false when it was not active. */
@@ -266,16 +280,23 @@ export async function consentedIdentities(db: Db, notetakerId: string): Promise<
        from sa.call_notetakers n
        join sa.call_consents c on c.notetaker_id = n.id and c.decision = 'accepted'
        join sa.call_participants p on p.call_id = n.call_id and p.user_id = c.user_id and p.left_at is null
-      where n.id = $1 and n.status = 'active' order by c.user_id`,
+       join sa.calls k on k.id = n.call_id
+      where ${activeMember("k.chat_id", "c.user_id")} and n.id = $1 and n.status = 'active' order by c.user_id`,
     [notetakerId],
   );
   return rows.map((r) => `user:${r.user_id}`);
 }
 
+/** SQL: the segment's speaker is the inviter or currently accepted (`s` = segments, `n` = notetakers). */
+export const CAPTURED = `(s.speaker_user_id = n.invited_by or exists (
+  select 1 from sa.call_consents k where k.notetaker_id = n.id and k.user_id = s.speaker_user_id
+    and k.decision = 'accepted'))`;
+
 export async function segmentsOf(
   db: Db,
   notetakerId: string,
   callStartMs: number,
+  sinceMs?: number,
 ): Promise<CallSegment[]> {
   const rows = await db.query<{
     id: number | string;
@@ -285,9 +306,13 @@ export async function segmentsOf(
     text: string;
   }>(
     `select s.id, s.speaker_user_id, u.display_name as speaker_name, ${ms("s.t0")} as t0_ms, s.text
-       from sa.call_segments s join sa.users u on u.id = s.speaker_user_id
-      where s.notetaker_id = $1 order by s.t0, s.id`,
-    [notetakerId],
+       from sa.call_segments s
+       join sa.call_notetakers n on n.id = s.notetaker_id
+       join sa.users u on u.id = s.speaker_user_id
+      where s.notetaker_id = $1 and ${CAPTURED}
+        and ($2::float8 is null or ${ms("s.t0")} >= $2::float8)
+      order by s.t0, s.id`,
+    [notetakerId, sinceMs ?? null],
   );
   return rows.map((r) => ({
     id: Number(r.id),
@@ -296,6 +321,37 @@ export async function segmentsOf(
     t_ms: Math.max(0, num(r.t0_ms) - callStartMs),
     text: r.text,
   }));
+}
+
+/** When the user first joined this call (epoch ms), if they ever did. */
+export async function joinedAtMs(db: Db, callId: string, userId: string): Promise<number | null> {
+  const [r] = await db.query<{ j: number }>(
+    `select ${ms("joined_at")} as j from sa.call_participants where call_id = $1 and user_id = $2`,
+    [callId, userId],
+  );
+  return r ? num(r.j) : null;
+}
+
+/** In the call right now (joined, not left) and still an active member of its chat. */
+export async function isInCall(db: Db, callId: string, userId: string): Promise<boolean> {
+  return (await participantsInCall(db, callId)).includes(userId);
+}
+
+/** Active calls whose participants include someone who is no longer an active chat member. */
+export async function strandedParticipants(
+  db: Db,
+): Promise<Array<{ call_id: string; user_id: string }>> {
+  return db.query(
+    `select p.call_id, p.user_id from sa.call_participants p
+       join sa.calls c on c.id = p.call_id and c.ended_at is null
+      where p.left_at is null and not ${activeMember("c.chat_id", "p.user_id")}`,
+  );
+}
+
+/** Active human membership of a chat. */
+export async function isActiveMember(db: Db, chatId: string, userId: string): Promise<boolean> {
+  const [r] = await db.query(`select 1 where ${activeMember("$1", "$2")}`, [chatId, userId]);
+  return r !== undefined;
 }
 
 export async function notetakerCall(

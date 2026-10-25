@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { WebhookReceiver } from "livekit-server-sdk";
+import { isHumanMember } from "../approvals/store.js";
 import type { RouteDeps } from "../plugin-api.js";
 import type { Lifecycle } from "./routes.js";
 import { callRow, markJoined, markLeft } from "./store.js";
@@ -36,8 +37,13 @@ export function registerLivekitWebhook(
     const call = callId ? await callRow(db, callId) : null;
     if (!call) return reply.send({ ok: true });
     const identity = event.participant?.identity ?? "";
+    const ended = call.ended_ms !== null;
     if (event.event === "participant_joined" && identity.startsWith("user:")) {
-      await markJoined(db, call.id, identity.slice(5));
+      const userId = identity.slice(5);
+      // Presence on an ended call, or from someone who is not an active member, is ignored.
+      if (ended || !(await isHumanMember(db, call.chat_id, userId)))
+        return reply.send({ ok: true });
+      await markJoined(db, call.id, userId);
       life.cancelGrace(call.id);
       await life.emitUpdated(call.id);
     } else if (event.event === "participant_left" && identity.startsWith("user:")) {

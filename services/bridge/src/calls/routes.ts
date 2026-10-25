@@ -10,6 +10,8 @@ import { publish } from "../approvals/events.js";
 import { displayName, humanMembers, isHumanMember } from "../approvals/store.js";
 import type { Db } from "../db.js";
 import type { Log, RouteDeps } from "../plugin-api.js";
+import { LIMITS, Limiter } from "./limits.js";
+import { closeRoom, kickFromRoom } from "./livekit-admin.js";
 import { livekitAvailable, livekitUrl } from "./livekit-health.js";
 import {
   CallError,
@@ -19,7 +21,9 @@ import {
   failNotetaker,
   getCallInfo,
   inviteNotetaker,
+  isInCall,
   isParticipant,
+  joinedAtMs,
   latestNotes,
   latestNotetaker,
   markJoined,
@@ -29,6 +33,7 @@ import {
   setAnchor,
   setConsent,
   stopNotetaker,
+  strandedParticipants,
 } from "./store.js";
 import { userToken } from "./tokens.js";
 
@@ -46,6 +51,8 @@ export type Lifecycle = {
   /** Starts the last-leave grace timer when nobody is left in the call. */
   afterLeave(callId: string): Promise<void>;
   cancelGrace(callId: string): void;
+  /** Removes people who are no longer chat members from their calls and the room. */
+  reconcile(): Promise<void>;
   clear(): void;
 };
 
@@ -65,7 +72,10 @@ export function makeLifecycle(db: Db, hooks: CallHooks, log: Log): Lifecycle {
       life.cancelGrace(callId);
       const r = await endCall(db, callId);
       if (r.notetakerId) hooks.notetakerEnded(r.notetakerId);
-      if (r.ended) log("call ended", { call: callId });
+      if (r.ended) {
+        log("call ended", { call: callId });
+        await closeRoom(callId, log);
+      }
       await life.emitUpdated(callId);
     },
     async afterLeave(callId) {
@@ -75,10 +85,19 @@ export function makeLifecycle(db: Db, hooks: CallHooks, log: Log): Lifecycle {
         timers.delete(callId);
         life
           .end(callId)
-          .catch((e) => log("call end failed", { call: callId, error: (e as Error).message }));
+          .catch((e) => log("call end failed", { call: callId, error: (e as Error).name }));
       }, graceMs());
       t.unref?.();
       timers.set(callId, t);
+    },
+    async reconcile() {
+      for (const r of await strandedParticipants(db)) {
+        await markLeft(db, r.call_id, r.user_id);
+        await kickFromRoom(r.call_id, r.user_id, log);
+        log("participant removed after leaving the chat", { call: r.call_id });
+        await life.emitUpdated(r.call_id);
+        await life.afterLeave(r.call_id);
+      }
     },
     cancelGrace(callId) {
       const t = timers.get(callId);
@@ -93,6 +112,9 @@ export function makeLifecycle(db: Db, hooks: CallHooks, log: Log): Lifecycle {
   return life;
 }
 
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const NOTETAKER_COOLDOWN_MS = 10_000;
+
 const fail = (reply: FastifyReply, e: unknown) => {
   if (e instanceof CallError) return reply.code(e.status).send({ error: e.code });
   throw e;
@@ -105,12 +127,36 @@ export function registerCallRoutes(
   life: Lifecycle,
 ): void {
   const { db, authenticate, log } = deps;
+  const limiter = new Limiter();
+  const failedAt = new Map<string, number>();
+  /** Per user and per call; replies 429 and returns false when either is over `max`. */
+  const allow = async (
+    reply: FastifyReply,
+    bucket: string,
+    userId: string,
+    callOrChat: string,
+    max: number,
+    callMax = max,
+  ): Promise<boolean> => {
+    if (
+      limiter.hit(`${bucket}:u:${userId}`, max) &&
+      limiter.hit(`${bucket}:c:${callOrChat}`, callMax)
+    ) {
+      return true;
+    }
+    await reply.code(429).send({ error: "rate_limited" });
+    return false;
+  };
 
   /** Session + call + chat membership; replies and returns null on refusal. */
   const open = async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = await authenticate(req, reply);
     if (!userId) return null;
     const id = (req.params as { id: string }).id;
+    if (!SAFE_ID.test(id)) {
+      await reply.code(404).send({ error: "not_found" });
+      return null;
+    }
     const call = await callRow(db, id);
     if (!call) {
       await reply.code(404).send({ error: "not_found" });
@@ -132,6 +178,16 @@ export function registerCallRoutes(
     }
     return c;
   };
+  /** Like `openParticipant`, and the caller must be in the call right now. */
+  const openInCall = async (req: FastifyRequest, reply: FastifyReply) => {
+    const c = await openParticipant(req, reply);
+    if (!c) return null;
+    if (!(await isInCall(db, c.call.id, c.userId))) {
+      await reply.code(403).send({ error: "not_in_call" });
+      return null;
+    }
+    return c;
+  };
   const info = async (callId: string): Promise<CallInfo> => {
     const i = await getCallInfo(db, callId);
     if (!i) throw new CallError(404, "not_found");
@@ -142,9 +198,11 @@ export function registerCallRoutes(
     const userId = await authenticate(req, reply);
     if (!userId) return;
     const chatId = (req.params as { id: string }).id;
+    if (!SAFE_ID.test(chatId)) return reply.code(404).send({ error: "not_found" });
     if (!(await isHumanMember(db, chatId, userId))) {
       return reply.code(403).send({ error: "forbidden" });
     }
+    if (!(await allow(reply, "start", userId, chatId, LIMITS.start))) return;
     try {
       const r = await createCall(db, chatId, userId, process.env.SA_CALL_E2EE === "1");
       if (r.created) log("call started", { call: r.id, chat: chatId });
@@ -178,6 +236,11 @@ export function registerCallRoutes(
     const c = await open(req, reply);
     if (!c) return;
     if (c.call.ended_ms !== null) return reply.code(409).send({ error: "call_ended" });
+    if (
+      !(await allow(reply, "presence", c.userId, c.call.id, LIMITS.presence, LIMITS.presence * 5))
+    ) {
+      return;
+    }
     await markJoined(db, c.call.id, c.userId);
     life.cancelGrace(c.call.id);
     await life.emitUpdated(c.call.id);
@@ -203,6 +266,11 @@ export function registerCallRoutes(
   app.post("/api/calls/:id/leave", async (req, reply) => {
     const c = await openParticipant(req, reply);
     if (!c) return;
+    if (
+      !(await allow(reply, "presence", c.userId, c.call.id, LIMITS.presence, LIMITS.presence * 5))
+    ) {
+      return;
+    }
     await markLeft(db, c.call.id, c.userId);
     await life.emitUpdated(c.call.id);
     await life.afterLeave(c.call.id);
@@ -225,11 +293,26 @@ export function registerCallRoutes(
   });
 
   app.post("/api/calls/:id/notetaker", async (req, reply) => {
-    const c = await openParticipant(req, reply);
+    const c = await openInCall(req, reply);
     if (!c) return;
     const body = NotetakerInvite.safeParse(req.body ?? {});
     if (!body.success) return reply.code(400).send({ error: "invalid_request" });
+    // The media key only matters when call audio is end-to-end encrypted.
+    const mediaKey = c.call.e2ee ? body.data.media_key : undefined;
+    if (mediaKey !== undefined && mediaKey.length > 64) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    if (!(await allow(reply, "invite", c.userId, c.call.id, LIMITS.invite))) return;
+    if (Date.now() - (failedAt.get(c.call.id) ?? 0) < NOTETAKER_COOLDOWN_MS) {
+      return reply.code(429).send({ error: "rate_limited" });
+    }
     try {
+      const [{ n } = { n: 0 }] = await db.query<{ n: number | string }>(
+        "select count(*) as n from sa.call_notetakers where status = 'active'",
+      );
+      const max =
+        Number(process.env.SA_NOTETAKER_MAX) > 0 ? Number(process.env.SA_NOTETAKER_MAX) : 4;
+      if (Number(n) >= max) throw new CallError(429, "too_many_notetakers");
       if (c.call.ended_ms !== null) throw new CallError(409, "call_ended");
       const [scribe] = await db.query<{ id: string }>(
         `select a.id from sa.agents a
@@ -242,9 +325,10 @@ export function registerCallRoutes(
       const id = await inviteNotetaker(db, c.call.id, scribe.id, c.userId);
       log("notetaker invited", { call: c.call.id, notetaker: id });
       try {
-        await hooks.startNotetaker(c.call.id, id, body.data.media_key);
+        await hooks.startNotetaker(c.call.id, id, mediaKey);
       } catch (e) {
         await failNotetaker(db, id);
+        failedAt.set(c.call.id, Date.now());
         await life.emitUpdated(c.call.id);
         throw e;
       }
@@ -271,7 +355,7 @@ export function registerCallRoutes(
   });
 
   app.post("/api/calls/:id/notetaker/stop", async (req, reply) => {
-    const c = await openParticipant(req, reply);
+    const c = await openInCall(req, reply);
     if (!c) return;
     const nt = await latestNotetaker(db, c.call.id);
     if (!nt || !(await stopNotetaker(db, nt.id, c.userId))) {
@@ -287,7 +371,17 @@ export function registerCallRoutes(
     const c = await openParticipant(req, reply);
     if (!c) return;
     const nt = await latestNotetaker(db, c.call.id);
-    return { segments: nt ? await segmentsOf(db, nt.id, Math.round(c.call.started_ms)) : [] };
+    if (!nt) return { segments: [] };
+    const start = Math.round(c.call.started_ms);
+    if (nt.invited_by === c.userId) {
+      return { segments: await segmentsOf(db, nt.id, start) };
+    }
+    // Others see the live lines only while they are in the call, and only from when they joined.
+    if (nt.status !== "active" || !(await isInCall(db, c.call.id, c.userId))) {
+      return reply.code(403).send({ error: "notes_private" });
+    }
+    const since = await joinedAtMs(db, c.call.id, c.userId);
+    return { segments: await segmentsOf(db, nt.id, start, since ?? Date.now()) };
   });
 
   app.get("/api/calls/:id/notes", async (req, reply) => {

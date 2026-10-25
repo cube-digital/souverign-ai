@@ -30,7 +30,7 @@ export function chunkLines(lines: string[], max = CHUNK_CHARS): string[] {
   return chunks;
 }
 
-export const NOTES_SYSTEM = `You write meeting notes from a call transcript. Use only what the transcript says; never invent names, dates or numbers. Each line is "[mm:ss] Speaker: text". Some attendees were not captured; never guess what they said.
+export const NOTES_SYSTEM = `You write meeting notes from a call transcript. Use only what the transcript says; never invent names, dates or numbers. Each line is "[mm:ss] Speaker: text". Some attendees were not captured; never guess what they said. Name only people who appear as speakers in the transcript.
 Answer in English Markdown with exactly these four sections, in this order:
 ## Summary
 Three to six sentences.
@@ -133,3 +133,39 @@ export function fallbackNotes(lines: string[]): string {
     ...tail,
   ].join("\n");
 }
+
+const NOT_CAPTURED = "a participant who was not captured";
+const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const tokens = (name: string) => name.split(/\s+/).filter((t) => t.length >= 2);
+
+/**
+ * Removes the names of people who were not captured (full name and first name, whole words,
+ * any case) from model text. A name that is also a captured speaker's name is left alone.
+ */
+export function scrubNames(text: string, notCaptured: string[], captured: string[]): string {
+  const keep = new Set(captured.flatMap((n) => [n, ...tokens(n)]).map((t) => t.toLowerCase()));
+  const names = new Set<string>();
+  for (const full of notCaptured) {
+    const clean = full.replace(/\s+/g, " ").trim();
+    if (clean && !keep.has(clean.toLowerCase())) names.add(clean);
+    for (const t of tokens(clean)) if (!keep.has(t.toLowerCase())) names.add(t);
+  }
+  let out = text;
+  for (const n of [...names].sort((a, b) => b.length - a.length)) {
+    out = out.replace(
+      new RegExp(`(?<![\\p{L}\\p{N}])${esc(n)}(?![\\p{L}\\p{N}])`, "giu"),
+      NOT_CAPTURED,
+    );
+  }
+  return out;
+}
+
+/** Action-item owners other than captured speakers become "Unassigned". */
+export function limitOwners(items: ActionItem[], captured: string[]): ActionItem[] {
+  const ok = new Set(captured.flatMap((n) => [n, ...tokens(n)]).map((t) => t.toLowerCase()));
+  return items.map((i) => (ok.has(i.owner.toLowerCase()) ? i : { ...i, owner: "Unassigned" }));
+}
+
+/** One line, bounded: names and text cannot forge transcript lines. */
+export const oneLine = (t: string, max: number): string =>
+  t.replace(/\s+/g, " ").trim().slice(0, max);

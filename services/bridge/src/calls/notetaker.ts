@@ -6,6 +6,9 @@ import type { Db } from "../db.js";
 import type { Log } from "../plugin-api.js";
 import { livekitAvailable as defaultAvailable } from "./livekit-health.js";
 import { CallError, failNotetaker } from "./store.js";
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 import { notetakerToken } from "./tokens.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
@@ -31,7 +34,7 @@ export const nodeSpawner: Spawner = {
       env: opts.env,
       cwd: repoRoot,
       stdio: ["pipe", "ignore", "ignore"],
-      detached: false,
+      detached: true,
     });
     child.stdin.on("error", () => {});
     child.stdin.end(opts.stdin);
@@ -42,7 +45,13 @@ export const nodeSpawner: Spawner = {
         child.on("error", () => cb(1));
       },
       kill: (sig) => {
-        child.kill((sig ?? "SIGTERM") as NodeJS.Signals);
+        const signal = (sig ?? "SIGTERM") as NodeJS.Signals;
+        try {
+          // The worker runs in its own process group: uv and its python child go together.
+          process.kill(-(child.pid ?? 0), signal);
+        } catch {
+          child.kill(signal);
+        }
       },
     };
   },
@@ -74,6 +83,8 @@ export class Notetakers {
   /** Starts the notetaker's worker per `SA_NOTETAKER` (worker | fake | off). */
   async start(callId: string, notetakerId: string, mediaKey?: string): Promise<void> {
     const { db, log } = this.o;
+    if (!SAFE_ID.test(callId) || !SAFE_ID.test(notetakerId))
+      throw new CallError(400, "invalid_request");
     const mode = this.env.SA_NOTETAKER ?? "worker";
     if (mode === "off") throw new CallError(503, "notetaker_disabled");
     if (mode === "fake") {
@@ -87,6 +98,9 @@ export class Notetakers {
       [notetakerId],
     );
     if (!nt) throw new CallError(404, "not_found");
+    if (!(this.env.LIVEKIT_API_SECRET ?? process.env.LIVEKIT_API_SECRET)) {
+      throw new CallError(503, "livekit_unavailable");
+    }
     const lkToken = await notetakerToken({
       callId,
       agentId: nt.agent_id,
@@ -124,7 +138,7 @@ export class Notetakers {
       void this.exited(notetakerId, code).catch((e) =>
         log("notetaker exit handling failed", {
           notetaker: notetakerId,
-          error: (e as Error).message,
+          error: (e as Error).name,
         }),
       );
     });
@@ -132,9 +146,10 @@ export class Notetakers {
   }
 
   private async exited(notetakerId: string, code: number | null): Promise<void> {
-    this.running.delete(notetakerId);
+    const known = this.running.delete(notetakerId);
     rmSync(join(this.pidDir, `${notetakerId}.pid`), { force: true });
-    if (code === 0) return;
+    // Not tracked any more: the bridge itself shut this worker down, which is not a failure.
+    if (!known || code === 0) return;
     // Only a crash while active fails the notetaker; a stop or end already moved it on.
     if (await failNotetaker(this.o.db, notetakerId)) {
       this.o.log("notetaker worker failed", { notetaker: notetakerId, code });
@@ -155,11 +170,12 @@ export class Notetakers {
 
   /** Bridge shutdown: no worker outlives it. */
   killAll(): void {
-    for (const [id, w] of this.running) {
+    const all = [...this.running];
+    this.running.clear();
+    for (const [id, w] of all) {
       w.kill("SIGTERM");
       rmSync(join(this.pidDir, `${id}.pid`), { force: true });
     }
-    this.running.clear();
   }
 
   /** Kills workers left over from a previous bridge process (pid files). */
@@ -175,7 +191,13 @@ export class Notetakers {
       try {
         const pid = Number.parseInt(readFileSync(path, "utf8"), 10);
         // A reused pid must not take an unrelated process down.
-        if (pid > 1 && isWorker(pid)) process.kill(pid, "SIGTERM");
+        if (pid > 1 && isWorker(pid)) {
+          try {
+            process.kill(-pid, "SIGTERM");
+          } catch {
+            process.kill(pid, "SIGTERM");
+          }
+        }
       } catch {
         // already gone
       }
@@ -186,9 +208,9 @@ export class Notetakers {
 
 function isWorker(pid: number): boolean {
   try {
-    return execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" }).includes(
-      "sa-meeting",
-    );
+    const cmd = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+    // The full command line of our spawn, not just a substring.
+    return cmd.includes(`--project ${repoRoot} --no-sync sa-meeting join`);
   } catch {
     return false;
   }

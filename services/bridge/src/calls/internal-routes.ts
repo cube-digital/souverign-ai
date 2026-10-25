@@ -3,9 +3,9 @@ import { SegmentIn, WorkerReport, type WorkerStateResponse } from "@sa/protocol"
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { publish } from "../approvals/events.js";
 import type { RouteDeps } from "../plugin-api.js";
-import { capturable } from "./consent.js";
 import { consentedIdentities, getCallInfo, notetakerCall, participantsInCall } from "./store.js";
 
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
 
 function sameToken(given: unknown, want: string): boolean {
@@ -32,6 +32,7 @@ export function registerInternalCallRoutes(app: FastifyInstance, deps: RouteDeps
 
   app.get(`${base}/state`, { onRequest: guard }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    if (!SAFE_ID.test(id)) return reply.code(404).send({ error: "not_found" });
     const nt = await notetakerCall(db, id);
     if (!nt) return reply.code(404).send({ error: "not_found" });
     const out: WorkerStateResponse = {
@@ -43,6 +44,7 @@ export function registerInternalCallRoutes(app: FastifyInstance, deps: RouteDeps
 
   app.post(`${base}/segments`, { onRequest: guard }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    if (!SAFE_ID.test(id)) return reply.code(404).send({ error: "not_found" });
     const nt = await notetakerCall(db, id);
     if (!nt) return reply.code(404).send({ error: "not_found" });
     if (nt.status !== "active") return reply.code(409).send({ error: "not_active" });
@@ -54,19 +56,26 @@ export function registerInternalCallRoutes(app: FastifyInstance, deps: RouteDeps
     const body = SegmentIn.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "invalid_request" });
     const call = await getCallInfo(db, nt.call_id);
+    if (!call) return reply.code(404).send({ error: "not_found" });
     const userId = body.data.speaker.slice("user:".length);
-    // Consent is checked now, at receipt: a decline or a leave takes effect for the next segment.
-    if (!call || !capturable(userId, call)) {
-      return reply.code(403).send({ error: "not_consented" });
-    }
+    // One statement checks consent, presence, membership and status again at insert time.
     const [row] = await db.query<{ id: number | string; name: string }>(
       `with s as (
          insert into sa.call_segments (notetaker_id, speaker_user_id, t0, t1, text, lang)
-         values ($1, $2, to_timestamp($3 / 1000.0), to_timestamp($4 / 1000.0), $5, $6)
+         select $1, $2, to_timestamp($3 / 1000.0), to_timestamp($4 / 1000.0), $5, $6
+          where exists (
+            select 1 from sa.call_notetakers n
+              join sa.calls c on c.id = n.call_id
+              join sa.call_consents k on k.notetaker_id = n.id and k.user_id = $2 and k.decision = 'accepted'
+              join sa.call_participants p on p.call_id = n.call_id and p.user_id = $2 and p.left_at is null
+             where n.id = $1 and n.status = 'active'
+               and exists (select 1 from sa.chat_members m where m.chat_id = c.chat_id
+                 and m.member_type = 'user' and m.member_id = $2 and m.removed_at is null))
          returning id)
        select s.id, u.display_name as name from s, sa.users u where u.id = $2`,
       [id, userId, body.data.t0_ms, body.data.t1_ms, body.data.text, body.data.lang ?? null],
     );
+    if (!row) return reply.code(403).send({ error: "not_consented" });
     if (row) {
       publish(await participantsInCall(db, nt.call_id), {
         type: "call.segment",
@@ -86,6 +95,7 @@ export function registerInternalCallRoutes(app: FastifyInstance, deps: RouteDeps
 
   app.post(`${base}/worker`, { onRequest: guard }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    if (!SAFE_ID.test(id)) return reply.code(404).send({ error: "not_found" });
     const nt = await notetakerCall(db, id);
     if (!nt) return reply.code(404).send({ error: "not_found" });
     const body = WorkerReport.safeParse(req.body);

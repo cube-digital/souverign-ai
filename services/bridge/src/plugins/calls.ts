@@ -1,3 +1,4 @@
+import type { FastifyError } from "fastify";
 import { registerGatedTool } from "../approvals/service.js";
 import { registerInternalCallRoutes } from "../calls/internal-routes.js";
 import { registerNotesRoutes } from "../calls/notes-routes.js";
@@ -79,8 +80,8 @@ export const plugin: BridgePlugin = {
     const timer = setInterval(() => {
       if (busy) return;
       busy = true;
-      sweep(Date.now())
-        .catch((e) => ctx.log("call notes sweep failed", { error: (e as Error).message }))
+      Promise.all([sweep(Date.now()), life?.reconcile()])
+        .catch((e) => ctx.log("call sweep failed", { error: (e as Error).name }))
         .finally(() => {
           busy = false;
         });
@@ -90,11 +91,21 @@ export const plugin: BridgePlugin = {
   },
   routes(app, deps) {
     life?.clear();
-    life = makeLifecycle(deps.db, hooks, deps.log);
-    registerCallRoutes(app, deps, hooks, life);
-    registerLivekitWebhook(app, deps, life);
-    registerInternalCallRoutes(app, deps);
-    registerNotesRoutes(app, deps);
+    const lifecycle = makeLifecycle(deps.db, hooks, deps.log);
+    life = lifecycle;
+    // A child scope: the generic error handler below applies to the calls routes only.
+    void app.register(async (scope) => {
+      scope.setErrorHandler((err: FastifyError, _req, reply) => {
+        deps.log("calls route failed", { error: err.name });
+        const status = typeof err.statusCode === "number" ? err.statusCode : 500;
+        if (status >= 400 && status < 500) return reply.code(status).send({ error: "bad_request" });
+        return reply.code(500).send({ error: "internal" });
+      });
+      registerCallRoutes(scope, deps, hooks, lifecycle);
+      registerLivekitWebhook(scope, deps, lifecycle);
+      registerInternalCallRoutes(scope, deps);
+      registerNotesRoutes(scope, deps);
+    });
   },
   start() {
     scheduler?.start();
