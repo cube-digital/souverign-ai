@@ -69,6 +69,14 @@ export function hasBeforeReplyHooks(): boolean {
   return hooks.some((h) => h.beforeReply);
 }
 
+/** The name the D-9 share gate registers its hooks under. */
+export const SHARE_GATE_HOOK = "share-gate";
+
+/** True while the D-9 `ask` share gate holds answers; without it `ask` must not read taught knowledge. */
+export function isShareGateActive(): boolean {
+  return hooks.some((h) => h.name === SHARE_GATE_HOOK && h.beforeReply);
+}
+
 /** The turn the agent is running now (one at a time per agent). */
 export function currentTurn(agentId: string): TurnContext | undefined {
   return current.get(agentId);
@@ -108,16 +116,40 @@ export function endTurn(agentId: string, log: Log): void {
   }
 }
 
-/**
- * Runs every beforeReply hook in registration order; later hooks see the meta of earlier ones.
- * The first hold wins. A hook that throws holds the reply (fail closed).
- */
 /** The trace holds gated tools' args and results, which only the approver may see. */
 function stripGatedTrace(meta: TextMeta): TextMeta {
   const named = (meta.trace ?? []).some((s) => s.kind === "tool" && gatedTool(s.name));
   return named ? { ...meta, trace: undefined } : meta;
 }
 
+/** Meta a hold or fail-closed notice may carry; nothing of the held answer. */
+const NOTICE_META = new Set<string>([
+  "tools",
+  "ms",
+  "read",
+  "model",
+  "local",
+  "turn_id",
+  "trigger",
+  "stopped_by",
+  "approvals",
+  "held",
+]);
+
+/**
+ * A notice replaces the answer, so every other key (trace with tool results, citations, recalls,
+ * drafts) is set to undefined: the host merges this over the turn's meta, which still has them.
+ */
+function noticeMeta(meta: TextMeta): TextMeta {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(meta)) out[k] = NOTICE_META.has(k) ? v : undefined;
+  return out as TextMeta;
+}
+
+/**
+ * Runs every beforeReply hook in registration order; later hooks see the meta of earlier ones.
+ * The first hold wins. A hook that throws holds the reply (fail closed, `failed`).
+ */
 export async function runBeforeReply(
   ctx: TurnContext,
   draft: ReplyDraft,
@@ -131,10 +163,10 @@ export async function runBeforeReply(
       d = await h.beforeReply(ctx, { text: draft.text, meta });
     } catch (e) {
       log("before reply hook failed", { hook: h.name, error: (e as Error).message });
-      return { text: FAIL_CLOSED_NOTICE, meta: stripGatedTrace(meta), held: true, failed: true };
+      return { text: FAIL_CLOSED_NOTICE, meta: noticeMeta(meta), held: true, failed: true };
     }
     meta = { ...meta, ...(d.meta ?? {}) };
-    if (d.action === "hold") return { text: d.notice, meta: stripGatedTrace(meta), held: true };
+    if (d.action === "hold") return { text: d.notice, meta: noticeMeta(meta), held: true };
   }
   return { text: draft.text, meta: stripGatedTrace(meta), held: false };
 }

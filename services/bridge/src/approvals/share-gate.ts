@@ -1,14 +1,9 @@
 import type { Approval, Citation, TextMeta } from "@sa/protocol";
-import {
-  FAIL_CLOSED_NOTICE,
-  type ReplyDecision,
-  type ReplyDraft,
-  type TurnContext,
-} from "../agents/turn-hooks.js";
+import type { ReplyDecision, ReplyDraft, TurnContext } from "../agents/turn-hooks.js";
 import type { Db } from "../db.js";
 import { loadScopeInput } from "../memory/scope-input.js";
 import { oneToOneHuman } from "../memory/scopes.js";
-import { recallsFor } from "../memory/turn-recalls.js";
+import { usedTaught } from "../memory/turn-recalls.js";
 import { subscribe } from "./events.js";
 import {
   ArgsError,
@@ -19,6 +14,7 @@ import {
   requestApproval,
   withTimeout,
 } from "./service.js";
+import { displayName, isHumanMember } from "./store.js";
 
 export const SHARE_TOOL = "share_answer";
 const MAX_TEXT = 8000;
@@ -28,11 +24,12 @@ const POSTED = "Posted.";
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
+const citationsOf = (meta: unknown): Citation[] =>
+  (isObject(meta) && Array.isArray(meta.citations) ? meta.citations : []) as Citation[];
+
 /** Agent sources without an origin chat: what people taught the agent on its Knowledge tab. */
-const taughtSources = (meta: unknown): Citation[] => {
-  const list = isObject(meta) && Array.isArray(meta.citations) ? meta.citations : [];
-  return (list as Citation[]).filter((c) => c.space === "agent" && c.chat_id === undefined);
-};
+const taughtSources = (meta: unknown): Citation[] =>
+  citationsOf(meta).filter((c) => c.space === "agent" && c.chat_id === undefined);
 
 /** "Ana", "Ana and Bob", "Ana, Bob and Cleo" (deduped, at most 3). */
 function teacherNames(sources: Citation[]): string {
@@ -50,10 +47,24 @@ export const shareExecutor: Executor = {
   editable: ["text"],
   alwaysAllowed: false,
   stamp: false,
-  async validate(args) {
+  // Runs at request time and again right before posting: policy and people are checked both times.
+  async validate(args, ctx) {
     const text = typeof args.text === "string" ? args.text : "";
     if (!text.trim()) throw new ArgsError("The answer is empty.");
     if (text.length > MAX_TEXT) throw new ArgsError("The answer is too long.");
+    const [agent] = await ctx.db.query<{ share: string }>(
+      "select share_private_in_chats as share from sa.agents where id = $1",
+      [ctx.agentId],
+    );
+    if (agent?.share !== "ask" && agent?.share !== "always") {
+      throw new ArgsError("Sharing taught knowledge is off for this agent.");
+    }
+    if (!(await isHumanMember(ctx.db, ctx.chatId, ctx.approverUserId))) {
+      throw new ArgsError("The approver is not in this chat.");
+    }
+    if (ctx.requesterUserId && !(await isHumanMember(ctx.db, ctx.chatId, ctx.requesterUserId))) {
+      throw new ArgsError("The person who asked is no longer in this chat.");
+    }
     const meta = isObject(args.meta) ? args.meta : {};
     const question = typeof args.question === "string" ? args.question.slice(0, MAX_TEXT) : "";
     return { text, meta, question };
@@ -71,14 +82,20 @@ export const shareExecutor: Executor = {
           multiline: true,
         },
       ],
-      sources: taughtSources(args.meta).slice(0, 8),
+      // Every source the post will carry; nothing else of the draft's meta is posted.
+      sources: citationsOf(args.meta).slice(0, 8),
       leaves_chat: false,
     };
   },
   async execute(args, ctx) {
     const a = ctx.approval;
     if (!ctx.agentHost.postAs) throw new ExecError("The agent cannot post here.");
-    const meta = { ...(args.meta as TextMeta), approved_by: ctx.approverName.slice(0, 80) };
+    // Only what the approver saw leaves: the text and the preview's sources (no trace, no draft meta).
+    const sources = a.preview.sources ?? [];
+    const meta: TextMeta = {
+      ...(sources.length > 0 ? { citations: sources } : {}),
+      approved_by: ctx.approverName.slice(0, 80),
+    };
     const id = await ctx.agentHost.postAs(a.agent_id, a.chat_id, String(args.text), {
       replyTo: a.reply_to,
       meta,
@@ -87,6 +104,10 @@ export const shareExecutor: Executor = {
     return POSTED;
   },
   async onDenied(a, ctx) {
+    const declined = () =>
+      a.status === "denied"
+        ? statusLine(a, `Declined by ${a.approver_name} · ${a.tool}`)
+        : undefined;
     // The retry is a whole turn; the decision does not wait for it.
     const retry = ctx.agentHost.runProactive?.({
       agentId: a.agent_id,
@@ -97,13 +118,23 @@ export const shareExecutor: Executor = {
       replyTo: a.reply_to,
       noTaught: true,
     });
-    retry?.catch((e) =>
-      approvalDeps().log("share retry failed", { id: a.id, error: (e as Error).name }),
-    );
+    if (!retry) {
+      await declined();
+      return;
+    }
+    retry
+      .then((ran) => (ran ? undefined : declined()))
+      .catch((e) => {
+        approvalDeps().log("share retry failed", { id: a.id, error: (e as Error).name });
+        return declined();
+      });
   },
 };
 
-/** The executor posts no stamps, so an expired preview gets its status line from here. */
+/**
+ * The executor posts no stamps (an approved answer is its own post), so the other outcomes get
+ * their status line from here; a preview that will never post loses its text and meta.
+ */
 const watchers = new Map<string, () => void>();
 
 function unwatch(id: string): void {
@@ -111,10 +142,9 @@ function unwatch(id: string): void {
   watchers.delete(id);
 }
 
-async function expiredStamp(a: Approval): Promise<void> {
+async function statusLine(a: Approval, text: string): Promise<void> {
   const d = approvalDeps();
   if (!d.agentHost.postAs) return;
-  const text = `Expired after ${formatTtl(a.expires_at - a.created_at)} without a decision · ${a.tool}`;
   try {
     const posted = withTimeout(
       d.agentHost.postAs(a.agent_id, a.chat_id, text, {
@@ -128,6 +158,37 @@ async function expiredStamp(a: Approval): Promise<void> {
   }
 }
 
+/** Keeps only the question (the retry's prompt): the held text, its meta and sources are gone. */
+async function scrub(db: Db, id: string): Promise<void> {
+  await db.query(
+    `update sa.approvals
+        set args = jsonb_build_object('question', coalesce(args->'question', '""'::jsonb)),
+            preview = jsonb_set(preview - 'sources', '{fields}', '[]'::jsonb)
+      where id = $1 and status in ('denied', 'expired', 'canceled')`,
+    [id],
+  );
+}
+
+async function settled(a: Approval): Promise<void> {
+  const d = approvalDeps();
+  if (a.status === "denied" || a.status === "expired" || a.status === "canceled") {
+    try {
+      await scrub(d.db, a.id);
+    } catch (e) {
+      d.log("share scrub failed", { id: a.id, error: (e as Error).name });
+    }
+  }
+  if (a.status === "expired") {
+    const ttl = formatTtl(a.expires_at - a.created_at);
+    await statusLine(a, `Expired after ${ttl} without a decision · ${a.tool}`);
+  } else if (a.status === "canceled") {
+    const who = a.decided_by ? await displayName(d.db, a.decided_by).catch(() => "") : "";
+    await statusLine(a, `Canceled by ${who || "the requester"} · ${a.tool}`);
+  } else if (a.status === "failed") {
+    await statusLine(a, `Approved by ${a.approver_name} · ${a.tool} · ${a.result ?? "failed"}`);
+  }
+}
+
 /** Follows one pending share approval (via the approver's events) until it is decided. */
 export function watchShare(a: { id: string; approver_user_id: string }): void {
   if (watchers.has(a.id)) return;
@@ -136,7 +197,7 @@ export function watchShare(a: { id: string; approver_user_id: string }): void {
     const status = e.approval.status;
     if (status === "pending" || status === "approved") return;
     unwatch(a.id);
-    if (status === "expired") void expiredStamp(e.approval);
+    void settled(e.approval).catch(() => {});
   });
   watchers.set(a.id, off);
 }
@@ -155,72 +216,43 @@ export function stopShareWatchers(): void {
 }
 
 const POST: ReplyDecision = { action: "post" };
-/** Nothing of the answer (text, citations, the trace with recall results) may leave. */
-const HIDDEN: Partial<TextMeta> = { citations: undefined, trace: undefined };
-const failClosed = (): ReplyDecision => ({
-  action: "hold",
-  notice: FAIL_CLOSED_NOTICE,
-  meta: { ...HIDDEN },
-});
-
-function logSafe(msg: string, extra: Record<string, unknown>): void {
-  try {
-    approvalDeps().log(msg, extra);
-  } catch {
-    // approvals are not initialised; the hold below is what matters
-  }
-}
 
 /**
  * The D-9 `ask` gate fires on access: a turn in a shared chat that recalled taught knowledge
- * (`agent:<self>`, no origin chat) is held behind a share approval. Any failure past that point
- * holds the answer with FAIL_CLOSED_NOTICE; it never posts it.
+ * (`agent:<self>`, no origin chat) is held behind a share approval. Every failure past that point
+ * throws, so the central fail-closed path posts FAIL_CLOSED_NOTICE and the turn ends as failed.
  */
 export async function beforeReply(ctx: TurnContext, draft: ReplyDraft): Promise<ReplyDecision> {
-  const own = `agent:${ctx.agentId}`;
-  const taught = recallsFor(ctx.turnId).some(
-    (r) => r.hit.space === own && r.hit.origin_chat_id === null,
-  );
-  if (!taught) return POST;
-  try {
-    const { db } = approvalDeps();
-    const inp = await loadScopeInput(db, ctx.agentId, ctx.chatId, {
-      noTaught: ctx.noTaught,
-      requesterUserId: ctx.requesterUserId,
-    });
-    if (!inp) return failClosed();
-    if (oneToOneHuman(inp.agent, inp.chat) !== null) return POST;
-    if (inp.agent.share === "always") return POST;
-    // `never` (or a policy change during the turn): this answer must not be shared at all.
-    if (inp.agent.share !== "ask") return failClosed();
-    const res = await requestApproval({
-      agentId: ctx.agentId,
-      chatId: ctx.chatId,
-      replyTo: ctx.replyTo,
-      turnId: ctx.turnId,
-      requesterUserId: ctx.requesterUserId,
-      kind: "share",
-      tool: SHARE_TOOL,
-      args: { text: draft.text, meta: draft.meta, question: ctx.prompt },
-    });
-    if (res.status !== "pending") {
-      logSafe("share gate failed closed", {
-        agent: ctx.agentId,
-        status: res.status,
-        ...(res.status === "error" ? { error: res.error } : {}),
-      });
-      return failClosed();
-    }
-    const a = res.approval;
-    watchShare(a);
-    const teachers = teacherNames(taughtSources(draft.meta));
-    return {
-      action: "hold",
-      notice: `${ctx.agentName} prepared an answer that uses what ${teachers} taught it. Waiting for ${a.approver_name} to approve.`,
-      meta: { ...HIDDEN, held: a.id },
-    };
-  } catch (e) {
-    logSafe("share gate failed closed", { agent: ctx.agentId, error: (e as Error).name });
-    return failClosed();
+  if (!usedTaught(ctx.turnId, ctx.agentId)) return POST;
+  const { db } = approvalDeps();
+  const inp = await loadScopeInput(db, ctx.agentId, ctx.chatId, {
+    noTaught: ctx.noTaught,
+    requesterUserId: ctx.requesterUserId,
+  });
+  if (!inp) throw new Error("share gate: agent or chat is gone");
+  if (oneToOneHuman(inp.agent, inp.chat) !== null) return POST;
+  if (inp.agent.share === "always") return POST;
+  // `never` (or a policy change during the turn): this answer must not be shared at all.
+  if (inp.agent.share !== "ask") throw new Error("share gate: sharing is off");
+  const res = await requestApproval({
+    agentId: ctx.agentId,
+    chatId: ctx.chatId,
+    replyTo: ctx.replyTo,
+    turnId: ctx.turnId,
+    requesterUserId: ctx.requesterUserId,
+    kind: "share",
+    tool: SHARE_TOOL,
+    args: { text: draft.text, meta: draft.meta, question: ctx.prompt },
+  });
+  if (res.status !== "pending") {
+    throw new Error(`share gate: ${res.status === "error" ? res.error : res.status}`);
   }
+  const a = res.approval;
+  watchShare(a);
+  const teachers = teacherNames(taughtSources(draft.meta));
+  return {
+    action: "hold",
+    notice: `${ctx.agentName} prepared an answer that uses what ${teachers} taught it. Waiting for ${a.approver_name} to approve.`,
+    meta: { held: a.id },
+  };
 }

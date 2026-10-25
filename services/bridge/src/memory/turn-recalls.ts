@@ -35,3 +35,11 @@ export function recallsFor(turnId: string): Numbered[] {
 export function clearRecalls(turnId: string): void {
   byTurn.delete(turnId);
 }
+
+/** The turn recalled taught knowledge: the agent's own space with no origin chat (D-9). */
+export function usedTaught(turnId: string, agentId: string): boolean {
+  const own = `agent:${agentId}`;
+  return (byTurn.get(turnId) ?? []).some(
+    (r) => r.hit.space === own && r.hit.origin_chat_id === null,
+  );
+}

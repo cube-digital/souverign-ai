@@ -43,7 +43,8 @@ export type ScopeInput = {
   chat: ScopeChat;
   shared: SharedChat[];
   noTaught: boolean;
-  /** someone can approve an `ask` answer (owner, or the requester for workspace agents) */
+  /** someone can approve an `ask` answer: the share gate is active and there is an owner, or the
+   * requester for workspace agents */
   approverAvailable: boolean;
 };
 

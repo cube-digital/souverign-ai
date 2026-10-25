@@ -1,6 +1,8 @@
+import { isShareGateActive } from "../agents/turn-hooks.js";
 import type { Db } from "../db.js";
 import type { ScopeInput, SharedChat } from "./scopes.js";
 import { oneToOneHuman } from "./scopes.js";
+import { usedTaught } from "./turn-recalls.js";
 
 type AgentRow = {
   scope: "personal" | "workspace";
@@ -87,6 +89,31 @@ export async function loadScopeInput(
     chat: scopeChat,
     shared,
     noTaught: opts.noTaught,
-    approverAvailable: agent.scope === "personal" || opts.requesterUserId !== null,
+    // No share gate, no one to approve: `ask` fails closed instead of answering unchecked.
+    approverAvailable:
+      isShareGateActive() && (agent.scope === "personal" || opts.requesterUserId !== null),
   };
+}
+
+type TurnRef = {
+  turnId: string;
+  agentId: string;
+  chatId: string;
+  noTaught: boolean;
+  requesterUserId: string | null;
+};
+
+/**
+ * D-9: the turn recalled taught knowledge in a shared chat whose policy is not `always`, so no
+ * model-written text may leave the turn before the share gate has seen it. Fails closed.
+ */
+export async function taughtHeld(db: Db, turn: TurnRef): Promise<boolean> {
+  if (!usedTaught(turn.turnId, turn.agentId)) return false;
+  const inp = await loadScopeInput(db, turn.agentId, turn.chatId, {
+    noTaught: turn.noTaught,
+    requesterUserId: turn.requesterUserId,
+  });
+  if (!inp) return true;
+  if (oneToOneHuman(inp.agent, inp.chat) !== null) return false;
+  return inp.agent.share !== "always";
 }

@@ -3,7 +3,7 @@ import type { Db } from "../db.js";
 import { registerTools, type ToolCtx } from "../mcp/registry.js";
 import { taughtByNames } from "./citations.js";
 import { memory } from "./client.js";
-import { loadScopeInput } from "./scope-input.js";
+import { loadScopeInput, taughtHeld } from "./scope-input.js";
 import { recallScopes } from "./scopes.js";
 import { addRecalls, type Numbered } from "./turn-recalls.js";
 
@@ -11,6 +11,8 @@ const TEMPLATES = ["general", "devops", "qa", "ops", "dev", "tech", "sales", "sc
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const OFF = "Memory is off on this Mac.";
 const NEEDS_CHAT = "Memory needs a chat.";
+const TAUGHT_HELD =
+  "I can't save notes in this turn: it used taught knowledge that needs approval before it is shared here.";
 const headId = (id: string) => id.split(".")[0] ?? id;
 const nsId = (ns: string) => ns.slice(ns.indexOf(":") + 1);
 const pad = (v: number) => String(v).padStart(2, "0");
@@ -117,6 +119,7 @@ async function remember(ctx: ToolCtx, args: Record<string, unknown>): Promise<st
   const mem = memory();
   if (!mem) return OFF;
   if (!ctx.chatId) return NEEDS_CHAT;
+  if (ctx.turn && (await taughtHeld(ctx.db, ctx.turn))) return TAUGHT_HELD;
   const id = randomBytes(10).toString("hex");
   const parts = JSON.stringify([{ label: null, text }]);
   await ctx.db.query(

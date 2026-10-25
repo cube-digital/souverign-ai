@@ -3,6 +3,7 @@ import { AnswerRequest, type Question } from "@sa/protocol";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "../db.js";
 import { registerTools } from "../mcp/registry.js";
+import { taughtHeld } from "../memory/scope-input.js";
 import type { Authenticate } from "../plugin-api.js";
 import { publish } from "./events.js";
 import { approvalDeps, setQuestionSweep, ttlFromEnv, withLock, withTimeout } from "./service.js";
@@ -20,6 +21,8 @@ export const ASK_USER_TEMPLATES = [
 ] as const;
 const MAX_OPEN_PER_THREAD = 2;
 const TOO_MANY = "You already asked two questions here; wait for the answers.";
+const TAUGHT_HELD =
+  "I can't ask questions in this turn: it used taught knowledge that needs approval before it is shared here. Put everything in your answer.";
 
 type QuestionRow = {
   id: string;
@@ -108,6 +111,7 @@ export function registerAskUser(): void {
         if (!turn?.requesterUserId) return "No one to ask.";
         const parsed = parseAsk(args);
         if (typeof parsed === "string") return parsed;
+        if (await taughtHeld(ctx.db, turn)) return TAUGHT_HELD;
         const d = approvalDeps();
         const requester = turn.requesterUserId;
         const id = randomBytes(10).toString("hex");

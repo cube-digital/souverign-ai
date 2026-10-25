@@ -1,4 +1,4 @@
-import { addTurnHooks } from "../agents/turn-hooks.js";
+import { addTurnHooks, SHARE_GATE_HOOK } from "../agents/turn-hooks.js";
 import { registerGatedTool } from "../approvals/service.js";
 import {
   beforeReply,
@@ -14,7 +14,7 @@ export const plugin: BridgePlugin = {
   name: "share-gate",
   async init(ctx) {
     registerGatedTool(SHARE_TOOL, { executor: shareExecutor });
-    addTurnHooks({ name: "share-gate", beforeReply });
+    addTurnHooks({ name: SHARE_GATE_HOOK, beforeReply });
     try {
       await watchPendingShares(ctx.db);
     } catch (e) {
