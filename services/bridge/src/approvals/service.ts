@@ -18,16 +18,25 @@ import {
   insertApproval,
   insertAutoApproved,
   insertGrant,
+  isHumanMember,
   type NewApproval,
   rowToApproval,
+  usage,
 } from "./store.js";
 
 export const DEFAULT_APPROVAL_TTL_MS = 12 * 60 * 60 * 1000;
 export const MAX_PENDING_PER_CHAT = 5;
+/** "Always approve" runs at most this many times per agent and chat per hour; then it asks again. */
+export const MAX_AUTO_PER_HOUR = 10;
+export const MAX_ARGS_BYTES = 64 * 1024;
 const SWEEP_MS = 5000;
+const POST_TIMEOUT_MS = 15_000;
 const RESULT_MAX = 300;
 const ERROR_MAX = 120;
 const GONE = "This action is no longer available.";
+const DONE = "done";
+const INTERNAL = "internal error";
+const TOO_LARGE = "The request is too large.";
 const NO_REQUESTER = "No one asked for this, so I can't request approval. Ask a person to tag me.";
 const NO_APPROVER = "No one can approve this here.";
 
@@ -49,19 +58,30 @@ export type ExecCtx = {
 export type Executor = {
   editable: readonly string[];
   alwaysAllowed: boolean;
-  /** throw ArgsError with a short message the model can act on */
+  /**
+   * Throw ArgsError with a short message the model can act on. Runs at request time, after an
+   * edit and again right before execute (membership and targets are checked then), so it must be
+   * idempotent: validate(validate(x)) equals validate(x).
+   */
   validate(args: Record<string, unknown>, ctx: ValidateCtx): Promise<Record<string, unknown>>;
   preview(
     args: Record<string, unknown>,
     info: { agentName: string; chatTitle: string },
   ): ApprovalPreview;
-  /** returns the result summary (≤ 300 chars); throwing marks the approval failed */
+  /**
+   * Returns the result summary (≤ 300 chars, shown to the approver only); throwing marks the
+   * approval failed. Only ArgsError/ExecError messages reach the thread stamp.
+   */
   execute(args: Record<string, unknown>, ctx: ExecCtx): Promise<string>;
+  /** The thread stamp's result text (public in the chat); default `done`. */
+  publicResult?(result: string): string;
   /** tool approvals get a stamp in the thread; share_answer posts the answer itself */
   stamp: boolean;
   onDenied?(approval: Approval, ctx: ExecCtx): Promise<void>;
 };
 export class ArgsError extends Error {}
+/** An execute failure whose message is written for people (it is shown in the thread). */
+export class ExecError extends Error {}
 export type GateRequest = {
   agentId: string;
   chatId: string;
@@ -109,10 +129,16 @@ const registeredIn = new Map<string, number>();
 let lifetime = 0;
 const byTurn = new Map<string, string[]>();
 let deps: Deps | null = null;
+let ready: Promise<void> = Promise.resolve();
 
+/**
+ * Registers a gated tool. Registry lifetime rule: a name may be registered once per bridge
+ * lifetime, and every `initApprovals` call starts a new lifetime. In production init runs once,
+ * so a duplicate name always throws; tests that re-initialise the bridge may register a name
+ * again (the newer spec replaces the older). Tools registered before init keep working.
+ */
 export function registerGatedTool(name: string, spec: GatedToolSpec): void {
   if (!TOOL_NAME.test(name)) throw new Error(`invalid gated tool name: ${name}`);
-  // A name registers once per bridge lifetime; a re-initialised bridge (tests) may register it again.
   if (registeredIn.get(name) === lifetime) {
     throw new Error(`gated tool already registered: ${name}`);
   }
@@ -133,13 +159,51 @@ export function approvalDeps(): Deps {
 export function initApprovals(d: Deps): void {
   deps = d;
   lifetime++;
-  failInterrupted(d.db)
+  ready = failInterrupted(d.db)
     .then((rows) => {
       for (const r of rows) void announceNow(toApproval(r));
       if (rows.length) d.log("approvals interrupted", { count: rows.length });
     })
     .catch((e) => d.log("approvals init failed", { error: (e as Error).message }));
 }
+
+/** Resolves once initApprovals has failed the interrupted rows (await it before serving). */
+export function approvalsReady(): Promise<void> {
+  return ready;
+}
+
+const locks = new Map<string, Promise<unknown>>();
+/**
+ * Runs `fn` alone for `key` in this process. The caps (pending, auto, open questions) are
+ * count-then-insert; the Db seam has no transactions, and one bridge owns the database.
+ */
+export async function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = locks.get(key) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  const tail = next.catch(() => {});
+  locks.set(key, tail);
+  try {
+    return await next;
+  } finally {
+    if (locks.get(key) === tail) locks.delete(key);
+  }
+}
+
+/** Resolves to undefined when `p` takes longer than `ms`. */
+export function withTimeout<T>(
+  p: Promise<T>,
+  ms: number = POST_TIMEOUT_MS,
+): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<undefined>((r) => {
+    timer = setTimeout(() => r(undefined), ms);
+    timer.unref?.();
+  });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
+const tooLarge = (args: Record<string, unknown>) =>
+  Buffer.byteLength(JSON.stringify(args)) > MAX_ARGS_BYTES;
 
 export function ttlFromEnv(): number {
   const n = Number(process.env.SA_APPROVAL_TTL_MS || DEFAULT_APPROVAL_TTL_MS);
@@ -183,12 +247,15 @@ async function stamp(a: Approval, text: string): Promise<void> {
   const d = approvalDeps();
   if (!d.agentHost.postAs) return;
   try {
-    await d.agentHost.postAs(a.agent_id, a.chat_id, text, {
-      replyTo: a.reply_to,
-      meta: { approval: { id: a.id, status: a.status } },
-    });
+    const posted = withTimeout(
+      d.agentHost.postAs(a.agent_id, a.chat_id, text, {
+        replyTo: a.reply_to,
+        meta: { approval: { id: a.id, status: a.status } },
+      }),
+    );
+    if ((await posted) === undefined) d.log("approval stamp timed out", { id: a.id });
   } catch (e) {
-    d.log("approval stamp failed", { id: a.id, error: (e as Error).message });
+    d.log("approval stamp failed", { id: a.id, error: (e as Error).name });
   }
 }
 
@@ -215,7 +282,16 @@ async function resolveApprover(req: GateRequest, spec: GatedToolSpec): Promise<s
   return agent.scope === "personal" ? agent.owner_user_id : req.requesterUserId;
 }
 
-/** Runs an approved row once and records executed | failed; posts the stamp. */
+/** A failure text that is safe in the thread: only messages written for people pass. */
+function safeFailure(e: unknown): string {
+  if (e instanceof ArgsError || e instanceof ExecError) return e.message.slice(0, ERROR_MAX);
+  return INTERNAL;
+}
+
+/**
+ * Runs an approved row once and records executed | failed; posts the stamp. The args are
+ * validated again now, so membership and target rules hold at execute time, not request time.
+ */
 async function run(
   row: ApprovalRow,
   spec: GatedToolSpec | undefined,
@@ -225,27 +301,51 @@ async function run(
   const claimed = toApproval(row);
   let status: "executed" | "failed";
   let result: string;
+  let shown: string;
   if (!spec) {
     status = "failed";
-    result = GONE;
+    result = shown = GONE;
   } else {
     try {
-      result = (await spec.executor.execute(claimed.args, execCtx(claimed))).slice(0, RESULT_MAX);
+      const args = await spec.executor.validate(claimed.args, validateCtx(claimed));
+      const out = await spec.executor.execute(args, execCtx(claimed));
+      result = out.slice(0, RESULT_MAX);
       status = "executed";
+      shown = (spec.executor.publicResult?.(result) ?? DONE).slice(0, ERROR_MAX) || DONE;
     } catch (e) {
       status = "failed";
-      result = `failed: ${(e as Error).message.slice(0, ERROR_MAX)}`;
+      result = shown = `failed: ${safeFailure(e)}`;
+      d.log("approval execute failed", {
+        id: claimed.id,
+        tool: claimed.tool,
+        error: (e as Error).name,
+      });
     }
   }
   const done = await finish(d.db, row.id, status, result);
   const a = done ? toApproval(done) : claimed;
   d.log("approval finished", { id: a.id, tool: a.tool, status: a.status });
   await announceNow(a);
-  if (spec?.executor.stamp !== false) {
-    await stamp(a, result ? `${who} · ${a.tool} · ${result}` : `${who} · ${a.tool}`);
-  }
+  if (spec?.executor.stamp !== false) await stamp(a, `${who} · ${a.tool} · ${shown}`);
   return a;
 }
+
+const validateCtx = (a: {
+  agent_id: string;
+  chat_id: string;
+  approver_user_id: string;
+  requester_user_id: string | null;
+}): ValidateCtx => {
+  const d = approvalDeps();
+  return {
+    db: d.db,
+    agentId: a.agent_id,
+    chatId: a.chat_id,
+    approverUserId: a.approver_user_id,
+    requesterUserId: a.requester_user_id,
+    opsSimUrl: d.opsSimUrl,
+  };
+};
 
 export async function requestApproval(req: GateRequest): Promise<GateResult> {
   const d = approvalDeps();
@@ -267,22 +367,25 @@ export async function requestApproval(req: GateRequest): Promise<GateResult> {
     [req.agentId, req.chatId],
   );
   if (!info) return { status: "error", error: "invalid_args", message: "Unknown agent or chat." };
+  if (tooLarge(req.args)) return { status: "error", error: "invalid_args", message: TOO_LARGE };
   let args: Record<string, unknown>;
   try {
-    args = await spec.executor.validate(req.args, {
-      db: d.db,
-      agentId: req.agentId,
-      chatId: req.chatId,
-      approverUserId: approver,
-      requesterUserId: req.requesterUserId,
-      opsSimUrl: d.opsSimUrl,
-    });
+    args = await spec.executor.validate(
+      req.args,
+      validateCtx({
+        agent_id: req.agentId,
+        chat_id: req.chatId,
+        approver_user_id: approver,
+        requester_user_id: req.requesterUserId,
+      }),
+    );
   } catch (e) {
     if (e instanceof ArgsError) {
       return { status: "error", error: "invalid_args", message: e.message };
     }
     throw e;
   }
+  if (tooLarge(args)) return { status: "error", error: "invalid_args", message: TOO_LARGE };
   const preview = spec.executor.preview(args, {
     agentName: info.agent_name,
     chatTitle: info.chat_title,
@@ -301,23 +404,34 @@ export async function requestApproval(req: GateRequest): Promise<GateResult> {
     approverUserId: approver,
     ttlMs: req.ttlMs ?? spec.defaultTtlMs ?? ttlFromEnv(),
   };
-  if (spec.executor.alwaysAllowed && (await hasGrant(d.db, approver, req.agentId, req.tool))) {
-    const auto = await insertAutoApproved(d.db, row);
-    remember(req.turnId, auto.id);
-    d.log("approval auto", { id: auto.id, tool: auto.tool, agent: auto.agent_id });
-    await announceNow(toApproval(auto));
-    const a = await run(auto, spec, `Auto-approved for ${auto.approver_name}`);
+  const tooMany: GateResult = {
+    status: "error",
+    error: "too_many_pending",
+    message: `There are already ${MAX_PENDING_PER_CHAT} approvals waiting in this chat. Wait for a decision.`,
+  };
+  // A grant needs a person who asked in this chat (never a proactive turn).
+  const granted =
+    spec.executor.alwaysAllowed &&
+    req.requesterUserId !== null &&
+    (await isHumanMember(d.db, req.chatId, req.requesterUserId)) &&
+    (await hasGrant(d.db, approver, req.agentId, req.tool));
+  const placed = await withLock(`approvals:${req.agentId}:${req.chatId}`, async () => {
+    const n = await usage(d.db, req.agentId, req.chatId);
+    if (n.pending >= MAX_PENDING_PER_CHAT) return null;
+    if (granted && n.autoLastHour < MAX_AUTO_PER_HOUR) {
+      return { auto: true, row: await insertAutoApproved(d.db, row) };
+    }
+    return { auto: false, row: await insertApproval(d.db, row) };
+  });
+  if (!placed) return tooMany;
+  remember(req.turnId, placed.row.id);
+  const created = placed.row;
+  if (placed.auto) {
+    d.log("approval auto", { id: created.id, tool: created.tool, agent: created.agent_id });
+    await announceNow(toApproval(created));
+    const a = await run(created, spec, `Auto-approved for ${created.approver_name}`);
     return { status: a.status === "executed" ? "executed" : "failed", approval: a };
   }
-  const created = await insertApproval(d.db, row, MAX_PENDING_PER_CHAT);
-  if (!created) {
-    return {
-      status: "error",
-      error: "too_many_pending",
-      message: `There are already ${MAX_PENDING_PER_CHAT} approvals waiting in this chat. Wait for a decision.`,
-    };
-  }
-  remember(req.turnId, created.id);
   d.log("approval created", { id: created.id, tool: created.tool, agent: created.agent_id });
   const a = toApproval(created);
   await announceNow(a);
@@ -341,10 +455,19 @@ export function forgetTurn(turnId: string): void {
   byTurn.delete(turnId);
 }
 
+/** The approver, while still an active human member of the approval's chat. */
+async function isApprover(row: ApprovalRow | null, userId: string): Promise<boolean> {
+  return (
+    !!row &&
+    row.approver_user_id === userId &&
+    (await isHumanMember(approvalDeps().db, row.chat_id, userId))
+  );
+}
+
 /** Why a claim updated nothing: re-read the row. */
 async function noClaim(id: string, userId: string): Promise<DecideResult> {
   const row = await getApproval(approvalDeps().db, id);
-  if (!row || row.approver_user_id !== userId) return { ok: false, code: "not_found" };
+  if (!row || !(await isApprover(row, userId))) return { ok: false, code: "not_found" };
   const a = toApproval(row);
   // still pending, so the claim failed on expires_at
   if (a.status === "pending") return { ok: false, code: "expired" };
@@ -358,7 +481,7 @@ export async function decide(
 ): Promise<DecideResult> {
   const d = approvalDeps();
   const current = await getApproval(d.db, id);
-  if (!current || current.approver_user_id !== userId) return { ok: false, code: "not_found" };
+  if (!current || !(await isApprover(current, userId))) return { ok: false, code: "not_found" };
   if (current.status !== "pending") return noClaim(id, userId);
   const spec = registry.get(current.tool);
   const name = current.approver_name;
@@ -375,34 +498,35 @@ export async function decide(
   }
 
   let args = json(current.args);
+  let preview: ApprovalPreview | undefined;
   if (spec && dec.args) {
     const editable = new Set(spec.executor.editable);
     if (Object.keys(dec.args).some((k) => !editable.has(k))) {
       return { ok: false, code: "invalid_args" };
     }
     try {
-      args = await spec.executor.validate(
-        { ...args, ...dec.args },
-        {
-          db: d.db,
-          agentId: current.agent_id,
-          chatId: current.chat_id,
-          approverUserId: current.approver_user_id,
-          requesterUserId: current.requester_user_id,
-          opsSimUrl: d.opsSimUrl,
-        },
-      );
+      args = await spec.executor.validate({ ...args, ...dec.args }, validateCtx(current));
     } catch (e) {
       if (e instanceof ArgsError) return { ok: false, code: "invalid_args" };
       throw e;
     }
+    if (tooLarge(args)) return { ok: false, code: "invalid_args" };
+    // The card and the record show what actually runs.
+    preview = spec.executor.preview(args, {
+      agentName: current.agent_name,
+      chatTitle: current.chat_title,
+    });
   }
-  const row = await claimDecision(d.db, id, userId, "approved", args);
+  const row = await claimDecision(d.db, id, userId, "approved", args, preview);
   if (!row) return noClaim(id, userId);
   d.log("approval approved", { id, tool: row.tool });
   await announceNow(toApproval(row));
   if (dec.always && spec?.executor.alwaysAllowed) {
-    await insertGrant(d.db, userId, row.agent_id, row.tool);
+    try {
+      await insertGrant(d.db, userId, row.agent_id, row.tool);
+    } catch (e) {
+      d.log("approval grant failed", { id, error: (e as Error).name });
+    }
   }
   return { ok: true, approval: await run(row, spec, `Approved by ${name}`) };
 }
@@ -412,7 +536,7 @@ async function denied(spec: GatedToolSpec | undefined, a: Approval): Promise<voi
   try {
     await spec.executor.onDenied(a, execCtx(a));
   } catch (e) {
-    approvalDeps().log("approval onDenied failed", { id: a.id, error: (e as Error).message });
+    approvalDeps().log("approval onDenied failed", { id: a.id, error: (e as Error).name });
   }
 }
 
@@ -421,7 +545,13 @@ export async function cancel(id: string, userId: string): Promise<CancelResult> 
   const row = await cancelPending(d.db, id, userId);
   if (!row) {
     const now = await getApproval(d.db, id);
-    if (!now || now.requester_user_id !== userId) return { ok: false, code: "not_found" };
+    if (
+      !now ||
+      now.requester_user_id !== userId ||
+      !(await isHumanMember(d.db, now.chat_id, userId))
+    ) {
+      return { ok: false, code: "not_found" };
+    }
     return { ok: false, code: "already_decided" };
   }
   const a = toApproval(row);

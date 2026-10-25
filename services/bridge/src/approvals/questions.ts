@@ -5,7 +5,7 @@ import type { Db } from "../db.js";
 import { registerTools } from "../mcp/registry.js";
 import type { Authenticate } from "../plugin-api.js";
 import { publish } from "./events.js";
-import { approvalDeps, setQuestionSweep, ttlFromEnv } from "./service.js";
+import { approvalDeps, setQuestionSweep, ttlFromEnv, withLock, withTimeout } from "./service.js";
 import { humanMembers, isHumanMember } from "./store.js";
 
 export const ASK_USER_TEMPLATES = [
@@ -109,34 +109,40 @@ export function registerAskUser(): void {
         const parsed = parseAsk(args);
         if (typeof parsed === "string") return parsed;
         const d = approvalDeps();
-        const [open] = await ctx.db.query<{ n: number }>(
-          `select count(*)::int as n from sa.questions
-           where agent_id = $1 and chat_id = $2 and reply_to is not distinct from $3
-             and status = 'open' and expires_at > now()`,
-          [turn.agentId, turn.chatId, turn.replyTo],
-        );
-        if ((open?.n ?? 0) >= MAX_OPEN_PER_THREAD) return TOO_MANY;
+        const requester = turn.requesterUserId;
         const id = randomBytes(10).toString("hex");
-        await ctx.db.query(
-          `insert into sa.questions (id, agent_id, chat_id, reply_to, turn_id, requester_user_id,
+        const placed = await withLock(`questions:${turn.agentId}:${turn.chatId}`, async () => {
+          const [open] = await ctx.db.query<{ n: number }>(
+            `select count(*)::int as n from sa.questions
+             where agent_id = $1 and chat_id = $2 and reply_to is not distinct from $3
+               and status = 'open' and expires_at > now()`,
+            [turn.agentId, turn.chatId, turn.replyTo],
+          );
+          if ((open?.n ?? 0) >= MAX_OPEN_PER_THREAD) return false;
+          await ctx.db.query(
+            `insert into sa.questions (id, agent_id, chat_id, reply_to, turn_id, requester_user_id,
              question, options, expires_at)
            values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, now() + ($9::float8 * interval '1 millisecond'))`,
-          [
-            id,
-            turn.agentId,
-            turn.chatId,
-            turn.replyTo,
-            turn.turnId,
-            turn.requesterUserId,
-            parsed.question,
-            JSON.stringify(parsed.options),
-            ttlFromEnv(),
-          ],
-        );
-        const messageId = await d.agentHost.postAs?.(turn.agentId, turn.chatId, parsed.question, {
+            [
+              id,
+              turn.agentId,
+              turn.chatId,
+              turn.replyTo,
+              turn.turnId,
+              requester,
+              parsed.question,
+              JSON.stringify(parsed.options),
+              ttlFromEnv(),
+            ],
+          );
+          return true;
+        });
+        if (!placed) return TOO_MANY;
+        const post = d.agentHost.postAs?.(turn.agentId, turn.chatId, parsed.question, {
           replyTo: turn.replyTo,
           meta: { question: { id, options: parsed.options } },
         });
+        const messageId = post ? await withTimeout(post).catch(() => null) : null;
         if (!messageId) {
           await ctx.db.query("update sa.questions set status = 'canceled' where id = $1", [id]);
           d.log("question post failed", { id, agent: turn.agentId });
@@ -194,7 +200,9 @@ export function registerQuestionRoutes(
     const userId = await authenticate(req, reply);
     if (!userId) return;
     const q = await getQuestion(db, (req.params as { id: string }).id);
-    if (!q || q.requester_user_id !== userId) return reply.code(404).send({ error: "not_found" });
+    if (!q || q.requester_user_id !== userId || !(await isHumanMember(db, q.chat_id, userId))) {
+      return reply.code(404).send({ error: "not_found" });
+    }
     const body = AnswerRequest.safeParse(req.body);
     if (!body.success) return reply.code(400).send({ error: "bad_request" });
     if (q.status !== "open" || q.expires_at <= Date.now()) {

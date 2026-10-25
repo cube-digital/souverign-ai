@@ -1,8 +1,19 @@
-import { addTurnHooks } from "../agents/turn-hooks.js";
+import type { TextMeta } from "@sa/protocol";
+import { addTurnHooks, hasBeforeReplyHooks } from "../agents/turn-hooks.js";
 import { registerAskUser } from "../approvals/questions.js";
 import { registerApprovalRoutes } from "../approvals/routes.js";
-import { approvalsInTurn, forgetTurn, initApprovals, startSweeper } from "../approvals/service.js";
+import {
+  approvalsInTurn,
+  approvalsReady,
+  forgetTurn,
+  gatedTool,
+  initApprovals,
+  startSweeper,
+} from "../approvals/service.js";
 import type { BridgePlugin } from "../plugin-api.js";
+
+const namesGatedTool = (trace: TextMeta["trace"]): boolean =>
+  (trace ?? []).some((s) => s.kind === "tool" && gatedTool(s.name) !== undefined);
 
 let stopSweeper: (() => void) | null = null;
 
@@ -11,17 +22,24 @@ export const plugin: BridgePlugin = {
   name: "approvals",
   async init(ctx) {
     initApprovals({ db: ctx.db, agentHost: ctx.agentHost, opsSimUrl: ctx.opsSimUrl, log: ctx.log });
+    await approvalsReady();
     registerAskUser();
+    // Registered before any other before-reply hook (plugins init in name order), so a later
+    // hold or failure keeps `trace: undefined` in the accumulated meta.
+    if (hasBeforeReplyHooks()) ctx.log("approvals hook is not the first before-reply hook");
     addTurnHooks({
       name: "approvals",
-      beforeReply: async (ctx) => {
-        const ids = approvalsInTurn(ctx.turnId);
-        // The trace holds the gated tools' args, which only the approver may see.
-        return ids.length
-          ? { action: "post", meta: { approvals: ids.slice(0, 4), trace: undefined } }
-          : { action: "post" };
+      beforeReply: async (turn, draft) => {
+        const ids = approvalsInTurn(turn.turnId);
+        const strip = ids.length > 0 || namesGatedTool(draft.meta.trace);
+        const meta: Partial<TextMeta> = {
+          ...(ids.length ? { approvals: ids.slice(0, 4) } : {}),
+          // The trace holds the gated tools' args and results, which only the approver may see.
+          ...(strip ? { trace: undefined } : {}),
+        };
+        return { action: "post", meta };
       },
-      onTurnEnd: (ctx) => forgetTurn(ctx.turnId),
+      onTurnEnd: (turn) => forgetTurn(turn.turnId),
     });
   },
   routes(app, deps) {

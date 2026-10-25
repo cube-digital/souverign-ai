@@ -41,6 +41,10 @@ const select = (src: string) =>
 const updated = (db: Db, sql: string, params: unknown[]) =>
   db.query<ApprovalRow>(`with x as (${sql} returning *) ${select("x")}`, params);
 
+const member = (chatCol: string, userParam: string) =>
+  `exists (select 1 from sa.chat_members m where m.chat_id = ${chatCol}
+     and m.member_type = 'user' and m.member_id = ${userParam} and m.removed_at is null)`;
+
 const json = (v: unknown) => (typeof v === "string" ? (JSON.parse(v) as unknown) : v);
 
 /** `alwaysAllowed` comes from the tool registry, not the row. */
@@ -102,25 +106,32 @@ const insertValues = (a: NewApproval) => [
   a.ttlMs,
 ];
 
-/**
- * Inserts a pending approval unless `(agent, chat)` already has `maxPending` live pending ones.
- * Returns null when refused.
- */
-export async function insertApproval(
+/** Live pending approvals and auto-approved runs in the last hour for `(agent, chat)`. */
+export async function usage(
   db: Db,
-  a: NewApproval,
-  maxPending: number,
-): Promise<ApprovalRow | null> {
+  agentId: string,
+  chatId: string,
+): Promise<{ pending: number; autoLastHour: number }> {
+  const [r] = await db.query<{ pending: number; auto: number }>(
+    `select count(*) filter (where status = 'pending' and expires_at > now())::int as pending,
+       count(*) filter (where auto and created_at > now() - interval '1 hour')::int as auto
+     from sa.approvals where agent_id = $1 and chat_id = $2`,
+    [agentId, chatId],
+  );
+  return { pending: r?.pending ?? 0, autoLastHour: r?.auto ?? 0 };
+}
+
+/** Inserts a pending approval; the caller holds the cap lock. */
+export async function insertApproval(db: Db, a: NewApproval): Promise<ApprovalRow> {
   const [row] = await updated(
     db,
     `insert into sa.approvals ${INSERT_COLS}
-     select $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, 'pending', null, null, false,
-       now() + ($12::float8 * interval '1 millisecond')
-     where (select count(*) from sa.approvals
-            where agent_id = $2 and chat_id = $3 and status = 'pending' and expires_at > now()) < $13`,
-    [...insertValues(a), maxPending],
+     values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, 'pending', null, null, false,
+       now() + ($12::float8 * interval '1 millisecond'))`,
+    insertValues(a),
   );
-  return row ?? null;
+  if (!row) throw new Error("approval insert returned no row");
+  return row;
 }
 
 /** A grant: the row starts approved and auto, decided by the approver. */
@@ -149,6 +160,7 @@ export async function listForApprover(
   return db.query<ApprovalRow>(
     `${select("sa.approvals")}
      where a.approver_user_id = $1 and ($2::text is null or a.agent_id = $2)
+       and ${member("a.chat_id", "$1")}
        and ($3 = 'all' or a.status = 'pending')
      order by a.created_at desc, a.id limit 100`,
     [userId, q.agentId ?? null, q.status],
@@ -163,25 +175,32 @@ export async function listForRequester(
   return db.query<ApprovalRow>(
     `${select("sa.approvals")}
      where a.requester_user_id = $1 and ($2::text is null or a.agent_id = $2)
+       and ${member("a.chat_id", "$1")}
        and ($3 = 'all' or a.status = 'pending')
      order by a.created_at desc, a.id limit 100`,
     [userId, q.agentId ?? null, q.status],
   );
 }
 
-/** First decision wins: only a pending, unexpired row of this approver changes. */
+/**
+ * First decision wins: only a pending, unexpired row of this approver changes, and only while
+ * the approver is still an active member of its chat. `preview` replaces the stored one (edits).
+ */
 export async function claimDecision(
   db: Db,
   id: string,
   userId: string,
   status: "approved" | "denied",
   args: Record<string, unknown>,
+  preview?: ApprovalPreview,
 ): Promise<ApprovalRow | null> {
   const [row] = await updated(
     db,
-    `update sa.approvals set status = $2, decided_by = $3, decided_at = now(), args = $4::jsonb
-     where id = $1 and status = 'pending' and approver_user_id = $3 and expires_at > now()`,
-    [id, status, userId, JSON.stringify(args)],
+    `update sa.approvals set status = $2, decided_by = $3, decided_at = now(), args = $4::jsonb,
+       preview = coalesce($5::jsonb, preview)
+     where id = $1 and status = 'pending' and approver_user_id = $3 and expires_at > now()
+       and ${member("sa.approvals.chat_id", "$3")}`,
+    [id, status, userId, JSON.stringify(args), preview ? JSON.stringify(preview) : null],
   );
   return row ?? null;
 }
@@ -209,7 +228,8 @@ export async function cancelPending(
   const [row] = await updated(
     db,
     `update sa.approvals set status = 'canceled', decided_by = $2, decided_at = now()
-     where id = $1 and status = 'pending' and requester_user_id = $2`,
+     where id = $1 and status = 'pending' and requester_user_id = $2
+       and ${member("sa.approvals.chat_id", "$2")}`,
     [id, userId],
   );
   return row ?? null;
