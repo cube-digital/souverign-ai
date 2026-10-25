@@ -126,7 +126,7 @@ export function registerAskUser(): void {
           await ctx.db.query(
             `insert into sa.questions (id, agent_id, chat_id, reply_to, turn_id, requester_user_id,
              question, options, expires_at)
-           values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, now() + ($9::float8 * interval '1 millisecond'))`,
+           values ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, now() + ($9::float8 * interval '1 millisecond'))`,
             [
               id,
               turn.agentId,

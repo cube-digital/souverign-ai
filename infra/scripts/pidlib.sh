@@ -7,6 +7,7 @@ expected_cmd() { # expected_cmd <name> -> ERE matched against `ps -o command=`
     llm) echo 'vllm-mlx|start-llm' ;;
     whisper) echo 'whisper-server|start-whisper' ;;
     hermes-smoke) echo 'hermes' ;;
+    memory) echo 'sa-memory|sa_memory' ;;
     *) echo '^$' ;;
   esac
 }

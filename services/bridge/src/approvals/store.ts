@@ -126,7 +126,7 @@ export async function insertApproval(db: Db, a: NewApproval): Promise<ApprovalRo
   const [row] = await updated(
     db,
     `insert into sa.approvals ${INSERT_COLS}
-     values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, 'pending', null, null, false,
+     values ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9::text::jsonb, $10, $11, 'pending', null, null, false,
        now() + ($12::float8 * interval '1 millisecond'))`,
     insertValues(a),
   );
@@ -139,7 +139,7 @@ export async function insertAutoApproved(db: Db, a: NewApproval): Promise<Approv
   const [row] = await updated(
     db,
     `insert into sa.approvals ${INSERT_COLS}
-     values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, 'approved', $11, now(), true,
+     values ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9::text::jsonb, $10, $11, 'approved', $11, now(), true,
        now() + ($12::float8 * interval '1 millisecond'))`,
     insertValues(a),
   );
@@ -196,8 +196,8 @@ export async function claimDecision(
 ): Promise<ApprovalRow | null> {
   const [row] = await updated(
     db,
-    `update sa.approvals set status = $2, decided_by = $3, decided_at = now(), args = $4::jsonb,
-       preview = coalesce($5::jsonb, preview)
+    `update sa.approvals set status = $2, decided_by = $3, decided_at = now(), args = $4::text::jsonb,
+       preview = coalesce($5::text::jsonb, preview)
      where id = $1 and status = 'pending' and approver_user_id = $3 and expires_at > now()
        and ${member("sa.approvals.chat_id", "$3")}`,
     [id, status, userId, JSON.stringify(args), preview ? JSON.stringify(preview) : null],

@@ -124,7 +124,7 @@ async function remember(ctx: ToolCtx, args: Record<string, unknown>): Promise<st
   const parts = JSON.stringify([{ label: null, text }]);
   await ctx.db.query(
     `insert into sa.knowledge_items (id, agent_id, kind, title, parts, tags, origin_chat_id, taught_by)
-     values ($1, $2, 'note', $3, $4::jsonb, $5, $6, null)`,
+     values ($1, $2, 'note', $3, $4::text::jsonb, $5, $6, null)`,
     [id, ctx.agentId, text.slice(0, 80), parts, tags as string[], ctx.chatId],
   );
   try {
