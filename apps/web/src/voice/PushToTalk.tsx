@@ -103,7 +103,8 @@ export function PushToTalk({ onSend, disabled }: { onSend(rec: Rec): void; disab
   );
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="relative flex items-center gap-2">
+      {/* the hint floats above the button: if it took space, the button would slide away from the pointer and cancel */}
       <button
         type="button"
         aria-label="Hold to talk"
@@ -128,14 +129,17 @@ export function PushToTalk({ onSend, disabled }: { onSend(rec: Rec): void; disab
         </svg>
       </button>
       {active && (
-        <div className="flex items-center gap-2 text-[12px] text-text-1">
+        <div className="absolute right-0 bottom-full mb-1 flex items-center gap-2 whitespace-nowrap rounded-md bg-bg-1 px-2 py-1 text-[12px] text-text-1 shadow">
           <span className="h-2 w-2 rounded-full bg-danger" aria-hidden="true" />
           <span>{clock(elapsed)}</span>
           <span className="text-text-3">Release to send · Esc to cancel</span>
         </div>
       )}
       {note && !active && (
-        <div role="status" className="text-[12px] text-text-2">
+        <div
+          role="status"
+          className="absolute right-0 bottom-full mb-1 whitespace-nowrap text-[12px] text-text-2"
+        >
           {note}
         </div>
       )}
