@@ -26,6 +26,12 @@ async function admin(): Promise<RoomAdmin | null> {
 
 const TIMEOUT_MS = 5000;
 
+/** False only when the call server is configured but not answering (room actions would fail). */
+export async function roomAdminReachable(): Promise<boolean> {
+  if (override || !process.env.LIVEKIT_API_SECRET) return true;
+  return livekitAvailable();
+}
+
 /**
  * True when the action happened or there is nothing to do (no call server running);
  * false when the call server failed or timed out, so the caller can try again later.

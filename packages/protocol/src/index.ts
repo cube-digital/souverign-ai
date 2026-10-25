@@ -641,7 +641,9 @@ export const CallNotes = z.object({
 export type CallNotes = z.infer<typeof CallNotes>;
 
 export const AnchorRequest = z.object({ message_id: Id });
-export const NotetakerInvite = z.object({ media_key: B64.optional() });
+/** LiveKit media key: base64url (no padding) of 32 random bytes. */
+export const MediaKey = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const NotetakerInvite = z.object({ media_key: MediaKey.optional() });
 export const ConsentRequest = z.object({ decision: z.enum(["accepted", "declined"]) });
 
 /** worker → bridge (internal) */

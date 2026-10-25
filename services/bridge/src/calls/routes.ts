@@ -11,7 +11,7 @@ import { displayName, humanMembers, isHumanMember } from "../approvals/store.js"
 import type { Db } from "../db.js";
 import type { Log, RouteDeps } from "../plugin-api.js";
 import { LIMITS, Limiter } from "./limits.js";
-import { closeRoom, kickFromRoom } from "./livekit-admin.js";
+import { closeRoom, kickFromRoom, roomAdminReachable } from "./livekit-admin.js";
 import { livekitAvailable, livekitUrl } from "./livekit-health.js";
 import {
   CallError,
@@ -91,7 +91,15 @@ export function makeLifecycle(db: Db, hooks: CallHooks, log: Log): Lifecycle {
       timers.set(callId, t);
     },
     async reconcile() {
-      for (const r of await strandedParticipants(db)) {
+      const rows = await strandedParticipants(db);
+      if (rows.length === 0) return;
+      // The call server is down: one line per sweep, not one per row; the next sweep retries.
+      // Access does not wait for this, the store already joins active membership.
+      if (!(await roomAdminReachable())) {
+        log("call reconcile skipped", { code: "livekit_unavailable", rows: rows.length });
+        return;
+      }
+      for (const r of rows) {
         // Marked left only once the room confirms; a failed kick is tried again next sweep.
         if (!(await kickFromRoom(r.call_id, r.user_id, log))) continue;
         await markLeft(db, r.call_id, r.user_id);
@@ -294,10 +302,11 @@ export function registerCallRoutes(
     if (!c) return;
     const body = NotetakerInvite.safeParse(req.body ?? {});
     if (!body.success) return reply.code(400).send({ error: "invalid_request" });
-    // The media key only matters when call audio is end-to-end encrypted.
+    // The media key only matters when call audio is end-to-end encrypted; without it the worker
+    // could not decrypt anything, so it is not started.
     const mediaKey = c.call.e2ee ? body.data.media_key : undefined;
-    if (mediaKey !== undefined && mediaKey.length > 64) {
-      return reply.code(400).send({ error: "invalid_request" });
+    if (c.call.e2ee && mediaKey === undefined) {
+      return reply.code(400).send({ error: "media_key_required" });
     }
     if (!(await allow(reply, "invite", c.userId, c.call.id, LIMITS.invite))) return;
     if (Date.now() - (failedAt.get(c.call.id) ?? 0) < NOTETAKER_COOLDOWN_MS) {
