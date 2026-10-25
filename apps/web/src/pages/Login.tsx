@@ -1,6 +1,14 @@
 import type { UserSummary } from "@sa/protocol";
-import { type FormEvent, useEffect, useState } from "react";
-import { ApiFailure, users as fetchUsers, login, type Session, setSession } from "../api";
+import { type FormEvent, useEffect, useRef, useState } from "react";
+import {
+  ApiFailure,
+  users as fetchUsers,
+  login,
+  oidcExchange,
+  type Session,
+  setSession,
+} from "../api";
+import { GOOGLE_TRUST_LINE, loginErrorText, takeLoginReturn, useAuthProviders } from "../auth/oidc";
 import { Avatar, Button, Input } from "../ds";
 
 export function Login({ onSignedIn }: { onSignedIn: (s: Session) => void }) {
@@ -9,6 +17,32 @@ export function Login({ onSignedIn }: { onSignedIn: (s: Session) => void }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const providers = useAuthProviders();
+  const started = useRef(false);
+
+  // Runs once; no cleanup cancel, because StrictMode double-invokes effects.
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    const ret = takeLoginReturn();
+    if (!ret) return;
+    if ("error" in ret) {
+      setError(loginErrorText(ret.error));
+      return;
+    }
+    setBusy(true);
+    oidcExchange(ret.code)
+      .then((s) => {
+        setSession(s);
+        onSignedIn(s);
+      })
+      .catch((err) => {
+        const status = err instanceof ApiFailure ? err.status : 0;
+        setError(loginErrorText(status === 401 ? "expired" : "failed"));
+        setBusy(false);
+      });
+  }, [onSignedIn]);
 
   useEffect(() => {
     fetchUsers()
@@ -44,6 +78,22 @@ export function Login({ onSignedIn }: { onSignedIn: (s: Session) => void }) {
       <div className="w-full max-w-sm rounded-xl border border-border-soft bg-bg-1 p-6">
         <h1 className="mb-1 text-[15px] font-semibold text-text-0">Sovereign Agents</h1>
         <p className="mb-4 text-text-2">Who is signing in?</p>
+        {busy && !picked && <p className="mb-4 text-text-2">Signing in…</p>}
+        {providers.oidc.map((p) => (
+          <a
+            key={p.id}
+            href={`/api/auth/oidc/${p.id}/start`}
+            className="mb-2 inline-flex h-9 w-full cursor-pointer items-center justify-center rounded-md border border-text-0 bg-text-0 px-4 text-[13px] font-semibold text-bg-0 hover:opacity-90"
+          >
+            Sign in with {p.label}
+          </a>
+        ))}
+        {providers.oidc.length > 0 && (
+          <>
+            <p className="mb-4 text-[12px] text-text-3">{GOOGLE_TRUST_LINE}</p>
+            <p className="mb-3 text-center text-[12px] text-text-3">or pick a demo user</p>
+          </>
+        )}
         <div className="mb-4 flex flex-col gap-2">
           {list.map((u) => (
             <Button

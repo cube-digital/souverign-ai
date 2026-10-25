@@ -1,6 +1,7 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import { useState } from "react";
 import { PendingPill } from "../approvals/PendingPill";
+import { GOOGLE_TRUST_LINE, useAuthProviders } from "../auth/oidc";
 import { Avatar, Button, Icons, Kbd, Menu } from "../ds";
 import { useSession } from "../state/session";
 import { getTheme, setTheme } from "./theme";
@@ -15,6 +16,7 @@ export function TopBar({
   onSwitchUser: () => void;
 }) {
   const { user } = useSession();
+  const google = useAuthProviders().oidc.length > 0;
   const [theme, setThemeState] = useState(getTheme);
   const flip = () => {
     const next = theme === "dark" ? "light" : "dark";
@@ -26,7 +28,9 @@ export function TopBar({
       <p className="flex min-w-0 items-center gap-1.5 truncate text-[12px] text-text-2">
         <Icons.Lock className="shrink-0" />
         <span className="truncate">
-          Every model runs on this Mac · the relay sees ciphertext only
+          {google
+            ? GOOGLE_TRUST_LINE
+            : "Every model runs on this Mac · the relay sees ciphertext only"}
         </span>
       </p>
       <div className="ml-auto flex items-center gap-1.5">

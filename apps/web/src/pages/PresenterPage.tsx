@@ -1,6 +1,7 @@
 import type { RelayRecentRow } from "@sa/protocol";
 import { useEffect, useState } from "react";
 import { SHARED_TICKET_KEY } from "../api";
+import { useAuthProviders } from "../auth/oidc";
 import { Chip } from "../ds";
 import { formatSize, shortId, timeOf } from "../lib/format";
 
@@ -38,6 +39,7 @@ function useRecent(): RelayRecentRow[] {
 
 export function PresenterPage() {
   const rows = useRecent();
+  const google = useAuthProviders().oidc.length > 0;
   const latest = [...rows].sort((a, b) => b.seq - a.seq).slice(0, 3);
   return (
     <div className="flex min-h-full flex-col bg-bg-0 text-[13px] text-text-0">
@@ -45,6 +47,15 @@ export function PresenterPage() {
         <span aria-hidden="true" className="inline-block h-5 w-5 rounded-sm bg-ai" />
         <h1 className="text-[15px] font-semibold">Presenter view</h1>
         <span className="text-text-2">Four people, one Mac</span>
+        {google && (
+          <Chip
+            tone="warn"
+            role="status"
+            title="Sign-in contacts Google; chats and AI stay on this Mac"
+          >
+            Google sign-in on
+          </Chip>
+        )}
       </header>
       <main className="grid flex-1 grid-cols-2 gap-3.5 p-3.5">
         {SLOTS.map((n) => (
