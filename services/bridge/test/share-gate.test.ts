@@ -106,25 +106,33 @@ describe("share gate (ask)", () => {
     expect(metaOf(notice)?.held).toBe(row?.id);
   }, 30000);
 
-  it("an expired preview never posts the answer and starts no retry", async () => {
+  it("an expired preview posts a status line, never the answer, and starts no retry", async () => {
     const s = await askSetup();
     await s.ana.engine.sendText(s.chat, `@Nora ${RECALL_DIRECTIVE}`);
     await expect.poll(() => textsFrom(s.ana, s.nora.device_id).length, { timeout: 8000 }).toBe(1);
     await s.g.w.db.query(
-      "update sa.approvals set expires_at = now() - interval '1 minute' where status = 'pending'",
+      "update sa.approvals set created_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' where status = 'pending'",
     );
     const stop = startSweeper(20);
 
     await expect
       .poll(async () => (await s.g.approvals())[0]?.status, { timeout: 5000 })
       .toBe("expired");
+    await expect.poll(() => textsFrom(s.ana, s.nora.device_id).length, { timeout: 5000 }).toBe(2);
     await sleep(500);
     stop();
 
-    const texts = seenTexts(s, s.nora.device_id);
-    expect(texts.some((t) => t.includes("47 days"))).toBe(false);
-    expect(texts).not.toContain(NO_HITS_REPLY);
-    expect((await s.g.approvals()).map((r) => r.status)).toEqual(["expired"]);
+    const msgs = textsFrom(s.ana, s.nora.device_id);
+    const [row] = await s.g.approvals();
+    expect(msgs.map(textOf)).toEqual([
+      "Nora prepared an answer that uses what Ana taught it. Waiting for Ana to approve.",
+      "Expired after 60 min without a decision \u00b7 share_answer",
+    ]);
+    expect(metaOf(msgs[1]!)).toMatchObject({ approval: { id: row?.id, status: "expired" } });
+    expect(metaOf(msgs[1]!)?.trace).toBeUndefined();
+    expect(metaOf(msgs[1]!)?.citations).toBeUndefined();
+    expect(JSON.stringify(s.ana.seen.map((m) => m.body))).not.toContain("47 days");
+    expect(row?.status).toBe("expired");
   }, 30000);
 
   it("a DM with the owner never holds, even with ask", async () => {
