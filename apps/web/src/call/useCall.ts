@@ -9,6 +9,9 @@ import type { MediaSession } from "./media";
 
 export type MediaStatus = "connecting" | "connected" | "failed" | "off";
 
+// A leave is deferred one tick so a StrictMode remount (or a quick re-entry) can cancel it.
+const pendingLeave = new Map<string, ReturnType<typeof setTimeout>>();
+
 /** Fire-and-forget leave that survives the page going away; sendBeacon cannot carry the header. */
 function leaveKeepalive(callId: string): void {
   try {
@@ -36,8 +39,17 @@ export function useCall(chatId: string, callId: string) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const mediaRef = useRef<MediaSession | null>(null);
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
+
+  const e2ee = info?.e2ee ?? null;
+  const mediaKey = (() => {
+    for (const list of Object.values(messages)) {
+      for (const m of list) {
+        const c = m.body?.type === "text" ? m.body.meta?.call : undefined;
+        if (c?.call_id === callId && c.media_key) return c.media_key;
+      }
+    }
+    return undefined;
+  })();
 
   const inviterId = info?.notetaker?.invited_by ?? null;
   const isInviter = inviterId !== null && inviterId === user.id;
@@ -79,9 +91,17 @@ export function useCall(chatId: string, callId: string) {
     [callId, isInviter, loadNotes],
   );
 
-  // Media: ask for a token, then connect (lazy) unless there is no call server.
+  // Media: ask for a token, then connect (lazy) unless there is no call server. With end-to-end
+  // audio the chat key arrives with the anchor message; never connect without it.
   useEffect(() => {
+    if (e2ee === null) return;
+    if (e2ee && !mediaKey) {
+      setMedia("connecting");
+      const t = setTimeout(() => setMedia("failed"), 10_000);
+      return () => clearTimeout(t);
+    }
     let live = true;
+    let session: MediaSession | null = null;
     let unsub: Array<() => void> = [];
     (async () => {
       try {
@@ -91,20 +111,17 @@ export function useCall(chatId: string, callId: string) {
           setMedia("off");
           return;
         }
-        const key = Object.values(messagesRef.current)
-          .flat()
-          .map((m) => (m.body?.type === "text" ? m.body.meta?.call : undefined))
-          .find((c) => c?.call_id === callId && c.media_key)?.media_key;
         const { connectMedia } = await import("./media");
         const s = await connectMedia({
           url: tok.url,
           token: tok.token,
-          ...(key ? { e2eeKey: key } : {}),
+          ...(e2ee && mediaKey ? { e2eeKey: mediaKey } : {}),
         });
         if (!live) {
           void s.leave();
           return;
         }
+        session = s;
         mediaRef.current = s;
         unsub = [
           s.onState(setMedia),
@@ -119,19 +136,31 @@ export function useCall(chatId: string, callId: string) {
     return () => {
       live = false;
       for (const u of unsub) u();
+      if (session) {
+        void session.leave();
+        if (mediaRef.current === session) mediaRef.current = null;
+      }
     };
-    // the key is read once at join; later messages must not reconnect the call
-  }, [callId]);
+  }, [callId, e2ee, mediaKey]);
 
-  // Leave on unmount and when the tab goes away.
+  // Leave when the tab goes away and on a real unmount (not a StrictMode remount).
   useEffect(() => {
+    const pending = pendingLeave.get(callId);
+    if (pending) {
+      clearTimeout(pending);
+      pendingLeave.delete(callId);
+    }
     const onHide = () => leaveKeepalive(callId);
     window.addEventListener("pagehide", onHide);
     return () => {
       window.removeEventListener("pagehide", onHide);
-      leaveKeepalive(callId);
-      void mediaRef.current?.leave();
-      mediaRef.current = null;
+      pendingLeave.set(
+        callId,
+        setTimeout(() => {
+          pendingLeave.delete(callId);
+          leaveKeepalive(callId);
+        }, 0),
+      );
     };
   }, [callId]);
 

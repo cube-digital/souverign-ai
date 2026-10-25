@@ -16,6 +16,9 @@ export async function connectMedia(opts: {
 }): Promise<MediaSession> {
   const { Room, RoomEvent, Track, ExternalE2EEKeyProvider } = await import("livekit-client");
   const keyProvider = opts.e2eeKey ? new ExternalE2EEKeyProvider() : undefined;
+  const worker = keyProvider
+    ? new Worker(new URL("livekit-client/e2ee-worker", import.meta.url))
+    : undefined;
   const room = new Room({
     adaptiveStream: false,
     dynacast: false,
@@ -23,7 +26,7 @@ export async function connectMedia(opts: {
       ? {
           e2ee: {
             keyProvider,
-            worker: new Worker(new URL("livekit-client/e2ee-worker", import.meta.url)),
+            worker: worker as Worker,
           },
         }
       : {}),
@@ -65,6 +68,8 @@ export async function connectMedia(opts: {
     setState("connected");
   } catch (e) {
     setState("failed");
+    await room.disconnect().catch(() => {});
+    worker?.terminate();
     throw e;
   }
 
@@ -75,7 +80,11 @@ export async function connectMedia(opts: {
     async leave() {
       for (const el of audios.values()) el.remove();
       audios.clear();
-      await room.disconnect();
+      try {
+        await room.disconnect();
+      } finally {
+        worker?.terminate();
+      }
     },
     onActiveSpeakers(cb) {
       speakerCbs.add(cb);

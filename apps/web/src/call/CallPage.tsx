@@ -63,7 +63,8 @@ export function CallPage() {
       )}
       {c.media === "failed" && (
         <p role="status" className="rounded-md border border-warn p-3 text-[13px] text-warn-ink">
-          Call audio could not connect. Consent and notes still work.
+          Call audio could not connect, or the chat key for this call is missing. Consent and notes
+          still work.
         </p>
       )}
       {c.error && (
@@ -80,7 +81,7 @@ export function CallPage() {
         showCapture={nt !== null}
       />
 
-      {nt && mine && nt.invited_by !== c.me.id && (
+      {nt && nt.status === "active" && mine && nt.invited_by !== c.me.id && (
         <ConsentBanner
           inviter={nt.invited_by_name}
           notetaker={nt.agent_name}
