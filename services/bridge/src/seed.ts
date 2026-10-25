@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { hashPin } from "./auth.js";
 import { openDb } from "./db.js";
 import { migrate } from "./migrate.js";
+import { parseDemoEmails } from "./oidc/config.js";
 
 const USERS = [
   ["ana", "Ana"],
@@ -42,6 +43,13 @@ for (const [id, name] of USERS) {
       name,
     ]);
   }
+}
+for (const [id, email] of parseDemoEmails(process.env.SA_DEMO_EMAILS)) {
+  const linked = await db.query(
+    "update sa.users set email = $2 where id = $1 and kind = 'person' returning id",
+    [id, email],
+  );
+  if (linked.length > 0) console.log(`demo email linked: ${id}`);
 }
 await db.close();
 
