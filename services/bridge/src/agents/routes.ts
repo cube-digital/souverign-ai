@@ -256,13 +256,15 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
     // Another device of this user may have keyed the DM already, and a key once stored for an
     // epoch is final: a second key for that epoch would leave the agent unable to read the new
     // device. Once the agent holds the current epoch, key_epoch moves past it, which tells a
-    // device without a key to claim a fresh epoch instead of minting epoch 1.
+    // device without a key to claim a fresh epoch instead of minting epoch 1. Epoch 1 is also
+    // spent when the agent holds no key yet: the device that created the DM (or the first one
+    // to open a DM the bridge created) may be minting it right now.
     if (!created) {
       await db.query(
-        `update sa.chats c set key_epoch = k.top + 1
+        `update sa.chats c set key_epoch = coalesce(k.top, 1) + 1
            from (select max(epoch) as top from sa.agent_chat_keys
                   where device_id = $2 and chat_id = $1) k
-          where c.id = $1 and k.top is not null and k.top >= c.key_epoch`,
+          where c.id = $1 and ((k.top is null and c.key_epoch = 1) or k.top >= c.key_epoch)`,
         [dmChat, agent.device_id],
       );
     }
