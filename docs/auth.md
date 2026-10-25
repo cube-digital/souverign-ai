@@ -32,7 +32,9 @@ Register one per base URL you use. Google matches exactly: scheme, host, port an
 
 - `AUTH_ALLOWED_EMAILS`: a comma-separated list of exact addresses.
 - `AUTH_ALLOWED_DOMAINS`: whole domains. This works only for Google Workspace accounts, because the token must carry the `hd` (hosted domain) claim.
+- Once `AUTH_ALLOWED_DOMAINS` is set, a listed email on a custom domain without the `hd` (Workspace) claim is refused, even if it is in `AUTH_ALLOWED_EMAILS`.
 - In Testing mode, Google also refuses anyone not listed under *Test users*.
+- Behind the Vite proxy or `tailscale serve`, every request reaches the bridge from 127.0.0.1, so the Google sign-in rate limit is shared by everyone. PIN login is unaffected.
 - Removing an email from the list blocks that person at their next sign-in. A session already open lasts until it expires.
 
 ## Linking a demo user

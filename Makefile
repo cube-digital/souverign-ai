@@ -39,7 +39,7 @@ dev: ## chat stack for manual testing: postgres, relay, bridge, web on http://12
 seed: ## create the four demo users; prints their PINs once
 	docker compose -f infra/docker-compose.yaml up -d --wait postgres
 	pnpm --filter @sa/bridge run migrate
-	pnpm --filter @sa/bridge run seed
+	set -a; if [ -f .env ]; then . ./.env; fi; set +a; pnpm --filter @sa/bridge run seed
 
 e2e: ## Playwright: four browsers chat end to end (self-contained, no docker)
 	pnpm --filter @sa/e2e run e2e
