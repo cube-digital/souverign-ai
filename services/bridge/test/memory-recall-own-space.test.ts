@@ -13,6 +13,7 @@ const AGENT = "tech";
 const T0 = Date.UTC(2026, 9, 20, 14, 5);
 let db: Db;
 let mem: FakeMemory;
+let toolLog: ToolLog;
 
 beforeEach(async () => {
   db = await openDb("pglite://memory");
@@ -35,7 +36,7 @@ beforeEach(async () => {
       "insert into sa.chat_members (chat_id, member_type, member_id, role, joined_at) values ('gen',$1,$2,'member','2026-01-02T00:00:00Z')",
       [type, id],
     );
-  const toolLog = new ToolLog();
+  toolLog = new ToolLog();
   setToolDeps({ db, opsSimUrl: "http://127.0.0.1:1", toolLog });
   mem = new FakeMemory();
   setMemoryForTests(mem);
@@ -88,5 +89,60 @@ describe("memory_recall keeps the agent's own space", () => {
     const ids = recallsFor("t1").map((r) => r.hit.source.id);
     expect(ids).toHaveLength(5);
     expect(ids.filter((id) => id === "doc1")).toEqual(["doc1"]);
+  });
+
+  async function seed() {
+    await mem.ingest({
+      namespace: `agent:${AGENT}`,
+      kind: "knowledge",
+      origin_chat_id: null,
+      source: { type: "doc", id: "doc1", title: "contract.txt", ts: T0 },
+      text: "Termination. Either party may terminate with a notice period of 47 days.",
+    });
+    for (let i = 1; i <= 6; i++)
+      await mem.ingest({
+        namespace: "chat:gen",
+        kind: "conversation",
+        origin_chat_id: null,
+        source: { type: "message", id: `m${i}`, title: "Ana", ts: T0 + i * 1000 },
+        text: "@Tech what is the contract termination notice period?",
+      });
+  }
+
+  it("never swaps a taught hit in when the agent does not share private knowledge in chats", async () => {
+    await db.query("update sa.agents set share_private_in_chats = 'never' where id = $1", [AGENT]);
+    await seed();
+
+    await invokeTool(AGENT, "memory_recall", { query: "contract termination notice period" });
+
+    const ids = recallsFor("t1").map((r) => r.hit.source.id);
+    expect(ids).toHaveLength(5);
+    expect(ids).not.toContain("doc1");
+  });
+
+  it("never swaps a taught hit in on a retry turn that excludes taught knowledge", async () => {
+    await seed();
+    toolLog.begin(AGENT, "gen", { requesterUserId: "ana", turnId: "t2" });
+    beginTurn(
+      {
+        turnId: "t2",
+        agentId: AGENT,
+        agentName: "Tech",
+        chatId: "gen",
+        replyTo: null,
+        triggerMessageId: null,
+        requesterUserId: "ana",
+        trigger: "mention",
+        prompt: "hi",
+        noTaught: true,
+      },
+      () => {},
+    );
+
+    await invokeTool(AGENT, "memory_recall", { query: "contract termination notice period" });
+
+    const ids = recallsFor("t2").map((r) => r.hit.source.id);
+    expect(ids).toHaveLength(5);
+    expect(ids).not.toContain("doc1");
   });
 });
