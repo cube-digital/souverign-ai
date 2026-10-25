@@ -12,20 +12,29 @@ import type { BridgePlugin, Log } from "../plugin-api.js";
 const STATE_TTL_MS = 600_000;
 const CODE_TTL_MS = 60_000;
 const MAX_PENDING = 1000;
+const MAX_PENDING_PER_IP = 10;
 const COOKIE = "sa_oidc";
 const COOKIE_PATH = "/api/auth/oidc";
+const BIND_COOKIE = "sa_oidc_bind";
+const BIND_PATH = "/api/auth/oidc/exchange";
 
-type Pending = { provider: string; nonce: string; verifier: string; expires: number };
-type LoginCode = { userId: string; displayName: string; provider: string; expires: number };
+type Pending = { ip: string; provider: string; nonce: string; verifier: string; expires: number };
+type LoginCode = {
+  binding: string;
+  userId: string;
+  displayName: string;
+  provider: string;
+  expires: number;
+};
 
 const same = (a: string, b: string) =>
   a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const reasonOf = (e: unknown) => (e instanceof OidcError ? e.reason : "error");
 
-function readCookie(req: FastifyRequest): string | undefined {
+function readCookie(req: FastifyRequest, name = COOKIE): string | undefined {
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === COOKIE) return v.join("=");
+    if (k === name) return v.join("=");
   }
   return undefined;
 }
@@ -36,10 +45,11 @@ async function joinSeedRooms(db: Db, hooks: BridgeHooks, log: Log, userId: strin
     "select id from sa.chats where kind = 'room' and seed_key is not null and history_until_seq is not null order by id",
   );
   for (const r of rooms) {
-    await db.query(
-      "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'member') on conflict do nothing",
+    const added = await db.query(
+      "insert into sa.chat_members (chat_id, member_type, member_id, role) values ($1, 'user', $2, 'member') on conflict do nothing returning chat_id",
       [r.id, userId],
     );
+    if (added.length === 0) continue;
     try {
       await hooks.onMemberAdded?.(r.id, userId);
     } catch {
@@ -85,10 +95,11 @@ export function createOidcPlugin(
       });
       if (clients.size === 0) return;
 
-      // Modest per-client rate limit on the OIDC routes.
+      // Modest per-client rate limit on the OIDC routes, keyed on the matched route (not the raw URL).
+      // req.ip is the socket address; behind a proxy set Fastify trustProxy to that proxy's address only.
       const hits = new Map<string, { n: number; reset: number }>();
       app.addHook("onRequest", async (req, reply) => {
-        if (!req.url.startsWith("/api/auth/oidc/")) return;
+        if (!req.routeOptions.url?.startsWith("/api/auth/oidc/")) return;
         const t = now();
         if (hits.size > 5000) for (const [k, v] of hits) if (v.reset <= t) hits.delete(k);
         const h = hits.get(req.ip);
@@ -105,6 +116,9 @@ export function createOidcPlugin(
       };
       const cookie = (value: string, maxAgeS: number) =>
         `${COOKIE}=${value}; Path=${COOKIE_PATH}; HttpOnly; SameSite=Lax; Max-Age=${maxAgeS}${c.secureCookie ? "; Secure" : ""}`;
+      // Short-lived and unreadable by scripts; it expires with the login code (no Set-Cookie on exchange).
+      const bindCookie = (value: string, maxAgeS: number) =>
+        `${BIND_COOKIE}=${value}; Path=${BIND_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAgeS}${c.secureCookie ? "; Secure" : ""}`;
       const back = (reply: FastifyReply, fragment: string) =>
         reply
           .header("cache-control", "no-store")
@@ -118,7 +132,6 @@ export function createOidcPlugin(
           const client = clients.get(provider);
           if (!client) return reply.code(404).send({ error: "not_found" });
           sweep();
-          if (pending.size >= MAX_PENDING) return back(reply, "sa_login_error=busy");
           const state = newToken();
           const nonce = newToken();
           const verifier = newToken();
@@ -129,7 +142,17 @@ export function createOidcPlugin(
             log("oidc start failed", { provider, reason: reasonOf(e) });
             return back(reply, "sa_login_error=unavailable");
           }
-          pending.set(state, { provider, nonce, verifier, expires: now() + STATE_TTL_MS });
+          // Bound memory: each client keeps a few flows, and the oldest flow makes room when full.
+          const mine = [...pending].filter(([, v]) => v.ip === req.ip);
+          if (mine.length >= MAX_PENDING_PER_IP) pending.delete(mine[0]?.[0] ?? "");
+          if (pending.size >= MAX_PENDING) pending.delete(pending.keys().next().value ?? "");
+          pending.set(state, {
+            ip: req.ip,
+            provider,
+            nonce,
+            verifier,
+            expires: now() + STATE_TTL_MS,
+          });
           return reply
             .header("set-cookie", cookie(state, STATE_TTL_MS / 1000))
             .header("cache-control", "no-store")
@@ -166,23 +189,32 @@ export function createOidcPlugin(
             log("oidc callback failed", { provider, reason: reasonOf(e) });
             return back(reply, "sa_login_error=failed");
           }
-          // The domain claim only vouches for domain allowlist entries; with an emails-only allowlist
-          // the listed address itself is the trust anchor (the acceptance test signs in without hd).
-          const domainClaim = c.allow.domains.size > 0 ? client.cfg.spec.domainClaim : undefined;
-          const r = await resolveUser(db, provider, claims, c.allow, domainClaim);
-          if (!r.ok) {
-            log("oidc login refused", { provider, reason: r.reason });
-            return back(reply, `sa_login_error=${r.reason}`);
-          }
-          if (r.created) {
-            log("oidc user created", { user: r.userId, provider });
+          let loginUser: { userId: string; displayName: string };
+          try {
+            // The domain claim only vouches for domain allowlist entries; with an emails-only allowlist
+            // the listed address itself is the trust anchor (the acceptance test signs in without hd).
+            const domainClaim = c.allow.domains.size > 0 ? client.cfg.spec.domainClaim : undefined;
+            const r = await resolveUser(db, provider, claims, c.allow, domainClaim);
+            if (!r.ok) {
+              log("oidc login refused", { provider, reason: r.reason });
+              return back(reply, `sa_login_error=${r.reason}`);
+            }
+            if (r.created) log("oidc user created", { user: r.userId, provider });
             await joinSeedRooms(db, hooks, log, r.userId);
+            loginUser = r;
+          } catch {
+            log("oidc login failed", { provider, reason: "error" });
+            return back(reply, "sa_login_error=failed");
           }
           sweep();
           const loginCode = newToken();
+          // Bind the code to this browser so a code planted into another browser is useless there.
+          const binding = newToken();
+          reply.header("set-cookie", bindCookie(binding, CODE_TTL_MS / 1000));
           codes.set(hashToken(loginCode), {
-            userId: r.userId,
-            displayName: r.displayName,
+            userId: loginUser.userId,
+            displayName: loginUser.displayName,
+            binding: hashToken(binding),
             provider,
             expires: now() + CODE_TTL_MS,
           });
@@ -195,6 +227,10 @@ export function createOidcPlugin(
         if (!body.success) return reply.code(400).send({ error: "bad_request" });
         const key = hashToken(body.data.code);
         const entry = codes.get(key);
+        // Check the browser binding before consuming the code, so a stranger cannot burn it.
+        const bound = readCookie(req, BIND_COOKIE);
+        if (entry && (!bound || !same(hashToken(bound), entry.binding)))
+          return reply.code(401).send({ error: "bad_binding" });
         codes.delete(key);
         if (!entry || entry.expires <= now()) return reply.code(401).send({ error: "expired" });
         const token = newToken();
