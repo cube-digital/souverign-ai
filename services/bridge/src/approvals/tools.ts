@@ -94,7 +94,7 @@ export function gateReply(r: Awaited<ReturnType<typeof requestApproval>>): strin
       status: "pending",
       approval_id: a.id,
       approver: a.approver_name,
-      message: `Waiting for ${a.approver_name} to approve. Tell them it is waiting for their approval in this thread. Do not call the tool again.`,
+      message: `${a.approver_name} has to approve this first. Say that it is pending their approval in this thread. Do not call the tool again.`,
     });
   }
   if (r.status === "executed") {

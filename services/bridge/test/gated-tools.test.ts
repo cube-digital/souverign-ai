@@ -398,7 +398,7 @@ describe("gated tools (T9)", () => {
       approval_id: personal.approval_id,
       approver: "Ana",
       message:
-        "Waiting for Ana to approve. Tell them it is waiting for their approval in this thread. Do not call the tool again.",
+        "Ana has to approve this first. Say that it is pending their approval in this thread. Do not call the tool again.",
     });
     expect(workspace.approver).toBe("Bob");
     expect(workspace.status).toBe("pending");
