@@ -1,0 +1,19 @@
+[project]
+name = "sa-meeting"
+version = "0.0.0"
+description = "Sovereign Agents call notetaker: per-speaker VAD, local STT, segments to the bridge"
+requires-python = ">=3.12,<3.14"
+dependencies = ["httpx>=0.27", "numpy>=1.26", "pydantic>=2.8"]
+
+[project.optional-dependencies]
+live = ["livekit>=1.0", "livekit-agents[silero]>=1.2"]
+
+[project.scripts]
+sa-meeting = "sa_meeting.main:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sa_meeting"]

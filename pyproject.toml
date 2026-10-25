@@ -9,16 +9,17 @@ package = false
 environments = ["sys_platform == 'darwin' and platform_machine == 'arm64'"]
 
 [tool.uv.workspace]
-members = ["infra/py", "services/memory", "services/audio-api"]
+members = ["infra/py", "services/memory", "services/audio-api", "services/meeting-agent"]
 
 [tool.uv.sources]
 sa-infra = { workspace = true }
 sa-memory = { workspace = true }
 sa-audio = { workspace = true }
+sa-meeting = { workspace = true }
 
 [dependency-groups]
-dev = ["pytest>=8.3", "ruff>=0.6", "sa-infra", "sa-memory", "sa-audio"]
-live = ["sa-infra[live]", "sa-memory[models]", "sa-audio[models]"]
+dev = ["pytest>=8.3", "ruff>=0.6", "sa-infra", "sa-memory", "sa-audio", "sa-meeting"]
+live = ["sa-infra[live]", "sa-memory[models]", "sa-audio[models]", "sa-meeting[live]"]
 
 [tool.ruff]
 line-length = 100
@@ -34,4 +35,4 @@ markers = [
   "live: loads real models or needs the running local stack (make models, make up)",
   "pg: needs the Docker Postgres on 127.0.0.1:5433",
 ]
-testpaths = ["infra/py/tests", "services/memory/tests", "services/audio-api/tests"]
+testpaths = ["infra/py/tests", "services/memory/tests", "services/audio-api/tests", "services/meeting-agent/tests"]

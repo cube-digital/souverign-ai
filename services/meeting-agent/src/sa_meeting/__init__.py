@@ -1,0 +1,1 @@
+"""Sovereign Agents call notetaker."""

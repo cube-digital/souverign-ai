@@ -33,6 +33,9 @@ down: ## stop everything make up started
 smoke: ## live checks against the running stack, offline, with egress + memory guards
 	HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 uv run --group live pytest -m live infra/py/tests/live
 
+livekit: ## start the local call server if installed (brew install livekit); prints a hint otherwise
+	bash infra/scripts/livekit.sh start
+
 dev: ## chat stack for manual testing: postgres, relay, bridge, web on http://127.0.0.1:5173
 	infra/scripts/dev.sh
 
@@ -62,4 +65,11 @@ roster-smoke: ## live: @Ops and @QA answer one message in a thread with tools (n
 memory-smoke: ## live: teach a doc, ask in chat, citation present; approve and deny an action (needs make up + make dev)
 	pnpm --filter @sa/e2e run memory-smoke
 
-.PHONY: help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke roster-smoke memory-smoke
+voice-smoke: ## live: a voice message to Ops gets a spoken reply; prints latency (needs make up + make dev)
+	pnpm --filter @sa/e2e run voice-smoke
+
+call-smoke: ## live: two synthetic speakers, one decliner and the notetaker; SKIPPED without livekit-server
+	@command -v livekit-server >/dev/null 2>&1 || { echo "SKIPPED: livekit-server is not installed (human step: brew install livekit)"; exit 0; }
+	pnpm --filter @sa/e2e run call-smoke
+
+.PHONY: livekit voice-smoke call-smoke help install check prereqs models up down smoke dev seed e2e demo share unshare agents-smoke roster-smoke memory-smoke
