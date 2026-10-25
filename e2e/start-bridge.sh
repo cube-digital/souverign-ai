@@ -20,4 +20,24 @@ PINS=.run/demo-pins.txt
 [[ -f $PINS ]] && cp "$PINS" "$RUN/demo-pins.bak"
 pnpm --filter @sa/bridge run seed >/dev/null
 if [[ -f $RUN/demo-pins.bak ]]; then mv "$RUN/demo-pins.bak" "$PINS"; else rm -f "$PINS"; fi
-exec pnpm --filter @sa/bridge run start
+
+# fake memory service (127.0.0.1 only) and an emptied outbox
+export MEMORY_PORT=8656
+export MEMORY_URL=http://127.0.0.1:8656
+export MEMORY_TOKEN=e2e-memory-token
+export SA_OUTBOX_DIR="$PWD/.run/e2e-outbox"
+rm -rf "$SA_OUTBOX_DIR"
+mkdir -p "$SA_OUTBOX_DIR"
+pnpm --filter @sa/bridge exec tsx test/fakes/memory-fake-main.ts &
+MEM_PID=$!
+BRIDGE_PID=
+cleanup() {
+  [[ -n $BRIDGE_PID ]] && kill "$BRIDGE_PID" 2>/dev/null || true
+  kill "$MEM_PID" 2>/dev/null || true
+  pkill -P "$MEM_PID" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 143' TERM INT
+pnpm --filter @sa/bridge run start &
+BRIDGE_PID=$!
+wait "$BRIDGE_PID"

@@ -385,8 +385,16 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: RouteDeps): 
     const id = newId();
     await db.query(
       `insert into sa.knowledge_items (id, agent_id, kind, title, parts, origin_chat_id, target_message_id, taught_by)
-       values ($1, $2, 'correction', 'Correction', $3, $4, $5, $6)`,
-      [id, agent.id, JSON.stringify([{ label: null, text: full }]), origin, message_id, userId],
+       values ($1, $2, 'correction', $7, $3, $4, $5, $6)`,
+      [
+        id,
+        agent.id,
+        JSON.stringify([{ label: null, text: full }]),
+        origin,
+        message_id,
+        userId,
+        text.slice(0, 120),
+      ],
     );
     try {
       await mem.ingest({
