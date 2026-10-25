@@ -135,6 +135,8 @@ export function SessionProvider({ session, children }: { session: Session; child
   const [engine, setEngine] = useState<ChatEngine | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [mentions, setMentions] = useState<Record<string, boolean>>({});
   const toast = useOptionalToast();
@@ -255,7 +257,11 @@ export function SessionProvider({ session, children }: { session: Session; child
               return { ...prev, [m.chatId]: next };
             });
             if (m.status === "ok") clearActivity(m.chatId, m.senderDevice);
-            const quiet = m.body?.type === "system" || m.body?.type === "reaction";
+            // published call notes are counted by their call.notes_published event instead
+            const quiet =
+              m.body?.type === "system" ||
+              m.body?.type === "reaction" ||
+              (m.body?.type === "text" && m.body.meta?.meeting !== undefined);
             if (
               !quiet &&
               m.senderDevice !== dev.deviceId &&
@@ -341,10 +347,13 @@ export function SessionProvider({ session, children }: { session: Session; child
         toastRef.current?.push(`Notes from ${title} are ready`, "info", {
           label: "Open",
           onClick: () => {
+            // the notes sit in the call's thread: open that thread, not a thread under the notes
+            const note = messagesRef.current[chatId]?.find((x) => x.id === anchor);
+            const root = (note?.body?.type === "text" && note.body.reply_to) || anchor;
             window.history.pushState(
               null,
               "",
-              `/c/${encodeURIComponent(chatId)}/t/${encodeURIComponent(anchor)}`,
+              `/c/${encodeURIComponent(chatId)}/t/${encodeURIComponent(root)}`,
             );
             window.dispatchEvent(new PopStateEvent("popstate"));
           },

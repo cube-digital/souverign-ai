@@ -1,5 +1,5 @@
 import { ROSTER } from "@sa/protocol/roster";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { AgentAvatar, Button, Card, useToast } from "../ds";
 import { useSession } from "../state/session";
@@ -13,6 +13,14 @@ export function WelcomePage() {
   const toast = useToast();
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
+  // the user may open a chat from the sidebar while the first run finishes: do not pull them away
+  const here = useRef(true);
+  useEffect(() => {
+    here.current = true;
+    return () => {
+      here.current = false;
+    };
+  }, []);
 
   async function start() {
     setBusy(true);
@@ -25,6 +33,7 @@ export function WelcomePage() {
       toast.push("Could not open your Scribe chat. You can start it later from Agents.", "error");
     }
     markWelcomed(s.user.id);
+    if (!here.current) return;
     const general = list.find((c) => c.seed_key === "general");
     navigate(general ? `/c/${encodeURIComponent(general.id)}` : "/");
   }
