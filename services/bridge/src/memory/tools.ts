@@ -94,16 +94,26 @@ async function recall(ctx: ToolCtx, args: Record<string, unknown>): Promise<stri
   return renderHits(ctx.db, numbered);
 }
 
+/** Control characters (newlines included) become spaces, so a tag stays on one line. */
+function cleanTag(t: string): string {
+  let out = "";
+  for (const ch of t) {
+    const c = ch.codePointAt(0) ?? 0;
+    const ctrl = c < 32 || (c >= 127 && c <= 159) || c === 0x2028 || c === 0x2029;
+    out += ctrl ? " " : ch;
+  }
+  return out.replace(/ +/g, " ").trim().slice(0, 40);
+}
+
 async function remember(ctx: ToolCtx, args: Record<string, unknown>): Promise<string> {
   const text = typeof args.text === "string" ? args.text.trim() : "";
-  const tags = args.tags === undefined ? [] : args.tags;
   if (text.length < 1 || text.length > 1000) return "error: text must be 1 to 1000 characters";
-  if (
-    !Array.isArray(tags) ||
-    tags.length > 5 ||
-    !tags.every((t) => typeof t === "string" && t.length >= 1 && t.length <= 24)
-  )
-    return "error: tags must be at most 5 strings of up to 24 characters";
+  if (args.tags !== undefined && !Array.isArray(args.tags)) return "error: tags must be a list";
+  const tags = ((args.tags ?? []) as unknown[])
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => cleanTag(t))
+    .filter((t) => t.length > 0)
+    .slice(0, 8);
   const mem = memory();
   if (!mem) return OFF;
   if (!ctx.chatId) return NEEDS_CHAT;
