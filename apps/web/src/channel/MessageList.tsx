@@ -1,7 +1,8 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import type { ChatMessage } from "@sa/client";
 import type { Chat } from "@sa/protocol";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import { useSession } from "../state/session";
 import { LiveAnnouncer, LiveStatus } from "./LiveStatus";
 import { MessageItem } from "./MessageItem";
@@ -42,6 +43,31 @@ function MessageListInner({ chat }: { chat: Chat }) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const target = params.get("m");
+  const [lit, setLit] = useState<string | null>(null);
+  const inList = !!target && v.top.some((m) => m.id === target);
+  const replyRoot = useMemo(() => {
+    if (!target || inList) return null;
+    for (const [root, list] of v.replies) if (list.some((r) => r.id === target)) return root;
+    return null;
+  }, [target, inList, v.replies]);
+
+  // A citation link: scroll to the message and mark it for 2 s; a thread reply opens its thread.
+  useEffect(() => {
+    if (replyRoot) navigate(`/c/${encodeURIComponent(chat.id)}/t/${encodeURIComponent(replyRoot)}`);
+  }, [replyRoot, chat.id, navigate]);
+  useEffect(() => {
+    if (!target || !inList) return;
+    stick.current = false;
+    scroller.current
+      ?.querySelector(`[data-message-id="${CSS.escape(target)}"]`)
+      ?.scrollIntoView?.({ block: "center" });
+    setLit(target);
+    const t = setTimeout(() => setLit(null), 2000);
+    return () => clearTimeout(t);
+  }, [target, inList]);
 
   // Follow the bottom when the content grows: new messages, streaming drafts, loading images.
   useEffect(() => {
@@ -84,6 +110,7 @@ function MessageListInner({ chat }: { chat: Chat }) {
         reactions={v.reactions.get(m.id)}
         others={others}
         actions={actions}
+        highlight={lit === m.id}
       />,
     ];
   });
