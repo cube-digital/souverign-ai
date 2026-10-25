@@ -55,6 +55,33 @@ export function buildSim(start: number) {
 
   const raised: { at: number; severity: string; node: string; message: string }[] = [];
   const mock = buildMock(now);
+  const comments = new Map<string, { id: string; author: string; body: string; ts: number }[]>();
+  const allTickets = () => {
+    const t = now();
+    return [
+      {
+        id: "OPS-1412",
+        title: "Call reconnect drops audio on iOS 17",
+        severity: "blocker",
+        status: "open",
+        opened_at: iso(t - 5 * 24 * HOUR),
+      },
+      {
+        id: "OPS-1419",
+        title: "Raft follower lag after restart",
+        severity: "major",
+        status: "open",
+        opened_at: iso(t - 2 * 24 * HOUR),
+      },
+      {
+        id: "OPS-1423",
+        title: "Docs: update upgrade guide for 7.4",
+        severity: "minor",
+        status: "open",
+        opened_at: iso(t - 1 * 24 * HOUR),
+      },
+    ];
+  };
 
   return {
     ...mock,
@@ -245,31 +272,20 @@ export function buildSim(start: number) {
       };
     },
 
+    ticket(id: string) {
+      const found = allTickets().find((x) => x.id === id);
+      return found && { ...found, comments: [...(comments.get(id) ?? [])] };
+    },
+    addComment(id: string, author: string, body: string) {
+      if (!allTickets().some((x) => x.id === id)) return undefined;
+      const list = comments.get(id) ?? [];
+      if (list.length >= 200) return null;
+      const c = { id: `${id}-c${list.length + 1}`, author, body, ts: now() };
+      comments.set(id, [...list, c]);
+      return c;
+    },
     tickets(status: string) {
-      const t = now();
-      const all = [
-        {
-          id: "OPS-1412",
-          title: "Call reconnect drops audio on iOS 17",
-          severity: "blocker",
-          status: "open",
-          opened_at: iso(t - 5 * 24 * HOUR),
-        },
-        {
-          id: "OPS-1419",
-          title: "Raft follower lag after restart",
-          severity: "major",
-          status: "open",
-          opened_at: iso(t - 2 * 24 * HOUR),
-        },
-        {
-          id: "OPS-1423",
-          title: "Docs: update upgrade guide for 7.4",
-          severity: "minor",
-          status: "open",
-          opened_at: iso(t - 1 * 24 * HOUR),
-        },
-      ];
+      const all = allTickets();
       return { status, tickets: all.filter((x) => x.status === status) };
     },
   };
