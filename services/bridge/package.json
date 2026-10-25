@@ -23,6 +23,7 @@
     "exceljs": "^4.4.0",
     "fastify": "^5.12.7",
     "jose": "^6",
+    "livekit-server-sdk": "^2",
     "mammoth": "^1.13.0",
     "postgres": "^3.4.9",
     "sharp": "^0.35.5",

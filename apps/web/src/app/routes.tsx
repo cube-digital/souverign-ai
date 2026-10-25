@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useMatch, useNavigate } from "react-router";
 import { AgentProfilePage } from "../agents/AgentProfilePage";
 import { AgentsDirectoryPage } from "../agents/AgentsDirectoryPage";
 import { getPrefs, setPrefs } from "../api";
+import { CallPage } from "../call/CallPage";
 import { useToast } from "../ds";
 import { needsWelcome } from "../onboarding/firstRun";
 import { WelcomePage } from "../onboarding/WelcomePage";
@@ -49,6 +50,7 @@ export function AppRoutes() {
       <Route path="/c/:chatId" element={<ChannelPage />}>
         <Route path="t/:rootId" element={null} />
       </Route>
+      <Route path="/c/:chatId/call/:callId" element={<CallPage />} />
       <Route path="/agents" element={<AgentsDirectoryPage />} />
       <Route path="/agents/:agentId" element={<AgentProfilePage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

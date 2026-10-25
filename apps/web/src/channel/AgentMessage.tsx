@@ -2,12 +2,16 @@
 import type { ChatMember, MessageBody } from "@sa/protocol";
 import { memo, useState } from "react";
 import Markdown from "react-markdown";
+import { useNavigate } from "react-router";
 import remarkGfm from "remark-gfm";
 import { ApprovalSlot } from "../approvals/ApprovalSlot";
 import { QuestionCard } from "../approvals/QuestionCard";
+import { callApi } from "../call/api";
 import { AgentAvatar, Chip, ChipButton, Icons, StatusDot } from "../ds";
 import { cn } from "../lib/cn";
 import type { Reaction } from "../state/threads";
+import { LatencyHud } from "../voice/LatencyHud";
+import { VoiceMessage } from "../voice/VoiceMessage";
 import { CitationChips } from "./CitationChips";
 import { CorrectionPrompt } from "./CorrectionPrompt";
 import { ReceiptsFooter } from "./ReceiptsFooter";
@@ -95,6 +99,54 @@ const AnswerMarkdown = memo(function AnswerMarkdown({ text }: { text: string }) 
   );
 });
 
+/** Review pending call notes, or send unpublished ones for approval again. */
+function CallNotesActions({
+  chatId,
+  notes,
+}: {
+  chatId: string | undefined;
+  notes: NonNullable<NonNullable<TextBody["meta"]>["call_notes"]>;
+}) {
+  const navigate = useNavigate();
+  const [state, setState] = useState<"idle" | "busy" | "sent" | "failed">("idle");
+  if (notes.state === "pending")
+    return (
+      <div className="mt-2">
+        <ChipButton onClick={() => navigate(`/c/${encodeURIComponent(chatId ?? "")}`)}>
+          Review notes
+        </ChipButton>
+      </div>
+    );
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      {state !== "sent" && (
+        <ChipButton
+          disabled={state === "busy"}
+          onClick={() => {
+            setState("busy");
+            callApi.republish(notes.notes_id).then(
+              () => setState("sent"),
+              () => setState("failed"),
+            );
+          }}
+        >
+          Publish notes again
+        </ChipButton>
+      )}
+      {state === "sent" && (
+        <span role="status" className="text-[12px] text-text-1">
+          Sent for your approval again.
+        </span>
+      )}
+      {state === "failed" && (
+        <span role="alert" className="text-[12px] text-danger">
+          Could not send the notes. Try again.
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** An agent's text answer: AI chip, markdown body, reasoning, receipts and feedback. */
 export function AgentMessage({
   body,
@@ -105,6 +157,8 @@ export function AgentMessage({
   onChip,
   chatId,
   messageId,
+  audio,
+  showLatency = false,
 }: {
   body: TextBody;
   member: ChatMember;
@@ -116,6 +170,10 @@ export function AgentMessage({
   /** where this message lives; needed to send a correction */
   chatId?: string;
   messageId?: string;
+  /** one player for the spoken version of this text */
+  audio?: { load(): Promise<Blob>; durationMs: number } | undefined;
+  /** the viewer asked this by voice: show the voice-to-voice timing */
+  showLatency?: boolean;
 }) {
   const [correcting, setCorrecting] = useState(false);
   const [more, setMore] = useState(false);
@@ -140,6 +198,11 @@ export function AgentMessage({
         {tools > 0 && !meta?.seeded && <Chip>{`${tools} tool${tools === 1 ? "" : "s"}`}</Chip>}
         <span className="text-text-2">{time}</span>
       </div>
+      {audio && (
+        <div className="mt-1">
+          <VoiceMessage load={audio.load} durationMs={audio.durationMs} />
+        </div>
+      )}
       <div className="mt-1 break-words text-text-0 [&_a]:underline [&_code]:font-mono [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:overflow-auto [&_ul]:list-disc [&_ul]:pl-5">
         {meta?.question ? null : meta?.held ? (
           <div className="text-text-2">
@@ -160,6 +223,7 @@ export function AgentMessage({
           options={meta.question.options}
         />
       )}
+      {meta?.call_notes && <CallNotesActions chatId={chatId} notes={meta.call_notes} />}
       {meta?.held && <ApprovalSlot ids={[meta.held]} />}
       {meta?.approvals && meta.approvals.length > 0 && <ApprovalSlot ids={meta.approvals} />}
       {meta?.approval && (
@@ -213,6 +277,12 @@ export function AgentMessage({
       ) : (
         <div className="flex items-end">
           {meta && <ReceiptsFooter meta={meta} />}
+          {showLatency && meta?.latency && (
+            <LatencyHud
+              voiceToVoiceMs={meta.latency.first_audio_ms ?? meta.latency.total_ms}
+              latency={meta.latency}
+            />
+          )}
           <Helpful reactions={reactions} onReact={react} />
         </div>
       )}

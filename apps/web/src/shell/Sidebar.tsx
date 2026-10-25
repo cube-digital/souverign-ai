@@ -30,11 +30,11 @@ function Group({
   );
 }
 
-function Badge({ count }: { count: number }) {
+function Badge({ count, mention }: { count: number; mention?: boolean }) {
   if (count <= 0) return null;
   return (
     <Chip tone="ai" className="ml-auto">
-      {count}
+      {mention ? `@ ${count}` : count}
     </Chip>
   );
 }
@@ -52,7 +52,7 @@ export function Sidebar({
   onOpenAgents?: () => void;
   onNewChat: () => void;
 }) {
-  const { chats, unread } = useSession();
+  const { chats, unread, mentions } = useSession();
   const { agents } = useAgents();
 
   // status dots follow the agents' state, so the shared list is refreshed on a timer
@@ -63,6 +63,12 @@ export function Sidebar({
 
   const channels = chats.filter((c) => c.kind === "room" || c.kind === "group");
   const dms = chats.filter((c) => c.kind === "dm");
+  // agents with their own DM: listed under Agents too, with a name apart from their DM row
+  const inDm = new Set(
+    dms
+      .filter((c) => c.members.filter((m) => m.member_type === "user").length === 1)
+      .flatMap((c) => c.members.filter((m) => m.member_type === "agent").map((m) => m.member_id)),
+  );
   const chatRow = (c: Chat, glyph: React.ReactNode) => (
     <button
       key={c.id}
@@ -73,7 +79,7 @@ export function Sidebar({
     >
       {glyph}
       <span className="truncate">{c.title}</span>
-      <Badge count={unread[c.id] ?? 0} />
+      <Badge count={unread[c.id] ?? 0} mention={mentions?.[c.id] === true} />
     </button>
   );
 
@@ -109,11 +115,15 @@ export function Sidebar({
         }
       >
         {agents?.length === 0 && <EmptyState>No agents yet</EmptyState>}
+        {/* every agent is listed here, also one with its own DM (that row opens the DM, this one
+            the agent); when both rows show the same name, this one is named apart for
+            assistive tech */}
         {(agents ?? []).map((a) => (
           <button
             key={a.id}
             type="button"
             onClick={() => onOpenAgent(a)}
+            aria-label={inDm.has(a.id) ? `Agent ${a.name}, ${a.status}` : undefined}
             className={cn(ROW, "text-text-1")}
           >
             <AgentAvatar name={a.name} id={a.id} rosterId={a.roster_id} size={16} />

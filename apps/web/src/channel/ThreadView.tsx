@@ -5,10 +5,11 @@ import { LiveStatus } from "./LiveStatus";
 import { MessageItem } from "./MessageItem";
 import { useRowActions } from "./rowActions";
 import { agentsOutside, useWorkspaceAgents } from "./shared";
+import { isHiddenVoiceRow, voiceProps, voiceRows } from "./voiceRows";
 
 /** A thread root, its replies and the live status of agents answering in it. */
 export function ThreadView({ chatId, rootId }: { chatId: string; rootId: string }) {
-  const { chats, view } = useSession();
+  const { chats, view, deviceId } = useSession();
   const chat = chats.find((c) => c.id === chatId);
   const workspace = useWorkspaceAgents();
   const actions = useRowActions(chatId);
@@ -16,7 +17,9 @@ export function ThreadView({ chatId, rootId }: { chatId: string; rootId: string 
   if (!chat) return null;
   const v = view(chatId);
   const root = v.top.find((m) => m.id === rootId);
-  const replies = v.replies.get(rootId) ?? [];
+  const allReplies = v.replies.get(rootId) ?? [];
+  const vr = voiceRows(root ? [root, ...allReplies] : allReplies, deviceId);
+  const replies = allReplies.filter((m) => !isHiddenVoiceRow(m, vr.audioIds));
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-auto py-2">
       <ul className="m-0 flex list-none flex-col p-0">
@@ -28,6 +31,7 @@ export function ThreadView({ chatId, rootId }: { chatId: string; rootId: string 
             others={others}
             actions={actions}
             rootId={rootId}
+            {...voiceProps(root, vr)}
           />
         ) : (
           <li className="px-4 text-text-2">This thread's first message is not available.</li>
@@ -44,6 +48,7 @@ export function ThreadView({ chatId, rootId }: { chatId: string; rootId: string 
             others={others}
             actions={actions}
             rootId={rootId}
+            {...voiceProps(m, vr)}
           />
         ))}
       </ul>

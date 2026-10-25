@@ -17,7 +17,9 @@ import {
   approvals as fetchApprovals,
   getQuestion,
 } from "../api";
+import { type BridgeEvent, dispatchBridgeEvent } from "../lib/bridge-events";
 import { openEvents } from "../lib/sse";
+import { isAgentDm, openAgentDm } from "../state/agentDm";
 import { useSession } from "../state/session";
 
 type Store = {
@@ -45,8 +47,31 @@ const withEntry = <T,>(m: ReadonlyMap<string, T>, id: string, v: T): Map<string,
 
 /** Holds approvals, their public shadows and questions; fed by the event stream and refetches. */
 export function ApprovalsProvider({ children }: { children: ReactNode }) {
-  const { user } = useSession();
+  const { user, chats, refreshChats, engine } = useSession();
   const me = user.id;
+  const sessionRef = useRef({ chats, refreshChats, engine });
+  sessionRef.current = { chats, refreshChats, engine };
+  // A request can sit in an agent DM this device holds no key for: the agent opened the DM just
+  // now (the inviter's notes), or another device of mine keyed it. Without a key here, the agent's
+  // later messages there (a "not published" reminder) could not be read on this device.
+  // Several events for one DM can arrive together (create, refetch replays): they share one run,
+  // or each would see no key yet and claim its own epoch.
+  const keying = useRef(new Map<string, Promise<void>>());
+  const keyRequestDm = useCallback((chatId: string): Promise<void> => {
+    const running = keying.current.get(chatId);
+    if (running) return running;
+    const run = (async () => {
+      const s = sessionRef.current;
+      const known = s.chats.find((c) => c.id === chatId);
+      const dm = known ?? (await s.refreshChats()).find((c) => c.id === chatId);
+      const { engine: eng, refreshChats: refresh } = sessionRef.current;
+      const agent = dm && isAgentDm(dm) ? dm.members.find((m) => m.member_type === "agent") : null;
+      if (!agent || !eng || (await eng.latestEpoch(chatId)) > 0) return;
+      await openAgentDm({ engine: eng, refreshChats: refresh }, agent.member_id);
+    })().finally(() => keying.current.delete(chatId));
+    keying.current.set(chatId, run);
+    return run;
+  }, []);
   const [approvals, setApprovals] = useState<ReadonlyMap<string, Approval>>(new Map());
   const [publics, setPublics] = useState<ReadonlyMap<string, ApprovalPublic>>(new Map());
   const [questions, setQuestions] = useState<ReadonlyMap<string, Question>>(new Map());
@@ -85,9 +110,13 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
     const ctl = new AbortController();
     openEvents(
       (e) => {
-        if (e.type === "approval") putApproval(e.approval);
-        else if (e.type === "approval_public") putPublic(e.approval);
+        if (e.type === "approval") {
+          putApproval(e.approval);
+          if (e.approval.status === "pending")
+            void keyRequestDm(e.approval.chat_id).catch(() => {});
+        } else if (e.type === "approval_public") putPublic(e.approval);
         else if (e.type === "question") putQuestion(e.question);
+        else if (/^(call|voice|latency)\./.test(e.type)) dispatchBridgeEvent(e as BridgeEvent);
       },
       {
         signal: ctl.signal,
@@ -140,6 +169,18 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
     [me, approvals, publics, questions, putApproval, putPublic, putQuestion, loadAll],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/** My approvals of one tool in one chat, oldest first (requests no message carries a card for). */
+export function useChatApprovals(chatId: string, tool: string): Approval[] {
+  const { approvals, me } = useStore();
+  return useMemo(
+    () =>
+      [...approvals.values()]
+        .filter((a) => a.chat_id === chatId && a.tool === tool && a.approver_user_id === me)
+        .sort((a, b) => a.created_at - b.created_at),
+    [approvals, me, chatId, tool],
+  );
 }
 
 /** The signed-in user's id. */

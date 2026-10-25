@@ -318,13 +318,49 @@ export const AnswerRequest = z
     (a) => (a.option === undefined) !== (a.text === undefined),
     "exactly one of option or text",
   );
-export const ServerEvent = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("hello"), user_id: z.string() }),
-  z.object({ type: z.literal("approval"), approval: Approval }),
-  z.object({ type: z.literal("approval_public"), approval: ApprovalPublic }),
-  z.object({ type: z.literal("question"), question: Question }),
-]);
-export type ServerEvent = z.infer<typeof ServerEvent>;
+// ---- Voice and calls ----
+export const MAX_VOICE_MS = 60_000;
+export const VoiceInfo = z.object({
+  duration_ms: z.number().int().positive().max(MAX_VOICE_MS),
+});
+export type VoiceInfo = z.infer<typeof VoiceInfo>;
+
+export const VoiceLatency = z.object({
+  stt_ms: z.number().int().nonnegative(),
+  first_token_ms: z.number().int().nonnegative().optional(),
+  first_audio_ms: z.number().int().nonnegative().optional(),
+  total_ms: z.number().int().nonnegative(),
+});
+export type VoiceLatency = z.infer<typeof VoiceLatency>;
+
+export const ActionItem = z.object({
+  owner: z.string().min(1).max(80),
+  text: z.string().min(1).max(300),
+  due: z.string().min(1).max(40).optional(),
+});
+export type ActionItem = z.infer<typeof ActionItem>;
+
+/** Call start/end marker carried in a text message (inside the ciphertext). */
+export const CallMeta = z.object({
+  call_id: Id,
+  op: z.enum(["started", "ended"]),
+  /** LiveKit media key, base64url of 32 random bytes; never sent to the bridge DB */
+  media_key: B64.optional(),
+  duration_ms: z.number().int().nonnegative().optional(),
+});
+export type CallMeta = z.infer<typeof CallMeta>;
+
+export const MeetingMeta = z.object({
+  call_id: Id,
+  action_items: z.array(ActionItem).max(30),
+});
+
+/** Scribe's DM about call notes: review them (pending) or publish them again (not_published). */
+export const CallNotesRef = z.object({
+  call_id: Id,
+  notes_id: Id,
+  state: z.enum(["pending", "not_published"]),
+});
 
 /** Receipts an agent attaches to its reply (inside the ciphertext). */
 export const TextMeta = z.object({
@@ -355,6 +391,15 @@ export const TextMeta = z.object({
   question: z
     .object({ id: z.string().max(40), options: z.array(z.string().max(80)).max(4) })
     .optional(),
+  /** voice reply timings, measured by the bridge */
+  latency: VoiceLatency.optional(),
+  /** the voice file message that speaks this text */
+  audio_id: Id.optional(),
+  /** this text is the transcript of that voice message */
+  transcript_of: Id.optional(),
+  call: CallMeta.optional(),
+  meeting: MeetingMeta.optional(),
+  call_notes: CallNotesRef.optional(),
 });
 export type TextMeta = z.infer<typeof TextMeta>;
 
@@ -378,6 +423,7 @@ export const MessageBody = z.discriminatedUnion("type", [
     key: B64,
     nonce: B64,
     reply_to: Id.optional(),
+    voice: VoiceInfo.optional(),
   }),
   z.object({ type: z.literal("system"), text: z.string().min(1).max(500) }),
   z.object({
@@ -521,3 +567,150 @@ export const AuthProviders = z.object({
 export type AuthProviders = z.infer<typeof AuthProviders>;
 export const OidcExchangeRequest = z.object({ code: z.string().min(20).max(128) });
 export type OidcExchangeRequest = z.infer<typeof OidcExchangeRequest>;
+
+export const ConsentDecision = z.enum(["pending", "accepted", "declined"]);
+export type ConsentDecision = z.infer<typeof ConsentDecision>;
+export const NotetakerStatus = z.enum(["active", "stopped", "finished", "failed"]);
+export type NotetakerStatus = z.infer<typeof NotetakerStatus>;
+export const WorkerState = z.enum(["starting", "joined", "left", "error", "fake"]);
+export type WorkerState = z.infer<typeof WorkerState>;
+
+export const CallParticipant = z.object({
+  user_id: z.string(),
+  name: z.string(),
+  in_call: z.boolean(),
+  consent: ConsentDecision,
+});
+export type CallParticipant = z.infer<typeof CallParticipant>;
+
+export const CallNotetaker = z.object({
+  id: Id,
+  agent_id: z.string(),
+  agent_name: z.string(),
+  invited_by: z.string(),
+  invited_by_name: z.string(),
+  invited_at: z.number().int(),
+  status: NotetakerStatus,
+  worker: WorkerState,
+  stopped_by_name: z.string().nullable(),
+});
+export type CallNotetaker = z.infer<typeof CallNotetaker>;
+
+export const CallInfo = z.object({
+  id: Id,
+  chat_id: Id,
+  room: z.string(),
+  started_by: z.string(),
+  started_at: z.number().int(),
+  ended_at: z.number().int().nullable(),
+  anchor_message_id: Id.nullable(),
+  e2ee: z.boolean(),
+  participants: z.array(CallParticipant),
+  notetaker: CallNotetaker.nullable(),
+});
+export type CallInfo = z.infer<typeof CallInfo>;
+
+export const CallToken = z.object({
+  available: z.boolean(),
+  url: z.string(),
+  token: z.string(),
+  identity: z.string(),
+});
+export type CallToken = z.infer<typeof CallToken>;
+
+export const CallSegment = z.object({
+  id: z.number().int(),
+  speaker_user_id: z.string(),
+  speaker_name: z.string(),
+  /** ms since the call started */
+  t_ms: z.number().int().nonnegative(),
+  text: z.string(),
+});
+export type CallSegment = z.infer<typeof CallSegment>;
+
+export const CallNotesStatus = z.enum(["draft", "pending_approval", "published", "not_published"]);
+export const CallNotes = z.object({
+  id: Id,
+  version: z.number().int().min(1),
+  final: z.boolean(),
+  body_md: z.string(),
+  action_items: z.array(ActionItem),
+  status: CallNotesStatus,
+  approval_id: z.string().nullable(),
+});
+export type CallNotes = z.infer<typeof CallNotes>;
+
+export const AnchorRequest = z.object({ message_id: Id });
+/** LiveKit media key: base64url (no padding) of 32 random bytes. */
+export const MediaKey = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export const NotetakerInvite = z.object({ media_key: MediaKey.optional() });
+export const ConsentRequest = z.object({ decision: z.enum(["accepted", "declined"]) });
+
+/** worker → bridge (internal) */
+export const SegmentIn = z.object({
+  speaker: z.string().regex(/^user:[A-Za-z0-9_-]{1,64}$/),
+  /** epoch ms */
+  t0_ms: z.number().int().nonnegative(),
+  t1_ms: z.number().int().nonnegative(),
+  text: z.string().min(1).max(4000),
+  lang: z.string().max(8).optional(),
+});
+export type SegmentIn = z.infer<typeof SegmentIn>;
+export const WorkerReport = z.object({
+  state: z.enum(["joined", "left", "error"]),
+  detail: z.string().max(200).optional(),
+});
+export const WorkerStateResponse = z.object({
+  status: NotetakerStatus,
+  /** LiveKit identities (`user:<id>`) that may be subscribed right now */
+  consented: z.array(z.string()),
+});
+export type WorkerStateResponse = z.infer<typeof WorkerStateResponse>;
+
+/** SSE events added by this plan (event name = `type`, data = the JSON object). */
+export const CallEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("call.updated"), call: CallInfo }),
+  z.object({ type: z.literal("call.segment"), call_id: Id, segment: CallSegment }),
+  z.object({
+    type: z.literal("call.notes"),
+    call_id: Id,
+    version: z.number().int().min(1),
+    final: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("call.notes_published"),
+    call_id: Id,
+    chat_id: Id,
+    message_id: Id,
+    title: z.string().max(200),
+  }),
+]);
+export type CallEvent = z.infer<typeof CallEvent>;
+export const VoiceEvent = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("voice.chunk"),
+    chat_id: Id,
+    /** the user's voice message this audio answers */
+    source_id: Id,
+    seq: z.number().int().nonnegative(),
+    text: z.string().max(1000),
+    wav_b64: z.string(),
+  }),
+  z.object({
+    type: z.literal("latency.sample"),
+    chat_id: Id,
+    source_id: Id,
+    latency: VoiceLatency,
+  }),
+]);
+export type VoiceEvent = z.infer<typeof VoiceEvent>;
+
+export const ServerEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("hello"), user_id: z.string() }),
+  z.object({ type: z.literal("approval"), approval: Approval }),
+  z.object({ type: z.literal("approval_public"), approval: ApprovalPublic }),
+  z.object({ type: z.literal("question"), question: Question }),
+  ...CallEvent.options,
+  ...VoiceEvent.options,
+]);
+export type ServerEvent = z.infer<typeof ServerEvent>;

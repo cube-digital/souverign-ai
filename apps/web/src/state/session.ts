@@ -26,6 +26,8 @@ import {
   type Session,
   SHARED_TICKET_KEY,
 } from "../api";
+import { useOptionalToast } from "../ds";
+import { onBridgeEvent } from "../lib/bridge-events";
 import { IdbKeyStore } from "../lib/idb-keystore";
 import { isTrustedKeySender } from "./keyTrust";
 import { buildView, type ChatView } from "./threads";
@@ -49,6 +51,8 @@ export type SessionValue = {
   chats: Chat[];
   messages: Record<string, ChatMessage[]>;
   unread: Record<string, number>;
+  /** Chats with an unread mention (an @mention or published call notes), by chat id. */
+  mentions: Record<string, boolean>;
   refreshChats(): Promise<Chat[]>;
   /** Threads and reactions of a chat, derived from its messages. */
   view(chatId: string): ChatView;
@@ -131,7 +135,13 @@ export function SessionProvider({ session, children }: { session: Session; child
   const [engine, setEngine] = useState<ChatEngine | null>(null);
   const [chats, setChats] = useState<Chat[]>([]);
   const [messages, setMessages] = useState<Record<string, ChatMessage[]>>({});
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [unread, setUnread] = useState<Record<string, number>>({});
+  const [mentions, setMentions] = useState<Record<string, boolean>>({});
+  const toast = useOptionalToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const [activity, setActivity] = useState<ActivityState>({});
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const engineRef = useRef<ChatEngine | null>(null);
@@ -247,7 +257,11 @@ export function SessionProvider({ session, children }: { session: Session; child
               return { ...prev, [m.chatId]: next };
             });
             if (m.status === "ok") clearActivity(m.chatId, m.senderDevice);
-            const quiet = m.body?.type === "system" || m.body?.type === "reaction";
+            // published call notes are counted by their call.notes_published event instead
+            const quiet =
+              m.body?.type === "system" ||
+              m.body?.type === "reaction" ||
+              (m.body?.type === "text" && m.body.meta?.meeting !== undefined);
             if (
               !quiet &&
               m.senderDevice !== dev.deviceId &&
@@ -310,8 +324,43 @@ export function SessionProvider({ session, children }: { session: Session; child
 
   const openChat = useCallback((chatId: string | null) => {
     active.current = chatId;
-    if (chatId) setUnread((u) => (u[chatId] ? { ...u, [chatId]: 0 } : u));
+    if (chatId) {
+      setUnread((u) => (u[chatId] ? { ...u, [chatId]: 0 } : u));
+      setMentions((m) => {
+        if (!m[chatId]) return m;
+        const { [chatId]: _seen, ...rest } = m;
+        return rest;
+      });
+    }
   }, []);
+
+  // Published call notes count as a mention and get a toast whose Open goes to the notes message.
+  useEffect(
+    () =>
+      onBridgeEvent((ev) => {
+        if (ev.type !== "call.notes_published") return;
+        const { chat_id: chatId, message_id: anchor, title } = ev;
+        if (chatId !== active.current) {
+          setUnread((u) => ({ ...u, [chatId]: (u[chatId] ?? 0) + 1 }));
+          setMentions((m) => ({ ...m, [chatId]: true }));
+        }
+        toastRef.current?.push(`Notes from ${title} are ready`, "info", {
+          label: "Open",
+          onClick: () => {
+            // the notes sit in the call's thread: open that thread, not a thread under the notes
+            const note = messagesRef.current[chatId]?.find((x) => x.id === anchor);
+            const root = (note?.body?.type === "text" && note.body.reply_to) || anchor;
+            window.history.pushState(
+              null,
+              "",
+              `/c/${encodeURIComponent(chatId)}/t/${encodeURIComponent(root)}`,
+            );
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          },
+        });
+      }),
+    [],
+  );
 
   const views = useRef(new Map<string, { src: ChatMessage[]; dev: string; view: ChatView }>());
   const view = useCallback(
@@ -353,6 +402,7 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
+      mentions,
       refreshChats,
       view,
       openChat,
@@ -369,6 +419,7 @@ export function SessionProvider({ session, children }: { session: Session; child
       chats,
       messages,
       unread,
+      mentions,
       refreshChats,
       view,
       openChat,

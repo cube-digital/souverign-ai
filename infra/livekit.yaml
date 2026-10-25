@@ -1,0 +1,17 @@
+# Local call server for the demo (calls only). Keys come from LIVEKIT_KEYS (infra/scripts/livekit.sh).
+port: 7880
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: false
+  node_ip: 127.0.0.1
+webhook:
+  api_key: sa-dev
+  urls:
+    - http://127.0.0.1:8647/internal/livekit/webhook
+room:
+  empty_timeout: 60
+  max_participants: 12
+logging:
+  level: info
