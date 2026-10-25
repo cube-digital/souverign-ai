@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Speech fixtures for the live voice and call smokes, written to .run/fixtures/.
 #   ask.webm                     Opus 24 k, a question for Ops
-#   ana.wav vlad.wav rares.wav   16 kHz mono, 2 s of leading silence, one sentence each
+#   ana.wav vlad.wav rares.wav   16 kHz mono, 2 s of leading and 2 s of trailing silence, one
+#                                sentence each (the notetaker closes a segment on silence)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 for tool in espeak-ng ffmpeg; do
@@ -26,7 +27,7 @@ say ana "We agreed to move the delivery to the twentieth of March."
 say vlad "I will send the confirmation email by Friday."
 say rares "The secret budget is ninety thousand euros."
 for who in ana vlad rares; do
-  ffmpeg -y -loglevel error -i "$tmp/$who.wav" -af "adelay=2000:all=1" -ar 16000 -ac 1 \
+  ffmpeg -y -loglevel error -i "$tmp/$who.wav" -af "adelay=2000:all=1,apad=pad_dur=2" -ar 16000 -ac 1 \
     -c:a pcm_s16le "$out/$who.wav"
 done
 ls -l "$out"

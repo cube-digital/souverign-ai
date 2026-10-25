@@ -72,11 +72,22 @@ async function loginAs(user: string): Promise<Session> {
 const GIB = 1024 ** 3;
 type Mem = { label: string; gatewayRss: number; swapUsed: number; compressor: number };
 function sampleMem(label: string): Mem {
-  const ps = execFileSync("ps", ["-axo", "rss=,command="], { encoding: "utf8" });
+  // The roster gateways listen on 8701-8709; their command line is a wrapper, so go by port.
   let kb = 0;
-  for (const line of ps.split("\n")) {
-    if (!line.includes("hermes -p sa_agent_")) continue;
-    kb += Number(line.trim().split(/\s+/)[0]) || 0;
+  let pids: string[] = [];
+  try {
+    pids = [
+      ...new Set(
+        execFileSync("lsof", ["-nP", "-iTCP:8701-8709", "-sTCP:LISTEN", "-t"], { encoding: "utf8" })
+          .split("\n")
+          .filter(Boolean),
+      ),
+    ];
+  } catch {
+    // none listening
+  }
+  for (const pid of pids) {
+    kb += Number(execFileSync("ps", ["-o", "rss=", "-p", pid], { encoding: "utf8" }).trim()) || 0;
   }
   const swap = execFileSync("sysctl", ["-n", "vm.swapusage"], { encoding: "utf8" });
   const used = /used = ([\d.]+)([MG])/.exec(swap);
@@ -142,6 +153,14 @@ const ana = await loginAs("ana");
 const vlad = await loginAs("vlad");
 const rares = await loginAs("rares");
 
+// Vlad and Rareș only need a registered device for the chat to be created; they join by API.
+for (const s of [vlad, rares]) {
+  const k = newDeviceKeys();
+  await api(s, "/devices", "POST", {
+    device_id: deviceIdFor(k.publicKey),
+    public_key: k.publicKey,
+  });
+}
 const keys = newDeviceKeys();
 const deviceId = deviceIdFor(keys.publicKey);
 await api(ana, "/devices", "POST", { device_id: deviceId, public_key: keys.publicKey });
