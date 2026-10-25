@@ -45,7 +45,8 @@ it("lists an agent with its own DM in both places: its DM under Direct messages 
     />,
   );
   const nav = screen.getByRole("navigation", { name: "Chats" });
-  expect(await within(nav).findByRole("button", { name: "Agent Ops, running" })).toBeTruthy();
+  // an agent without a DM keeps its plain name
+  expect(await within(nav).findByRole("button", { name: /^Ops/ })).toBeTruthy();
   const agentRow = within(nav).getByRole("button", { name: "Agent Scribe, running" });
   // the DM row keeps its name, so one row answers to "Scribe"
   const dmRow = within(nav).getByRole("button", { name: /^Scribe\b/ });

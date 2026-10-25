@@ -63,6 +63,12 @@ export function Sidebar({
 
   const channels = chats.filter((c) => c.kind === "room" || c.kind === "group");
   const dms = chats.filter((c) => c.kind === "dm");
+  // agents with their own DM: listed under Agents too, with a name apart from their DM row
+  const inDm = new Set(
+    dms
+      .filter((c) => c.members.filter((m) => m.member_type === "user").length === 1)
+      .flatMap((c) => c.members.filter((m) => m.member_type === "agent").map((m) => m.member_id)),
+  );
   const chatRow = (c: Chat, glyph: React.ReactNode) => (
     <button
       key={c.id}
@@ -110,13 +116,14 @@ export function Sidebar({
       >
         {agents?.length === 0 && <EmptyState>No agents yet</EmptyState>}
         {/* every agent is listed here, also one with its own DM (that row opens the DM, this one
-            the agent); the name tells the two rows apart for assistive tech */}
+            the agent); when both rows show the same name, this one is named apart for
+            assistive tech */}
         {(agents ?? []).map((a) => (
           <button
             key={a.id}
             type="button"
             onClick={() => onOpenAgent(a)}
-            aria-label={`Agent ${a.name}, ${a.status}`}
+            aria-label={inDm.has(a.id) ? `Agent ${a.name}, ${a.status}` : undefined}
             className={cn(ROW, "text-text-1")}
           >
             <AgentAvatar name={a.name} id={a.id} rosterId={a.roster_id} size={16} />
