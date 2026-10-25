@@ -22,6 +22,40 @@ export class ExtractError extends Error {
   }
 }
 
+export const MAX_PDF_PAGES = 500;
+export const MAX_ZIP_ENTRIES = 10_000;
+export const MAX_UNZIPPED_BYTES = 200 * 1024 * 1024;
+
+/** Reads only the zip central directory; throws too_large for bombs or malformed directories. */
+export function checkZip(bytes: Uint8Array): void {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.byteLength - 22; i >= Math.max(0, bytes.byteLength - 22 - 65_535); i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new ExtractError("failed", "not a zip archive");
+  const count = dv.getUint16(eocd + 10, true);
+  if (count > MAX_ZIP_ENTRIES || count === 0xffff) throw new ExtractError("too_large");
+  let pos = dv.getUint32(eocd + 16, true);
+  let total = 0;
+  for (let n = 0; n < count; n++) {
+    if (pos + 46 > bytes.byteLength || dv.getUint32(pos, true) !== 0x02014b50)
+      throw new ExtractError("failed", "bad zip directory");
+    const size = dv.getUint32(pos + 24, true);
+    if (size === 0xffffffff) throw new ExtractError("too_large");
+    total += size;
+    if (total > MAX_UNZIPPED_BYTES) throw new ExtractError("too_large");
+    pos +=
+      46 +
+      dv.getUint16(pos + 28, true) +
+      dv.getUint16(pos + 30, true) +
+      dv.getUint16(pos + 32, true);
+  }
+}
+
 export const SCANNED_PDF_MESSAGE = "Scanned PDFs need OCR, which is not supported yet";
 
 const MIME: Record<string, DocKind> = {
@@ -69,10 +103,12 @@ export async function extract(bytes: Uint8Array, name: string, mime: string): Pr
   const kind = docKind(name, mime);
   if (!kind) throw new ExtractError("unsupported");
   let segments: Segment[] = [];
+  if (kind === "docx" || kind === "xlsx") checkZip(bytes);
   try {
     if (kind === "pdf") {
       const { extractText, getDocumentProxy } = await import("unpdf");
       const pdf = await getDocumentProxy(new Uint8Array(bytes));
+      if (pdf.numPages > MAX_PDF_PAGES) throw new ExtractError("too_large");
       const { text } = await extractText(pdf, { mergePages: false });
       segments = (text as string[]).map((t, i) => ({
         label: `p. ${i + 1}`,
@@ -99,6 +135,7 @@ export async function extract(bytes: Uint8Array, name: string, mime: string): Pr
       segments = [{ label: null, text: tidy(new TextDecoder("utf-8").decode(bytes)) }];
     }
   } catch (e) {
+    if (e instanceof ExtractError) throw e;
     throw new ExtractError("failed", (e as Error).message.slice(0, 200));
   }
   const out: Segment[] = [];

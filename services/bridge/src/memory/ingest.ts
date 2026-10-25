@@ -2,7 +2,7 @@ import type { StoredMessage } from "../agents/turn-hooks.js";
 import type { Db } from "../db.js";
 import type { Log } from "../plugin-api.js";
 import type { Memory } from "./client.js";
-import { docKind, ExtractError, extract, segmentSources } from "./extract.js";
+import { docKind, ExtractError, extract, MAX_DOC_BYTES, segmentSources } from "./extract.js";
 
 /** Ingests one stored chat message (or posted file) into chat:<id>, once per message. */
 export async function ingestStored(
@@ -46,6 +46,7 @@ export async function ingestStored(
         });
       } else if (b.type === "file") {
         if (!m.loadFile) return;
+        if (b.size > MAX_DOC_BYTES) throw new ExtractError("too_large");
         const ex = await extract(await m.loadFile(), b.name, b.mime);
         for (const p of segmentSources(m.id, b.name, ex.segments)) {
           await memory.ingest({
@@ -64,8 +65,7 @@ export async function ingestStored(
         code: e instanceof ExtractError ? e.code : "memory",
       });
     }
-  } catch (e) {
+  } catch {
     log("memory ingest failed", { chat: m.chatId, message: m.id, code: "db" });
-    void e;
   }
 }
