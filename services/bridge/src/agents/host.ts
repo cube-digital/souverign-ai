@@ -63,6 +63,9 @@ const TRIGGER_MAX_AGE_MS = 5 * 60_000;
 const FOLLOWUP_MS = 10 * 60_000;
 const KEY_WAIT_MS = 30_000;
 const COMPLETE_TIMEOUT_MS = 180_000;
+/** Generous for 60 s of compressed speech. */
+const MAX_VOICE_BYTES = 10 * 1024 * 1024;
+const VOICE_IO_TIMEOUT_MS = 30_000;
 const STT_FAILED = "I couldn't transcribe that voice message.";
 const DONE_EMOJI = { done: "✅", stopped: "⏹️", error: "⚠️" } as const;
 
@@ -146,6 +149,12 @@ const DEAD_AFTER_MS = 30_000;
 
 const log = (msg: string, extra: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ level: "info", msg, ...extra }));
+
+const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("voice_timeout")), ms);
+    p.then(resolve, reject).finally(() => clearTimeout(t));
+  });
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -520,8 +529,7 @@ export class AgentHost implements AgentHostApi {
       }
       return;
     }
-    // Checked before the file is downloaded or decoded.
-    if (!body.voice || body.voice.duration_ms > MAX_VOICE_MS) return;
+    if (!body.voice) return;
     if (Date.now() - m.ts > TRIGGER_MAX_AGE_MS) return;
     const sender = await this.humanSender(m);
     if (!sender) return;
@@ -532,32 +540,6 @@ export class AgentHost implements AgentHostApi {
     );
     if (!me) return;
     if (!claimVoice(m.id)) return;
-
-    let transcript: { text: string; language: string };
-    try {
-      const bytes = await dev.engine.downloadFile(body);
-      transcript = await audio.transcribe(bytes, body.name, "auto");
-    } catch (e) {
-      log("voice stt failed", { agent: dev.agent.id, chat: m.chatId, error: (e as Error).message });
-      try {
-        await dev.engine.sendReaction(m.chatId, m.id, DONE_EMOJI.error, "add");
-        await dev.engine.sendText(
-          m.chatId,
-          STT_FAILED,
-          { local: true },
-          {
-            replyTo: body.reply_to ?? m.id,
-          },
-        );
-      } catch (e2) {
-        log("voice reply failed", { agent: dev.agent.id, error: (e2 as Error).message });
-      }
-      return;
-    }
-    const sttMs = Date.now() - receivedAt;
-    const text = transcript.text.slice(0, 8000);
-    log("voice transcribed", { chat: m.chatId, message: m.id, size: text.length, ms: sttMs });
-    if (!text) return;
 
     const [chat] = await db.query<{ kind: string; users: number; agents: number }>(
       `select c.kind,
@@ -574,6 +556,57 @@ export class AgentHost implements AgentHostApi {
       [m.chatId],
     );
     const thread = body.reply_to;
+
+    // A failure always puts a warning on the voice message (from the claim winner only). It gets
+    // a text reply only where the agent is being talked to: its DM, or a thread it owns.
+    const fail = async (reason: string): Promise<void> => {
+      log("voice failed", { chat: m.chatId, message: m.id, reason });
+      try {
+        await dev.engine.sendReaction(m.chatId, m.id, DONE_EMOJI.error, "add");
+        let replier: string | undefined;
+        if (chat?.kind === "dm" && Number(chat.users) === 1 && Number(chat.agents) === 1) {
+          replier = agents[0]?.id;
+        } else if (thread) {
+          const owner = this.threadOwner.get(`${m.chatId}|${thread}`);
+          if (owner && owner.userId === sender.owner_id && Date.now() <= owner.until)
+            replier = owner.agentId;
+        }
+        const rdev = replier
+          ? (this.devices.get(replier) ?? (await this.deviceFor(replier)))
+          : null;
+        if (rdev)
+          await rdev.engine.sendText(
+            m.chatId,
+            STT_FAILED,
+            { local: true },
+            { replyTo: thread ?? m.id },
+          );
+      } catch (e2) {
+        log("voice reply failed", { agent: dev.agent.id, error: (e2 as Error).message });
+      }
+    };
+
+    // Checked before the file is downloaded or decoded.
+    if (body.voice.duration_ms > MAX_VOICE_MS || body.size > MAX_VOICE_BYTES) {
+      await fail("too_long");
+      return;
+    }
+    let transcript: { text: string; language: string };
+    try {
+      const bytes = await withTimeout(dev.engine.downloadFile(body), VOICE_IO_TIMEOUT_MS);
+      if (bytes.length > MAX_VOICE_BYTES) throw new Error("voice_too_large");
+      transcript = await audio.transcribe(bytes, body.name, "auto");
+    } catch (e) {
+      await fail((e as Error).message.slice(0, 80));
+      return;
+    }
+    const sttMs = Date.now() - receivedAt;
+    const text = transcript.text.slice(0, 8000);
+    log("voice transcribed", { chat: m.chatId, message: m.id, size: text.length, ms: sttMs });
+    if (!text) {
+      await fail("empty_transcript");
+      return;
+    }
     let pick: { agentId: string; trigger: TurnTrigger; replyTo?: string; force: boolean } | null =
       null;
     if (chat?.kind === "dm" && Number(chat.users) === 1 && Number(chat.agents) === 1 && agents[0]) {
