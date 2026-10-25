@@ -6,6 +6,7 @@ import type {
   ApprovalDecision,
   ApprovalGrant,
   ApprovalPublic,
+  AuthProviders,
   Chat,
   DevicePublic,
   DirectoryEntry,
@@ -72,7 +73,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     body = null;
   }
   if (!res.ok) {
-    if (res.status === 401 && path !== "/login") {
+    if (res.status === 401 && path !== "/login" && !path.startsWith("/auth/")) {
       setSession(null);
       location.reload();
     }
@@ -92,6 +93,9 @@ const json = (method: string, data?: unknown): RequestInit => ({
 
 export const login = (user_id: string, pin: string) =>
   api<LoginResponse>("/login", json("POST", { user_id, pin }));
+export const authProviders = () => api<AuthProviders>("/auth/providers");
+export const oidcExchange = (code: string) =>
+  api<LoginResponse>("/auth/oidc/exchange", json("POST", { code }));
 export const users = () => api<UserSummary[]>("/users");
 export const directory = () => api<DirectoryEntry[]>("/directory");
 export const chats = () => api<Chat[]>("/chats");
