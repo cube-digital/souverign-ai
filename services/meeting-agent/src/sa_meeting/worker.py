@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import inspect
 import json
 import sys
@@ -27,7 +26,9 @@ async def _maybe(value: Any) -> Any:
 
 
 def _key_bytes(media_key: str | None) -> bytes | None:
-    return base64.b64decode(media_key) if media_key else None
+    """Browsers pass the key string (base64url, no padding) to `setKey`, which derives from its
+    UTF-8 bytes: the worker must use the same bytes, not the decoded ones."""
+    return media_key.encode() if media_key else None
 
 
 async def run(
