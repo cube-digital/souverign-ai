@@ -138,24 +138,61 @@ const NOT_CAPTURED = "a participant who was not captured";
 const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const tokens = (name: string) => name.split(/\s+/).filter((t) => t.length >= 2);
 
+const fold = (t: string): string => t.normalize("NFD").replace(/\p{M}/gu, "");
+
+/** Folded text plus, per folded UTF-16 unit, the original [start, end) range it came from. */
+function foldWithMap(text: string): { folded: string; starts: number[]; ends: number[] } {
+  let folded = "";
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let pos = 0;
+  for (const ch of text) {
+    const f = fold(ch);
+    for (let k = 0; k < f.length; k++) {
+      starts.push(pos);
+      ends.push(pos + ch.length);
+    }
+    folded += f;
+    pos += ch.length;
+  }
+  return { folded, starts, ends };
+}
+
 /**
- * Removes the names of people who were not captured (full name and first name, whole words,
- * any case) from model text. A name that is also a captured speaker's name is left alone.
+ * Removes the names of people who were not captured from model text. The whole display name
+ * matches in any case; the first/last name of a longer name matches only when capitalised, so
+ * "They will ship" survives a decliner called "Will Smith". Diacritics are ignored. A name that
+ * is also a captured speaker's name is left alone.
  */
 export function scrubNames(text: string, notCaptured: string[], captured: string[]): string {
-  const keep = new Set(captured.flatMap((n) => [n, ...tokens(n)]).map((t) => t.toLowerCase()));
-  const names = new Set<string>();
+  const keep = new Set(
+    captured.flatMap((n) => [n, ...tokens(n)]).map((t) => fold(t).toLowerCase()),
+  );
+  const rules: RegExp[] = [];
+  const seen = new Set<string>();
+  const add = (name: string, ci: boolean) => {
+    const f = fold(name);
+    const key = `${ci}:${f}`;
+    if (!f || seen.has(key) || keep.has(f.toLowerCase())) return;
+    seen.add(key);
+    rules.push(new RegExp(`(?<![\\p{L}\\p{N}])${esc(f)}(?![\\p{L}\\p{N}])`, ci ? "giu" : "gu"));
+  };
   for (const full of notCaptured) {
     const clean = full.replace(/\s+/g, " ").trim();
-    if (clean && !keep.has(clean.toLowerCase())) names.add(clean);
-    for (const t of tokens(clean)) if (!keep.has(t.toLowerCase())) names.add(t);
+    add(clean, true);
+    const parts = tokens(clean);
+    if (parts.length > 1) for (const t of parts) if (/^\p{Lu}/u.test(t)) add(t, false);
   }
+  rules.sort((a, b) => b.source.length - a.source.length);
   let out = text;
-  for (const n of [...names].sort((a, b) => b.length - a.length)) {
-    out = out.replace(
-      new RegExp(`(?<![\\p{L}\\p{N}])${esc(n)}(?![\\p{L}\\p{N}])`, "giu"),
-      NOT_CAPTURED,
-    );
+  for (const re of rules) {
+    const { folded, starts, ends } = foldWithMap(out);
+    for (const m of [...folded.matchAll(re)].reverse()) {
+      const i = m.index ?? 0;
+      const from = starts[i] ?? 0;
+      const to = ends[i + m[0].length - 1] ?? out.length;
+      out = `${out.slice(0, from)}${NOT_CAPTURED}${out.slice(to)}`;
+    }
   }
   return out;
 }

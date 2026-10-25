@@ -46,6 +46,8 @@ export const nodeSpawner: Spawner = {
       },
       kill: (sig) => {
         const signal = (sig ?? "SIGTERM") as NodeJS.Signals;
+        // Never signal pid 0 / undefined: that would hit the bridge's own process group.
+        if (!child.pid) return;
         try {
           // The worker runs in its own process group: uv and its python child go together.
           process.kill(-(child.pid ?? 0), signal);
@@ -155,6 +157,11 @@ export class Notetakers {
       this.o.log("notetaker worker failed", { notetaker: notetakerId, code });
       await this.o.onFinal(notetakerId);
     }
+  }
+
+  /** True while this process tracks a running worker for the notetaker. */
+  has(notetakerId: string): boolean {
+    return this.running.has(notetakerId);
   }
 
   /** SIGTERM, then SIGKILL after 5 s. */

@@ -24,23 +24,39 @@ async function admin(): Promise<RoomAdmin | null> {
   };
 }
 
-async function run(log: Log, code: string, fn: (a: RoomAdmin) => Promise<void>): Promise<void> {
+const TIMEOUT_MS = 5000;
+
+/**
+ * True when the action happened or there is nothing to do (no call server running);
+ * false when the call server failed or timed out, so the caller can try again later.
+ */
+async function run(log: Log, code: string, fn: (a: RoomAdmin) => Promise<void>): Promise<boolean> {
   try {
     const a = await admin();
     if (!a) {
       log("livekit admin skipped", { code: "livekit_unavailable", action: code });
-      return;
+      return true;
     }
-    await fn(a);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("timeout")), TIMEOUT_MS);
+    });
+    try {
+      await Promise.race([fn(a), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+    return true;
   } catch (e) {
     log("livekit admin failed", { code, error: (e as Error).name });
+    return false;
   }
 }
 
-/** Removes a person from the room; degrades to a log line when the call server is down. */
-export const kickFromRoom = (callId: string, userId: string, log: Log): Promise<void> =>
+/** Removes a person from the room. */
+export const kickFromRoom = (callId: string, userId: string, log: Log): Promise<boolean> =>
   run(log, "kick", (a) => a.removeParticipant(roomName(callId), `user:${userId}`));
 
 /** Deletes the room so an old token cannot keep it alive. */
-export const closeRoom = (callId: string, log: Log): Promise<void> =>
+export const closeRoom = (callId: string, log: Log): Promise<boolean> =>
   run(log, "close", (a) => a.deleteRoom(roomName(callId)));

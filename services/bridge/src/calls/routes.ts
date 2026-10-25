@@ -92,8 +92,9 @@ export function makeLifecycle(db: Db, hooks: CallHooks, log: Log): Lifecycle {
     },
     async reconcile() {
       for (const r of await strandedParticipants(db)) {
+        // Marked left only once the room confirms; a failed kick is tried again next sweep.
+        if (!(await kickFromRoom(r.call_id, r.user_id, log))) continue;
         await markLeft(db, r.call_id, r.user_id);
-        await kickFromRoom(r.call_id, r.user_id, log);
         log("participant removed after leaving the chat", { call: r.call_id });
         await life.emitUpdated(r.call_id);
         await life.afterLeave(r.call_id);
@@ -136,7 +137,7 @@ export function registerCallRoutes(
     userId: string,
     callOrChat: string,
     max: number,
-    callMax = max,
+    callMax = max * 4,
   ): Promise<boolean> => {
     if (
       limiter.hit(`${bucket}:u:${userId}`, max) &&
@@ -236,9 +237,7 @@ export function registerCallRoutes(
     const c = await open(req, reply);
     if (!c) return;
     if (c.call.ended_ms !== null) return reply.code(409).send({ error: "call_ended" });
-    if (
-      !(await allow(reply, "presence", c.userId, c.call.id, LIMITS.presence, LIMITS.presence * 5))
-    ) {
+    if (!(await allow(reply, "presence", c.userId, c.call.id, LIMITS.presence))) {
       return;
     }
     await markJoined(db, c.call.id, c.userId);
@@ -266,9 +265,7 @@ export function registerCallRoutes(
   app.post("/api/calls/:id/leave", async (req, reply) => {
     const c = await openParticipant(req, reply);
     if (!c) return;
-    if (
-      !(await allow(reply, "presence", c.userId, c.call.id, LIMITS.presence, LIMITS.presence * 5))
-    ) {
+    if (!(await allow(reply, "presence", c.userId, c.call.id, LIMITS.presence))) {
       return;
     }
     await markLeft(db, c.call.id, c.userId);

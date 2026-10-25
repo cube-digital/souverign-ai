@@ -12,6 +12,7 @@ import {
   onFinalNotes,
   sweep,
 } from "../calls/publish.js";
+import { recoverAfterRestart } from "../calls/recovery.js";
 import {
   type CallHooks,
   type Lifecycle,
@@ -107,8 +108,13 @@ export const plugin: BridgePlugin = {
       registerNotesRoutes(scope, deps);
     });
   },
-  start() {
+  start(ctx) {
     scheduler?.start();
+    if (notetakers && scheduler && life) {
+      recoverAfterRestart({ db: ctx.db, notetakers, scheduler, life, log: ctx.log }).catch((e) =>
+        ctx.log("call recovery failed", { error: (e as Error).name }),
+      );
+    }
   },
   stop() {
     stopSweep?.();

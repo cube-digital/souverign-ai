@@ -21,6 +21,7 @@ export const NOTES_TTL_MS = 24 * 60 * 60 * 1000;
 const REMIND_AFTER_MS = 20 * 60 * 60 * 1000;
 const REPUBLISH_WITHIN_DAYS = 7;
 const MAX_TEXT = 7900;
+const STUCK_AFTER_MS = 5 * 60 * 1000;
 
 let relayAdmin: RelayAdmin | undefined;
 /** The plugin hands over the relay admin so a missing DM with Scribe can be created. */
@@ -224,6 +225,7 @@ async function markNotPublished(
   db: Db,
   notesId: string,
   fallbackDm?: { chatId: string; agentId: string },
+  from: "pending_approval" | "published" = "pending_approval",
 ): Promise<void> {
   const [row] = await db.query<{
     call_id: string;
@@ -233,13 +235,14 @@ async function markNotPublished(
   }>(
     `with u as (
        update sa.call_notes set status = 'not_published'
-        where id = $1 and status = 'pending_approval' returning id, notetaker_id, approval_id)
+        where id = $1 and status = $2 and ($2 = 'pending_approval' or published_message_id is null)
+        returning id, notetaker_id, approval_id)
      select nt.call_id, ch.title as chat_title, ap.chat_id as dm_chat, nt.agent_id
        from u join sa.call_notetakers nt on nt.id = u.notetaker_id
        join sa.calls c on c.id = nt.call_id
        join sa.chats ch on ch.id = c.chat_id
        left join sa.approvals ap on ap.id = u.approval_id`,
-    [notesId],
+    [notesId, from],
   );
   if (!row) return;
   const d = approvalDeps();
@@ -356,6 +359,18 @@ export async function sweep(nowMs: number): Promise<void> {
         and a.status in ('expired', 'denied', 'failed', 'canceled')`,
   );
   for (const n of dead) await markNotPublished(d.db, n.id);
+
+  // A crash between the claim and the post leaves notes "published" with no message: release them.
+  const stuck = await d.db.query<{ id: string; decided_ms: number }>(
+    `select n.id, (extract(epoch from a.decided_at) * 1000)::float8 as decided_ms
+       from sa.call_notes n join sa.approvals a on a.id = n.approval_id
+      where n.status = 'published' and n.published_message_id is null and a.decided_at is not null`,
+  );
+  for (const n of stuck) {
+    if (nowMs - Number(n.decided_ms) > STUCK_AFTER_MS) {
+      await markNotPublished(d.db, n.id, undefined, "published");
+    }
+  }
 
   const due = await d.db.query<{
     id: string;
