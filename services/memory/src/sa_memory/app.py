@@ -56,6 +56,7 @@ class DeleteIn(BaseModel):
     namespace: str = Field(pattern=NAMESPACE)
     source_type: str
     source_id: str
+    include_parts: bool = False
 
 
 def _log(event: str, **fields: int | float | str) -> None:
@@ -88,6 +89,9 @@ def create_app(store: MemoryStore, embedder: Embedder, token: str) -> FastAPI:
     @app.post("/recall", dependencies=guard)
     def recall(body: RecallIn) -> dict:
         t0 = time.perf_counter()
+        for sc in body.scopes:
+            if sc.namespace.startswith("agent:") and "origin_chat_ids" not in sc.model_fields_set:
+                raise HTTPException(422, "agent scopes must state origin_chat_ids (null = all)")
         scopes = [Scope(s.namespace, s.origin_chat_ids, s.since_ts) for s in body.scopes]
         if not scopes:
             return {"results": []}
@@ -110,6 +114,7 @@ def create_app(store: MemoryStore, embedder: Embedder, token: str) -> FastAPI:
                         "ts": h.source_ts,
                     },
                     "chunk_idx": h.chunk_idx,
+                    "origin_chat_id": h.origin_chat_id,
                 }
                 for h in hits
             ]
@@ -122,6 +127,11 @@ def create_app(store: MemoryStore, embedder: Embedder, token: str) -> FastAPI:
 
     @app.delete("/sources", dependencies=guard)
     def delete_sources(body: DeleteIn) -> dict:
-        return {"deleted": store.delete_source(body.namespace, body.source_type, body.source_id)}
+        extra = {"include_parts": True} if body.include_parts else {}
+        return {
+            "deleted": store.delete_source(
+                body.namespace, body.source_type, body.source_id, **extra
+            )
+        }
 
     return app

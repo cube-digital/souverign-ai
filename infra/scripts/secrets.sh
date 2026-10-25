@@ -10,3 +10,4 @@ ensure_secret() { # ensure_secret <ENV_NAME> <file under .run>
 }
 ensure_secret RELAY_ADMIN_TOKEN relay-admin.token
 ensure_secret BRIDGE_MASTER_KEY bridge-master.key
+ensure_secret MEMORY_TOKEN memory.token

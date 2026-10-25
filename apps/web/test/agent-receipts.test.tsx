@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { ToastProvider } from "../src/ds";
 
 const h = vi.hoisted(() => ({
   messages: [] as ChatMessage[],
@@ -77,7 +78,12 @@ const msg = (id: string, senderDevice: string, body: ChatMessage["body"]): ChatM
   senderDevice,
   body,
 });
-const ui = (node: React.ReactNode) => render(<MemoryRouter>{node}</MemoryRouter>);
+const ui = (node: React.ReactNode) =>
+  render(
+    <MemoryRouter>
+      <ToastProvider>{node}</ToastProvider>
+    </MemoryRouter>,
+  );
 
 beforeEach(() => {
   seq = 0;

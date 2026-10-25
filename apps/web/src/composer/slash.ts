@@ -7,6 +7,11 @@ export const SLASH_COMMANDS = [
   { name: "/standup", arg: false, hint: "Scribe writes today's standup" },
   { name: "/ask", arg: true, hint: "/ask <agent> <question>" },
   { name: "/access", arg: true, hint: "/access [agent] · what an agent can see here" },
+  {
+    name: "/forget",
+    arg: true,
+    hint: "/forget [agent] <thing> · ask an agent to forget something",
+  },
 ] as const;
 
 const find = (ctx: SlashCtx, name: string) =>
@@ -36,6 +41,19 @@ export function expandSlash(text: string, ctx: SlashCtx): { text: string } | { e
     const inChat = ctx.agents.filter((a) => a.inChat);
     if (inChat.length === 0) return { error: "No agents in this chat" };
     return { text: `${inChat.map((a) => `@${a.name}`).join(" ")} what can you access here?` };
+  }
+  if (cmd === "forget") {
+    const [first = "", ...words] = rest.split(/\s+/);
+    const named = first ? find(ctx, first) : undefined;
+    const inChat = ctx.agents.filter((a) => a.inChat);
+    const agent = named ?? (inChat.length === 1 ? inChat[0] : undefined);
+    const thing = (named ? words : rest.split(/\s+/)).join(" ").trim();
+    if (!thing) return { error: "Use /forget [agent] <thing>" };
+    if (!agent)
+      return {
+        error: inChat.length === 0 ? "No agents in this chat" : "Use /forget <agent> <thing>",
+      };
+    return { text: `@${agent.name} forget ${thing}` };
   }
   const scribe = find(ctx, "Scribe");
   if (!scribe) return { error: "No agent called Scribe" };

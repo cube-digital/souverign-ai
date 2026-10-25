@@ -3,7 +3,7 @@ import { createContext, type ReactNode, useCallback, useContext, useMemo, useSta
 
 export type RailPanel =
   | { kind: "thread"; chatId: string; rootId: string }
-  | { kind: "members" | "activity" | "relay"; chatId: string }
+  | { kind: "members" | "activity" | "relay" | "notes"; chatId: string }
   | null;
 
 type RailApi = { panel: RailPanel; open: (p: Exclude<RailPanel, null>) => void; close: () => void };

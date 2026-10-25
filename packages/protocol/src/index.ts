@@ -135,8 +135,196 @@ export const TurnTrigger = z.enum([
   "routine",
   "welcome",
   "intro",
+  "retry",
+  "answer",
 ]);
 export type TurnTrigger = z.infer<typeof TurnTrigger>;
+
+export const SharePolicy = z.enum(["always", "ask", "never"]);
+export type SharePolicy = z.infer<typeof SharePolicy>;
+export const MemoryKind = z.enum(["conversation", "knowledge", "correction", "meeting"]);
+/** "meeting" is ingested by the voice plan */
+export const SourceType = z.enum(["message", "file", "doc", "note", "correction", "meeting"]);
+export const Citation = z.object({
+  n: z.number().int().min(1).max(8),
+  space: z.enum(["chat", "agent"]),
+  kind: MemoryKind,
+  source_type: SourceType,
+  source_id: z.string().max(80),
+  title: z.string().max(200).nullable(),
+  /** epoch ms (bridge receipt time for chat sources) */
+  ts: z.number(),
+  /** chat sources and notes/corrections: the chat */
+  chat_id: Id.optional(),
+  /** chat sources: the message to open */
+  message_id: Id.optional(),
+  /** agent sources: the agent and the knowledge item to open */
+  agent_id: z.string().max(40).optional(),
+  item_id: z.string().max(40).optional(),
+  page: z.number().int().min(1).optional(),
+  taught_by: z.string().max(80).optional(),
+  /** the reply text references [n] */
+  cited: z.boolean(),
+});
+export type Citation = z.infer<typeof Citation>;
+export const ApprovalStatus = z.enum([
+  "pending",
+  "approved",
+  "executed",
+  "failed",
+  "denied",
+  "expired",
+  "canceled",
+]);
+export type ApprovalStatus = z.infer<typeof ApprovalStatus>;
+/** Open registry: any registered tool name (bridge `registerGatedTool`); later plans add their own. */
+export const GatedTool = z.string().regex(/^[a-z][a-z0-9_]{1,63}$/);
+export type GatedTool = z.infer<typeof GatedTool>;
+export const ApprovalField = z.object({
+  key: z.string().max(40),
+  label: z.string().max(40),
+  value: z.string().max(8000),
+  editable: z.boolean(),
+  multiline: z.boolean(),
+});
+export const ApprovalPreview = z.object({
+  title: z.string().max(200),
+  target: z.string().max(200),
+  fields: z.array(ApprovalField).max(8),
+  sources: z.array(Citation).max(8).optional(),
+  leaves_chat: z.boolean(),
+});
+export type ApprovalPreview = z.infer<typeof ApprovalPreview>;
+export const Approval = z.object({
+  id: z.string().max(40),
+  agent_id: z.string(),
+  agent_name: z.string(),
+  chat_id: Id,
+  chat_title: z.string(),
+  reply_to: Id.nullable(),
+  kind: z.enum(["tool", "share"]),
+  tool: GatedTool,
+  args: z.record(z.string(), z.unknown()),
+  preview: ApprovalPreview,
+  status: ApprovalStatus,
+  requester_user_id: z.string().nullable(),
+  approver_user_id: z.string(),
+  approver_name: z.string(),
+  decided_by: z.string().nullable(),
+  decided_at: z.number().int().nullable(),
+  created_at: z.number().int(),
+  expires_at: z.number().int(),
+  result: z.string().max(500).nullable(),
+  auto: z.boolean(),
+  /** the card may offer "Always approve this tool" */
+  always_allowed: z.boolean(),
+});
+export type Approval = z.infer<typeof Approval>;
+export const ApprovalPublic = z.object({
+  id: z.string().max(40),
+  chat_id: Id,
+  agent_name: z.string(),
+  tool: GatedTool,
+  status: ApprovalStatus,
+  approver_name: z.string(),
+  /** lets the requester's client offer Cancel */
+  requester_user_id: z.string().nullable(),
+});
+export type ApprovalPublic = z.infer<typeof ApprovalPublic>;
+export const ApprovalDecision = z.object({
+  decision: z.enum(["approve", "deny"]),
+  args: z.record(z.string(), z.string().max(8000)).optional(),
+  always: z.boolean().optional(),
+});
+export type ApprovalDecision = z.infer<typeof ApprovalDecision>;
+export const ApprovalGrant = z.object({
+  agent_id: z.string(),
+  agent_name: z.string(),
+  tool: GatedTool,
+  created_at: z.number().int(),
+});
+export type ApprovalGrant = z.infer<typeof ApprovalGrant>;
+export const KnowledgeItem = z.object({
+  id: z.string().max(40),
+  agent_id: z.string(),
+  kind: z.enum(["document", "note", "correction"]),
+  title: z.string(),
+  mime: z.string().nullable(),
+  size: z.number().int().nullable(),
+  parts: z.number().int().min(0),
+  truncated: z.boolean(),
+  tags: z.array(z.string()),
+  origin_chat_id: Id.nullable(),
+  origin_chat_title: z.string().nullable(),
+  taught_by_user_id: z.string().nullable(),
+  taught_by_name: z.string().nullable(),
+  created_at: z.number().int(),
+  /** first 200 chars of the text */
+  preview: z.string().max(200),
+});
+export type KnowledgeItem = z.infer<typeof KnowledgeItem>;
+export const KnowledgeItemDetail = KnowledgeItem.extend({
+  segments: z.array(z.object({ label: z.string().nullable(), text: z.string() })),
+});
+export type KnowledgeItemDetail = z.infer<typeof KnowledgeItemDetail>;
+export const Lesson = z.object({
+  id: z.string().max(40),
+  agent_id: z.string(),
+  text: z.string().min(1).max(500),
+  taught_by_user_id: z.string().nullable(),
+  taught_by_name: z.string().nullable(),
+  created_at: z.number().int(),
+});
+export type Lesson = z.infer<typeof Lesson>;
+export const CreateLessonRequest = z.object({ text: z.string().trim().min(1).max(500) });
+export const CorrectionRequest = z.object({
+  chat_id: Id,
+  message_id: Id,
+  text: z.string().trim().min(1).max(1000),
+});
+export const SharingRequest = z.object({ share_private_in_chats: SharePolicy });
+export const Note = z.object({
+  id: z.string().max(40),
+  agent_id: z.string(),
+  agent_name: z.string(),
+  chat_id: Id,
+  title: z.string(),
+  body_md: z.string(),
+  created_at: z.number().int(),
+});
+export type Note = z.infer<typeof Note>;
+export const Question = z.object({
+  id: z.string().max(40),
+  agent_id: z.string(),
+  agent_name: z.string(),
+  chat_id: Id,
+  reply_to: Id.nullable(),
+  requester_user_id: z.string(),
+  requester_name: z.string(),
+  question: z.string().min(1).max(500),
+  options: z.array(z.string().min(1).max(80)).max(4),
+  status: z.enum(["open", "answered", "expired", "canceled"]),
+  answer: z.string().max(1000).nullable(),
+  created_at: z.number().int(),
+  expires_at: z.number().int(),
+});
+export type Question = z.infer<typeof Question>;
+export const AnswerRequest = z
+  .object({
+    option: z.number().int().min(0).max(3).optional(),
+    text: z.string().trim().min(1).max(1000).optional(),
+  })
+  .refine(
+    (a) => (a.option === undefined) !== (a.text === undefined),
+    "exactly one of option or text",
+  );
+export const ServerEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("hello"), user_id: z.string() }),
+  z.object({ type: z.literal("approval"), approval: Approval }),
+  z.object({ type: z.literal("approval_public"), approval: ApprovalPublic }),
+  z.object({ type: z.literal("question"), question: Question }),
+]);
+export type ServerEvent = z.infer<typeof ServerEvent>;
 
 /** Receipts an agent attaches to its reply (inside the ciphertext). */
 export const TextMeta = z.object({
@@ -153,6 +341,20 @@ export const TextMeta = z.object({
   seeded: z.boolean().optional(),
   /** example prompts rendered as clickable chips (join intro) */
   chips: z.array(z.string().min(1).max(120)).max(3).optional(),
+  /** memory sources this answer read; `cited` when the text references [n] */
+  citations: z.array(Citation).max(8).optional(),
+  /** approvals this turn created; the approver's card renders under the reply */
+  approvals: z.array(z.string().max(40)).max(4).optional(),
+  /** a status stamp for one approval */
+  approval: z.object({ id: z.string().max(40), status: ApprovalStatus }).optional(),
+  /** this message is a private-preview notice; the held answer's approval id */
+  held: z.string().max(40).optional(),
+  /** display name of the person who approved this post */
+  approved_by: z.string().max(80).optional(),
+  /** an ask_user question card */
+  question: z
+    .object({ id: z.string().max(40), options: z.array(z.string().max(80)).max(4) })
+    .optional(),
 });
 export type TextMeta = z.infer<typeof TextMeta>;
 
@@ -259,6 +461,7 @@ export const Agent = z.object({
   status: AgentStatus,
   scope: AgentScope,
   roster_id: z.string().nullable(),
+  share_private_in_chats: SharePolicy.optional(),
 });
 export type Agent = z.infer<typeof Agent>;
 export const CreateAgentRequest = z.object({

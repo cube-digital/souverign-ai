@@ -3,13 +3,27 @@ import type { ChatMember, MessageBody } from "@sa/protocol";
 import { memo, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AgentAvatar, Chip, ChipButton, StatusDot } from "../ds";
+import { ApprovalSlot } from "../approvals/ApprovalSlot";
+import { QuestionCard } from "../approvals/QuestionCard";
+import { AgentAvatar, Chip, ChipButton, Icons, StatusDot } from "../ds";
 import { cn } from "../lib/cn";
 import type { Reaction } from "../state/threads";
+import { CitationChips } from "./CitationChips";
+import { CorrectionPrompt } from "./CorrectionPrompt";
 import { ReceiptsFooter } from "./ReceiptsFooter";
 import { agentLabel } from "./shared";
 
 type TextBody = Extract<MessageBody, { type: "text" }>;
+
+const STAMP: Record<string, string> = {
+  pending: "…",
+  approved: "✓",
+  executed: "✓",
+  failed: "!",
+  denied: "✕",
+  expired: "…",
+  canceled: "✕",
+};
 
 const MAX_LINES = 8;
 const PREVIEW_LINES = 3;
@@ -89,6 +103,8 @@ export function AgentMessage({
   reactions,
   onReact,
   onChip,
+  chatId,
+  messageId,
 }: {
   body: TextBody;
   member: ChatMember;
@@ -97,7 +113,11 @@ export function AgentMessage({
   onReact: (emoji: string, op: "add" | "remove") => void;
   /** a chip was clicked; the caller sends it in the same place (thread or chat) */
   onChip: (text: string) => void;
+  /** where this message lives; needed to send a correction */
+  chatId?: string;
+  messageId?: string;
 }) {
+  const [correcting, setCorrecting] = useState(false);
   const [more, setMore] = useState(false);
   const [reasoning, setReasoning] = useState(false);
   const meta = body.meta;
@@ -105,6 +125,10 @@ export function AgentMessage({
   const shown = short && !more ? short : body.text;
   const thinking = (meta?.trace ?? []).filter((s) => s.kind === "thinking");
   const tools = meta?.tools?.length ?? 0;
+  const react = (emoji: string, op: "add" | "remove") => {
+    onReact(emoji, op);
+    if (emoji === "👎" && op === "add" && chatId && messageId) setCorrecting(true);
+  };
   return (
     <div className="min-w-0 max-w-[640px] rounded-lg border border-ai-glow bg-ai-bg px-3 py-2">
       <div className="flex flex-wrap items-center gap-1.5 text-[13px]">
@@ -117,8 +141,35 @@ export function AgentMessage({
         <span className="text-text-2">{time}</span>
       </div>
       <div className="mt-1 break-words text-text-0 [&_a]:underline [&_code]:font-mono [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-1 [&_pre]:overflow-auto [&_ul]:list-disc [&_ul]:pl-5">
-        <AnswerMarkdown text={shown} />
+        {meta?.question ? null : meta?.held ? (
+          <div className="text-text-2">
+            <span className="mb-0.5 flex items-center gap-1 text-[12px]">
+              <Icons.Lock aria-hidden="true" width={12} height={12} />
+              Private preview
+            </span>
+            <AnswerMarkdown text={shown} />
+          </div>
+        ) : (
+          <AnswerMarkdown text={shown} />
+        )}
       </div>
+      {meta?.question && (
+        <QuestionCard
+          questionId={meta.question.id}
+          text={body.text}
+          options={meta.question.options}
+        />
+      )}
+      {meta?.held && <ApprovalSlot ids={[meta.held]} />}
+      {meta?.approvals && meta.approvals.length > 0 && <ApprovalSlot ids={meta.approvals} />}
+      {meta?.approval && (
+        <p className="mt-1 flex items-center gap-1 text-[12px] text-text-2">
+          <span aria-hidden="true">{STAMP[meta.approval.status] ?? "•"}</span>
+          {`Action ${meta.approval.status}`}
+        </p>
+      )}
+      {meta?.approved_by && <Chip className="mt-1">{`Approved by ${meta.approved_by}`}</Chip>}
+      {meta?.citations && meta.citations.length > 0 && <CitationChips citations={meta.citations} />}
       {short && (
         <button
           type="button"
@@ -162,8 +213,17 @@ export function AgentMessage({
       ) : (
         <div className="flex items-end">
           {meta && <ReceiptsFooter meta={meta} />}
-          <Helpful reactions={reactions} onReact={onReact} />
+          <Helpful reactions={reactions} onReact={react} />
         </div>
+      )}
+      {correcting && chatId && messageId && (
+        <CorrectionPrompt
+          agentId={member.member_id}
+          agentName={member.display_name}
+          chatId={chatId}
+          messageId={messageId}
+          onDone={() => setCorrecting(false)}
+        />
       )}
     </div>
   );

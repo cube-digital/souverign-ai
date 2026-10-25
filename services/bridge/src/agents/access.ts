@@ -1,4 +1,10 @@
-import { rosterEntry, TEMPLATE_INFO } from "@sa/protocol/roster";
+import {
+  GATED_TOOLS,
+  INTERACTION_TOOLS,
+  MEMORY_TOOLS,
+  rosterEntry,
+  TEMPLATE_INFO,
+} from "@sa/protocol/roster";
 
 /** Text that asks an agent what it can see; answered by the bridge, never by the model. */
 export const ACCESS_RE = /what can you access here\??/i;
@@ -25,12 +31,24 @@ const TOOL_INFO: Record<string, string> = {
   crm_accounts: "Accounts in the CRM",
   crm_deal: "One deal in the CRM",
   crm_activities: "Recent activities on an account",
+  memory_recall: "Search what I was taught and this chat since I joined",
+  memory_remember: "Save a note for this chat",
+  memory_forget:
+    "Forget what I was taught about something (needs approval if someone else taught it)",
+  ask_user: "Ask you a question with options",
+  chat_send: "Post a message in a chat we share",
+  notes_create: "Save a note in this chat",
+  email_send: "Save an email to the local outbox",
+  ticket_comment: "Comment on a ticket",
   image_generate: "Generate an image (not available in this setup)",
 };
 
+const GATED = new Set(Object.values(GATED_TOOLS).flat());
+
 /** The tools an agent has: roster agents from the roster, personal agents from their template. */
 export function agentTools(rosterId: string | null | undefined, template: string): string[] {
-  return rosterEntry(rosterId)?.tools ?? TEMPLATE_INFO[template]?.tools ?? ["chat_read"];
+  const base = rosterEntry(rosterId)?.tools ?? TEMPLATE_INFO[template]?.tools ?? ["chat_read"];
+  return [...base, ...MEMORY_TOOLS, ...INTERACTION_TOOLS, ...(GATED_TOOLS[template] ?? [])];
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -51,7 +69,10 @@ export function accessSummary(a: {
   return [
     `In "${a.chatTitle}" I can read the messages posted since I joined on ${formatJoined(a.joinedAt)} (${a.seen} so far) and the images posted here (described by the local model). I cannot read other chats, earlier messages, or anything outside my tools.`,
     "Tools:",
-    ...a.tools.map((t) => `- ${t}: ${TOOL_INFO[t] ?? "A read-only tool"}`),
+    ...a.tools.map(
+      (t) =>
+        `- ${t}: ${TOOL_INFO[t] ?? "A read-only tool"}${GATED.has(t) ? " (needs approval)" : ""}`,
+    ),
     "Everything runs on this Mac.",
   ].join("\n");
 }

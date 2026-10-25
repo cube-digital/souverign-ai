@@ -9,6 +9,7 @@ if [[ -n "${1:-}" ]]; then export LLM_PROFILE="$1"; fi
 HERMES_SMOKE_PORT=8700
 
 source infra/scripts/pidlib.sh
+source infra/scripts/secrets.sh
 
 start() { # start <name> <cmd...>
   local name=$1
@@ -46,6 +47,9 @@ start llm infra/models/start-llm.sh
 start whisper infra/models/start-whisper.sh
 wait_http llm "http://127.0.0.1:$(uv run --quiet sa-models get llm.port)/v1/models" 300
 wait_http whisper "http://127.0.0.1:$(uv run --quiet sa-models get stt.port)/" 60
+
+start memory uv run --quiet sa-memory
+wait_http memory "http://127.0.0.1:${MEMORY_PORT:-8646}/healthz" 180
 
 if command -v hermes >/dev/null 2>&1; then
   uv run --quiet python -m sa_infra.hermes_profile smoke

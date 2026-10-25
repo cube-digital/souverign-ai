@@ -5,7 +5,10 @@ import { type RosterId, rosterEntry } from "@sa/protocol/roster";
 import Fastify, { type FastifyInstance } from "fastify";
 import { verifyMcpToken } from "../agents/secrets.js";
 import type { Db } from "../db.js";
+import { registeredTools, setToolDeps, toolCtx } from "./registry.js";
 import { ToolLog } from "./tool-log.js";
+
+const MAX_TOOLS = 20;
 
 type Args = Record<string, unknown>;
 type Ctx = {
@@ -21,6 +24,8 @@ type Tool = {
   properties: Record<string, { type: string; description?: string }>;
   required?: string[];
   run: (ctx: Ctx, args: Args) => Promise<unknown>;
+  /** registered tools return text that is passed through as is */
+  raw?: boolean;
 };
 
 const sim = (path: string) => async (ctx: Ctx) => simGet(ctx, path);
@@ -329,13 +334,38 @@ export function registerMcp(
 ): void {
   const opsSimUrl = opts.opsSimUrl.replace(/\/$/, "");
   const toolLog = opts.toolLog;
+  const deps = { db: opts.db, opsSimUrl, toolLog };
+  setToolDeps(deps);
 
   async function toolsFor(agentId: string): Promise<Tool[] | null> {
     const [row] = await opts.db.query<{ template: string }>(
       "select template from sa.agents where id = $1",
       [agentId],
     );
-    return row ? [chatRead, ...(BY_TEMPLATE[row.template] ?? [])] : null;
+    if (!row) return null;
+    const builtIn = [chatRead, ...(BY_TEMPLATE[row.template] ?? [])];
+    const template = row.template;
+    const extras: Tool[] = registeredTools(template).map((r) => ({
+      name: r.name,
+      description: r.description,
+      properties: r.properties as Tool["properties"],
+      ...(r.required ? { required: r.required } : {}),
+      raw: true,
+      run: (_ctx, args) => r.run(toolCtx(deps, agentId, template), args),
+    }));
+    const room = Math.max(0, MAX_TOOLS - builtIn.length);
+    if (extras.length > room) {
+      console.log(
+        JSON.stringify({
+          level: "warn",
+          msg: "mcp tool cap reached",
+          agent: agentId,
+          template,
+          dropped: extras.length - room,
+        }),
+      );
+    }
+    return [...builtIn, ...extras.slice(0, room)];
   }
 
   function serverFor(agentId: string, tools: Tool[], turnId?: string): Server {
@@ -373,18 +403,17 @@ export function registerMcp(
       let text: string;
       let isError = false;
       try {
-        text = JSON.stringify(
-          await tool.run(
-            {
-              db: opts.db,
-              agentId,
-              opsSimUrl,
-              chatId: toolLog.chatId(agentId),
-              requester: toolLog.requester(agentId),
-            },
-            args,
-          ),
+        const out = await tool.run(
+          {
+            db: opts.db,
+            agentId,
+            opsSimUrl,
+            chatId: toolLog.chatId(agentId),
+            requester: toolLog.requester(agentId),
+          },
+          args,
         );
+        text = tool.raw && typeof out === "string" ? out : JSON.stringify(out);
       } catch (e) {
         isError = true;
         text = JSON.stringify({ error: "tool_failed", message: (e as Error).message });

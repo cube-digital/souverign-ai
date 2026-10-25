@@ -1,0 +1,6 @@
+Supply agreement between Harbor Logistics and the Customer (fictional, for tests)
+
+1. Term. The agreement runs for 24 months from 1 November 2026.
+2. Termination. Either party may terminate with a notice period of 47 days, in writing.
+3. Support. Severity 1 incidents get a response within 2 hours, around the clock.
+4. Price review. Prices are reviewed once a year, in March.

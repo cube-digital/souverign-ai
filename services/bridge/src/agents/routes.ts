@@ -35,7 +35,7 @@ type AgentRow = Omit<Agent, "device_id"> & { device_id: string };
 const ROSTER_ORDER = "array['ops','qa','dev','tech','sales','scribe']";
 const PERSONAL_TEMPLATES = ["general", "devops"];
 
-const AGENT_SELECT = `select a.id, a.name, a.template, a.soul, a.owner_user_id, a.status, a.scope, a.roster_id, d.device_id
+const AGENT_SELECT = `select a.id, a.name, a.template, a.soul, a.owner_user_id, a.status, a.scope, a.roster_id, a.share_private_in_chats, d.device_id
   from sa.agents a join sa.agent_devices d on d.agent_id = a.id`;
 
 export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps): void {
