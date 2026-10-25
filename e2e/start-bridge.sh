@@ -14,6 +14,15 @@ export SA_FORCE_FIRST_TOOL=0
 export BRIDGE_MASTER_KEY=e2e-master
 export OPS_SIM_URL=http://127.0.0.1:8659
 export SA_DEMO_PINS=ana:111111,vlad:222222,rares:333333,janosch:444444
+# voice and calls without LiveKit: audio stub, fake notetaker (loopback + MEETING_TOKEN routes stay real)
+export AUDIO_URL=http://127.0.0.1:8665
+export AUDIO_TOKEN=e2e-audio
+export MEETING_TOKEN=e2e-meeting
+export SA_NOTETAKER=fake
+export SA_NOTES_INTERVAL_MS=600000
+export SA_CALL_GRACE_MS=2000
+export LIVEKIT_URL=ws://127.0.0.1:9
+export LIVEKIT_API_SECRET=e2e-livekit-secret-0123456789abcdef0123456789
 pnpm --filter @sa/bridge run migrate
 # seed writes .run/demo-pins.txt; keep the developer's real demo PINs untouched
 PINS=.run/demo-pins.txt

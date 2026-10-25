@@ -10,7 +10,17 @@ export default defineConfig({
   timeout: 120_000,
   reporter: "list",
   use: { baseURL: "http://127.0.0.1:5183" },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: {
+          args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+        },
+      },
+    },
+  ],
   webServer: [
     {
       // Playwright starts webServers before globalSetup, so the stale store is removed here.
@@ -27,6 +37,12 @@ export default defineConfig({
       url: "http://127.0.0.1:8659/sim/healthz",
       reuseExistingServer: false,
       env: { PORT: "8659" },
+    },
+    {
+      command: "pnpm --filter @sa/e2e exec tsx stubs/audio-stub.ts",
+      cwd: root,
+      url: "http://127.0.0.1:8665/healthz",
+      reuseExistingServer: false,
     },
     {
       command: "bash e2e/start-bridge.sh",
