@@ -275,9 +275,9 @@ describe("memory client", () => {
   });
 
   it("round-trips ingest and recall, raises MemoryError 401 on a wrong token, and is off without MEMORY_TOKEN", async () => {
-    const server = await startFakeMemoryServer({ port: 18657, token: "good" });
+    const server = await startFakeMemoryServer({ port: 0, token: "good" });
     try {
-      const client = new MemoryClient("http://127.0.0.1:18657", "good");
+      const client = new MemoryClient(`http://127.0.0.1:${server.port}`, "good");
       const n = await client.ingest({
         namespace: "agent:nora",
         kind: "knowledge",
@@ -299,7 +299,7 @@ describe("memory client", () => {
         source: { type: "doc", id: "contract", title: "contract.pdf", ts: 42 },
       });
 
-      const bad = new MemoryClient("http://127.0.0.1:18657", "wrong");
+      const bad = new MemoryClient(`http://127.0.0.1:${server.port}`, "wrong");
       const err = await bad
         .recall({ scopes: [{ namespace: "agent:nora" }], query: "payment" })
         .catch((e: unknown) => e);

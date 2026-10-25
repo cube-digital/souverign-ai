@@ -96,7 +96,7 @@ export class FakeMemory implements Memory {
 export async function startFakeMemoryServer(opts: {
   port: number;
   token: string;
-}): Promise<{ close(): Promise<void> }> {
+}): Promise<{ port: number; close(): Promise<void> }> {
   const mem = new FakeMemory();
   const server = createServer((req, res) => {
     const send = (status: number, body: unknown) => {
@@ -123,7 +123,10 @@ export async function startFakeMemoryServer(opts: {
     });
   });
   await new Promise<void>((resolve) => server.listen(opts.port, "127.0.0.1", resolve));
+  const addr = server.address();
+  const port = typeof addr === "object" && addr ? addr.port : opts.port;
   return {
+    port,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
