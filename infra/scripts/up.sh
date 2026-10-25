@@ -48,6 +48,9 @@ start whisper infra/models/start-whisper.sh
 wait_http llm "http://127.0.0.1:$(uv run --quiet sa-models get llm.port)/v1/models" 300
 wait_http whisper "http://127.0.0.1:$(uv run --quiet sa-models get stt.port)/" 60
 
+start audio env AUDIO_TOKEN="$AUDIO_TOKEN" uv run --quiet sa-audio
+wait_http audio http://127.0.0.1:8645/healthz 60
+
 start memory uv run --quiet sa-memory
 wait_http memory "http://127.0.0.1:${MEMORY_PORT:-8646}/healthz" 180
 

@@ -11,3 +11,7 @@ ensure_secret() { # ensure_secret <ENV_NAME> <file under .run>
 ensure_secret RELAY_ADMIN_TOKEN relay-admin.token
 ensure_secret BRIDGE_MASTER_KEY bridge-master.key
 ensure_secret MEMORY_TOKEN memory.token
+ensure_secret AUDIO_TOKEN audio.token
+export LIVEKIT_API_KEY=sa-dev
+ensure_secret LIVEKIT_API_SECRET livekit.secret
+ensure_secret MEETING_TOKEN meeting.token

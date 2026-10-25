@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 source infra/scripts/pidlib.sh
 
-for name in hermes-smoke memory whisper llm; do
+for name in hermes-smoke memory audio whisper llm; do
   f=.run/$name.pid
   [[ -f $f ]] || continue
   pid=$(cat "$f")
@@ -20,4 +20,5 @@ for name in hermes-smoke memory whisper llm; do
   fi
   rm -f "$f"
 done
+bash infra/scripts/livekit.sh stop
 docker compose -f infra/docker-compose.yaml stop postgres

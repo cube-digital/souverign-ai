@@ -115,6 +115,12 @@ Then open a few browser tabs, one user per tab:
 | `make agents-smoke` | the DevOps bot answers on the local LLM through the app |
 | `make demo` / `make share` | the whole demo, kept awake / published on your tailnet |
 
+### Calls (optional)
+
+Voice calls with a notetaker need the LiveKit server, which is a human install step:
+`brew install livekit`. Then `make livekit` (also started by `make dev` and `make demo`) runs it on
+127.0.0.1 only; without it, chat and voice messages still work and calls say the call server is off.
+
 Optional Google sign-in: see docs/auth.md (off unless .env enables it).
 
 ## Docs

@@ -7,7 +7,9 @@
     "typecheck": "tsc --noEmit -p .",
     "agents-smoke": "tsx live/agents-smoke.ts",
     "roster-smoke": "tsx live/roster-smoke.ts",
-    "memory-smoke": "tsx live/memory-smoke.ts"
+    "memory-smoke": "tsx live/memory-smoke.ts",
+    "voice-smoke": "tsx live/voice-smoke.ts",
+    "call-smoke": "tsx live/call-smoke.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

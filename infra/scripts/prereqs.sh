@@ -28,7 +28,7 @@ need espeak-ng "brew install espeak-ng   # Kokoro phonemes for fr/es/it"
 need whisper-server "brew install whisper-cpp"
 need vllm-mlx "uv tool install 'vllm-mlx==0.4.1'"
 need hermes "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash   # then infra/hermes/pin.sh --pin"
-want livekit-server "brew install livekit   # SP6"
+want livekit-server "brew install livekit   # calls (optional)"
 
 if command -v node >/dev/null 2>&1 && ! node -e 'process.exit(Number(process.versions.node.split(".")[0]) < 22 ? 1 : 0)'; then
   echo "  node is older than 22"; missing=1
