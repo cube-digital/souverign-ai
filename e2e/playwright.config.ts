@@ -3,6 +3,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 const root = join(import.meta.dirname, "..");
 const run = join(root, ".run", "e2e");
+const CALLS = /(call|voice)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: "tests",
@@ -13,6 +14,14 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      testIgnore: CALLS,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      // the voice and call specs leave pending call-notes approvals for Ana, so they run last
+      name: "calls",
+      testMatch: CALLS,
+      dependencies: ["chromium"],
       use: {
         ...devices["Desktop Chrome"],
         launchOptions: {
