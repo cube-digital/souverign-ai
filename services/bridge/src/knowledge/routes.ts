@@ -250,7 +250,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: RouteDeps): 
         const parts: Segment[] = ex.segments.map((x) => ({ label: x.label, text: x.text }));
         await db.query(
           `insert into sa.knowledge_items (id, agent_id, kind, title, mime, size, parts, truncated, taught_by)
-         values ($1, $2, 'document', $3, $4, $5, $6, $7, $8)`,
+         values ($1, $2, 'document', $3, $4, $5, $6::text::jsonb, $7, $8)`,
           [
             id,
             t.agent.id,
@@ -385,7 +385,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: RouteDeps): 
     const id = newId();
     await db.query(
       `insert into sa.knowledge_items (id, agent_id, kind, title, parts, origin_chat_id, target_message_id, taught_by)
-       values ($1, $2, 'correction', $7, $3, $4, $5, $6)`,
+       values ($1, $2, 'correction', $7, $3::text::jsonb, $4, $5, $6)`,
       [
         id,
         agent.id,

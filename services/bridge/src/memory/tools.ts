@@ -67,6 +67,42 @@ async function renderHits(db: Db, numbered: Numbered[]): Promise<string> {
     .join("\n");
 }
 
+type Mem = NonNullable<ReturnType<typeof memory>>;
+type Hit = Awaited<ReturnType<Mem["recall"]>>[number];
+const isOwn = (h: Hit) => h.space.startsWith("agent:");
+const sameHit = (a: Hit, b: Hit) =>
+  a.space === b.space && a.source.id === b.source.id && a.chunk_idx === b.chunk_idx;
+
+/**
+ * Chat messages that echo the question (the question itself, earlier answers) match every query
+ * word, so in one fused ranking they push the agent's own space (taught documents, notes,
+ * corrections) out of a full list. Keep up to min(2, k/2) agent-space hits: a second recall over
+ * the agent scopes only (a subset of the D-9 scopes) replaces the lowest-ranked chat hits.
+ */
+async function keepOwnSpace(
+  mem: Mem,
+  scopes: ReturnType<typeof recallScopes>,
+  query: string,
+  k: number,
+  hits: Hit[],
+): Promise<Hit[]> {
+  const own = scopes.filter((s) => s.namespace.startsWith("agent:"));
+  const want = Math.min(2, Math.floor(k / 2));
+  const have = hits.filter(isOwn).length;
+  if (own.length === 0 || own.length === scopes.length || hits.length < k || have >= want)
+    return hits;
+  const extra = (await mem.recall({ scopes: own, query, k: want }))
+    .filter((h) => isOwn(h) && !hits.some((x) => sameHit(x, h)))
+    .slice(0, want - have);
+  const out = [...hits];
+  for (const _ of extra) {
+    let i = out.length - 1;
+    while (i >= 0 && isOwn(out[i] as Hit)) i--;
+    out.splice(i, 1);
+  }
+  return [...out, ...extra];
+}
+
 async function recall(ctx: ToolCtx, args: Record<string, unknown>): Promise<string> {
   const query = typeof args.query === "string" ? args.query.trim() : "";
   const k = args.k === undefined ? 5 : args.k;
@@ -84,9 +120,9 @@ async function recall(ctx: ToolCtx, args: Record<string, unknown>): Promise<stri
   if (!input) return "No memories matched.";
   const scopes = recallScopes(input);
   if (scopes.length === 0) return "No memories matched.";
-  let hits: Awaited<ReturnType<typeof mem.recall>>;
+  let hits: Hit[];
   try {
-    hits = await mem.recall({ scopes, query, k });
+    hits = await keepOwnSpace(mem, scopes, query, k, await mem.recall({ scopes, query, k }));
   } catch {
     throw new Error("memory is unavailable");
   }
@@ -124,7 +160,7 @@ async function remember(ctx: ToolCtx, args: Record<string, unknown>): Promise<st
   const parts = JSON.stringify([{ label: null, text }]);
   await ctx.db.query(
     `insert into sa.knowledge_items (id, agent_id, kind, title, parts, tags, origin_chat_id, taught_by)
-     values ($1, $2, 'note', $3, $4::jsonb, $5, $6, null)`,
+     values ($1, $2, 'note', $3, $4::text::jsonb, $5, $6, null)`,
     [id, ctx.agentId, text.slice(0, 80), parts, tags as string[], ctx.chatId],
   );
   try {
