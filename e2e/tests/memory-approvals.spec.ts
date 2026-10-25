@@ -112,7 +112,7 @@ test("approve: the card is shown, the pill counts it, approving writes one .eml 
   await expect.poll(emlCount).toBe(before + 1);
 });
 
-test("deny: a personal agent asked by Vlad needs Ana, who declines; the text never reaches #ops", async ({
+test("deny: a personal agent asked by Vlad needs Ana, who declines; the text never reaches the target room", async ({
   browser,
 }) => {
   const ana = await signIn(browser, "Ana", "111111");
@@ -134,11 +134,22 @@ test("deny: a personal agent asked by Vlad needs Ana, who declines; the text nev
   await ana.getByRole("button", { name: "Add agent Pia" }).click();
   await expect(ana.getByText(/Pia joined/).first()).toBeVisible();
   await ana.getByRole("button", { name: "Close panel" }).click();
+  await ana.getByRole("button", { name: "New chat" }).click();
+  const target = ana.getByRole("dialog", { name: "New chat" });
+  await target.getByLabel("Title").fill("Deny target");
+  await target.getByLabel("Vlad").check();
+  await target.getByRole("button", { name: "Create" }).click();
+  await openChat(ana, /Deny target/, "Message # Deny target");
+  await ana.getByRole("button", { name: "Members" }).click();
+  await ana.getByRole("button", { name: "Add agent Pia" }).click();
+  await expect(ana.getByText(/Pia joined/).first()).toBeVisible();
+  await ana.getByRole("button", { name: "Close panel" }).click();
 
   // Vlad asks; Ana (the approver, not the requester) sees Deny
-  const cmd = '@Pia !tool chat_send {"chat":"ops","text":"e2e-deny-marker"}';
+  const cmd = '@Pia !tool chat_send {"chat":"Deny target","text":"e2e-deny-marker"}';
   await openChat(vlad, /Deny room/, "Message # Deny room");
   await send(vlad, "Message # Deny room", cmd);
+  await openChat(ana, /Deny room/, "Message # Deny room");
   await openThread(ana, cmd);
   const card = details(ana).getByRole("region", { name: "Approval" });
   await card.getByRole("button", { name: "Deny" }).click({ timeout: 30_000 });
@@ -149,7 +160,7 @@ test("deny: a personal agent asked by Vlad needs Ana, who declines; the text nev
   ).toBeVisible();
 
   await vlad.waitForTimeout(3000);
-  await openChat(vlad, /^ops( \d+)?$/, "Message # ops");
+  await openChat(vlad, /Deny target/, "Message # Deny target");
   await expect(vlad.getByText("e2e-deny-marker")).toHaveCount(0);
 });
 
