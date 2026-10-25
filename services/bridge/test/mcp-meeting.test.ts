@@ -29,16 +29,16 @@ async function seedCall(o: {
   actions: unknown[];
   day: string;
   lines: [string, string][];
-  decliner?: string;
+  inviter?: string;
 }) {
   const start = `2026-10-${o.day}T10:00:00Z`;
   await db.query(
-    "insert into sa.calls (id, chat_id, room, started_by, started_at, ended_at) values ($1,$2,$3,'ana',$4,$5)",
-    [o.id, o.chat, `call-${o.id}`, start, `2026-10-${o.day}T11:00:00Z`],
+    "insert into sa.calls (id, chat_id, room, started_by, started_at, ended_at) values ($1,$2,$3,$6,$4,$5)",
+    [o.id, o.chat, `call-${o.id}`, start, `2026-10-${o.day}T11:00:00Z`, o.inviter ?? "ana"],
   );
   await db.query(
-    "insert into sa.call_notetakers (id, call_id, agent_id, invited_by, status, started_at) values ($1,$1,$2,'ana','finished',$3)",
-    [o.id, SCRIBE, start],
+    "insert into sa.call_notetakers (id, call_id, agent_id, invited_by, status, started_at) values ($1,$1,$2,$4,'finished',$3)",
+    [o.id, SCRIBE, start, o.inviter ?? "ana"],
   );
   for (const u of ["ana", "cy", "dee"]) {
     await db.query("insert into sa.call_participants (call_id, user_id) values ($1,$2)", [o.id, u]);
@@ -134,6 +134,7 @@ beforeEach(async () => {
     status: "published",
     actions: [],
     day: "18",
+    inviter: "ben",
     lines: [["ana", `${VERBATIM} other chat`]],
   });
   toolLog = new ToolLog();
@@ -227,6 +228,40 @@ describe("meeting_transcript", () => {
     const inGroup = await ask("C", "ben", { call_id: "P", chat_id: "dm-ana", requester: "ana" });
     expect(inGroup.json).not.toHaveProperty("transcript");
     expect(inGroup.text).not.toContain(VERBATIM);
+  });
+
+  it("hides a call from an inviter who left its chat, but still returns her older call in a chat she is in", async () => {
+    await db.query(
+      "insert into sa.chats (id, title, kind, created_by) values ('E','Left team','group','ben')",
+    );
+    for (const [type, member] of [
+      ["user", "ana"],
+      ["user", "ben"],
+      ["agent", SCRIBE],
+    ]) {
+      await db.query(
+        "insert into sa.chat_members (chat_id, member_type, member_id, role) values ('E',$1,$2,'member')",
+        [type, member],
+      );
+    }
+    await seedCall({
+      id: "Y",
+      chat: "E",
+      notes: "LEFT-CHAT-NOTES-SENTINEL",
+      status: "published",
+      actions: [],
+      day: "21",
+      lines: [["ana", `${VERBATIM} left chat`]],
+    });
+    await db.query(
+      "update sa.chat_members set removed_at = now() where chat_id = 'E' and member_id = 'ana'",
+    );
+    const left = await ask("dm-ana", "ana", { call_id: "Y" });
+    expect(left.json).toEqual({ error: "no_call_notes_here" });
+    expect(left.text).not.toContain("LEFT-CHAT-NOTES-SENTINEL");
+    const older = await ask("dm-ana", "ana", { call_id: "P" });
+    expect(older.json.call_id).toBe("P");
+    expect(older.json.transcript).toHaveLength(2);
   });
 
   it("with a query returns the matching line plus one line of context each side", async () => {
