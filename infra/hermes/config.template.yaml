@@ -17,4 +17,12 @@ gateway:
     host: 127.0.0.1
     port: ${API_PORT}
     key: "${API_KEY}"
+tools:
+  # Bridge MCP tools stay direct, with native structured arguments. With tool search on,
+  # Hermes defers every MCP tool behind tool_search/tool_call (no per-tool or per-server
+  # opt-out in this version), and tool_call takes the calls as one JSON string that the
+  # local model breaks inside long arguments such as an email body. A profile has at
+  # most ~12 bridge tools (~1k tokens), so deferral saves nothing here.
+  tool_search:
+    enabled: "off"
 mcp_servers: {} # filled per profile

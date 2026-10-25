@@ -8,6 +8,7 @@ help: ## list targets
 install: ## install JS + Python dev dependencies
 	pnpm install
 	uv sync
+	uv sync --inexact --package sa-memory --extra models  # memory embeddings (torch); plain sync drops it
 
 check: ## lint + unit tests (no models, no services)
 	pnpm lint
