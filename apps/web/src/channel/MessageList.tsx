@@ -60,7 +60,8 @@ function MessageListInner({ chat }: { chat: Chat }) {
     if (replyRoot) navigate(`/c/${encodeURIComponent(chat.id)}/t/${encodeURIComponent(replyRoot)}`);
   }, [replyRoot, chat.id, navigate]);
   useEffect(() => {
-    if (!target || !inList) return;
+    // locKey changes on every navigation, so the same link re-triggers the highlight
+    if (!target || !inList || !locKey) return;
     stick.current = false;
     scroller.current
       ?.querySelector(`[data-message-id="${CSS.escape(target)}"]`)
