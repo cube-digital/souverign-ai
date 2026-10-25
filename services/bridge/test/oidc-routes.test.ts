@@ -53,15 +53,32 @@ async function callback(app: App, query: string, cookie?: string) {
     headers: cookie ? { cookie } : {},
   });
 }
+const bindings = new Map<string, string>();
+const bindingOf = (r: { headers: Record<string, unknown> }) =>
+  [r.headers["set-cookie"]]
+    .flat()
+    .map(String)
+    .filter((c) => c.includes("Path=/api/auth/oidc/exchange"))
+    .map(cookieOf)[0] ?? "";
+function remember(r: { headers: Record<string, unknown> }) {
+  const loc = String(r.headers.location);
+  bindings.set(loc.split("#sa_login=")[1] ?? "", bindingOf(r));
+  return loc;
+}
 async function signIn(app: App, user: FakeUser) {
   const s = await start(app);
   const a = fake.authorize(s.location, user);
   const r = await callback(app, `code=${a.code}&state=${a.state}`, s.cookie);
-  return String(r.headers.location);
+  return remember(r);
 }
 const codeOf = (loc: string) => loc.split("#sa_login=")[1] ?? "";
-const exchange = (app: App, code: string) =>
-  app.inject({ method: "POST", url: "/api/auth/oidc/exchange", payload: { code } });
+const exchange = (app: App, code: string, cookie: string | undefined = bindings.get(code)) =>
+  app.inject({
+    method: "POST",
+    url: "/api/auth/oidc/exchange",
+    payload: { code },
+    headers: cookie ? { cookie } : {},
+  });
 
 beforeEach(async () => {
   db = await openDb("pglite://memory");
@@ -72,6 +89,7 @@ beforeEach(async () => {
   );
   t = Date.now();
   member = [];
+  bindings.clear();
   fake = await fakeOidc({ clientId: "cid", clientSecret: "csec" });
 });
 afterEach(() => db.close());
@@ -119,8 +137,14 @@ describe("oidc routes", () => {
     const loc = String(cb.headers.location);
     expect(loc).toMatch(/^https:\/\/demo\.example\/#sa_login=[^&?#]+$/);
     expect(loc).not.toContain("?");
-    const setCookies = [cb.headers["set-cookie"]].flat().map((c) => String(c).split("=")[0]);
-    expect(setCookies).toEqual(["sa_oidc"]);
+    const setCookies = [cb.headers["set-cookie"]].flat().map(String);
+    expect(setCookies).toHaveLength(2);
+    expect(setCookies[0]?.split("=")[0]).toBe("sa_oidc");
+    const bind = setCookies.filter((c) => c.includes("Path=/api/auth/oidc/exchange"));
+    expect(bind).toHaveLength(1);
+    expect(bind[0]).toMatch(/HttpOnly/);
+    expect(bind[0]).toMatch(/SameSite=Strict/);
+    remember(cb);
 
     const ex = await exchange(app, codeOf(loc));
     expect(ex.statusCode).toBe(200);
@@ -226,5 +250,19 @@ describe("oidc routes", () => {
     const listedOff = await ids(build({}));
     expect(listedOff).toContain("ana");
     expect(listedOff).not.toContain(made);
+  });
+
+  it("exchange needs the browser binding cookie and a refusal does not consume the code", async () => {
+    const app = build();
+    const code = codeOf(await signIn(app, NEW));
+    const mine = bindings.get(code);
+    const other = bindings.get(codeOf(await signIn(app, ANA)));
+    const none = await exchange(app, code, "");
+    expect(none.statusCode).toBe(401);
+    expect(none.json()).toEqual({ error: "bad_binding" });
+    const wrong = await exchange(app, code, other ?? "x=y");
+    expect(wrong.statusCode).toBe(401);
+    expect(wrong.json()).toEqual({ error: "bad_binding" });
+    expect((await exchange(app, code, mine)).statusCode).toBe(200);
   });
 });
