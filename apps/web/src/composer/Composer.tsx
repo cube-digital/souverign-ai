@@ -3,8 +3,13 @@ import { type Agent, type Chat, MAX_BLOB_BYTES } from "@sa/protocol";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { agentsOutside, useWorkspaceAgents } from "../channel/shared";
 import { Button, Icons } from "../ds";
+import { onBridgeEvent } from "../lib/bridge-events";
 import { addAgentWithKey } from "../state/membership";
 import { useSession } from "../state/session";
+import { firstAudio, markSent } from "../voice/latency";
+import { PushToTalk } from "../voice/PushToTalk";
+import type { Rec } from "../voice/recorder";
+import { VoicePlayer } from "../voice/voiceStream";
 import { AddAgentPrompt, canAddAgent } from "./AddAgentPrompt";
 import { loadDraft, saveDraft } from "./drafts";
 import { type MentionOption, MentionPopover, mentionOptions } from "./MentionPopover";
@@ -48,6 +53,21 @@ function ComposerInner({ chat, replyTo, initial, prefill, autoFocus }: Props) {
   const textRef = useRef(text);
   const lastPrefill = useRef(prefill?.key);
   const listId = useId();
+  const players = useRef(new Map<string, VoicePlayer>());
+
+  // The spoken answer to a voice message streams in as voice.chunk events for that message id.
+  useEffect(() => {
+    const map = players.current;
+    const off = onBridgeEvent((ev) => {
+      if (ev.type !== "voice.chunk" || ev.chat_id !== chat.id) return;
+      map.get(ev.source_id)?.push({ seq: ev.seq, wav_b64: ev.wav_b64, text: ev.text });
+    });
+    return () => {
+      off();
+      for (const p of map.values()) p.stop();
+      map.clear();
+    };
+  }, [chat.id]);
 
   useEffect(() => {
     if (autoFocus) area.current?.focus();
@@ -219,6 +239,28 @@ function ComposerInner({ chat, replyTo, initial, prefill, autoFocus }: Props) {
     }
   }
 
+  async function sendVoice(rec: Rec) {
+    if (!engine) return;
+    const releasedAt = Date.now();
+    setError(null);
+    try {
+      const ext = rec.mime.includes("mp4") || rec.mime.includes("m4a") ? "m4a" : "webm";
+      const id = await engine.sendFile(
+        chat.id,
+        { name: `voice-${releasedAt}.${ext}`, mime: rec.mime, bytes: rec.bytes },
+        { voice: { duration_ms: rec.durationMs }, ...(replyTo ? { replyTo } : {}) },
+      );
+      markSent(id, releasedAt);
+      players.current.get(id)?.stop();
+      players.current.set(
+        id,
+        new VoicePlayer(id, { onFirstAudio: () => void firstAudio(id, Date.now()) }),
+      );
+    } catch {
+      setError("Couldn't send the voice message. Try again in a moment.");
+    }
+  }
+
   const label = replyTo ? "Reply in thread" : `Message # ${chat.title}`;
   return (
     <div className="border-t border-border-soft px-4 py-2">
@@ -290,14 +332,13 @@ function ComposerInner({ chat, replyTo, initial, prefill, autoFocus }: Props) {
           onKeyDown={onKeyDown}
           className="max-h-32 min-h-8 min-w-0 flex-1 resize-none rounded-md border border-border-soft bg-bg-1 px-2.5 py-1.5 text-[13px] text-text-0 outline-none placeholder:text-text-3 focus:border-border-strong focus-visible:ring-2 focus-visible:ring-ai"
         />
-        <Button
-          variant="primary"
-          aria-label="Send"
-          disabled={busy || text.trim().length === 0}
-          onClick={() => void submit()}
-        >
-          <Icons.Send />
-        </Button>
+        {text.trim().length === 0 ? (
+          <PushToTalk onSend={(r) => void sendVoice(r)} disabled={busy || !engine} />
+        ) : (
+          <Button variant="primary" aria-label="Send" disabled={busy} onClick={() => void submit()}>
+            <Icons.Send />
+          </Button>
+        )}
       </div>
     </div>
   );

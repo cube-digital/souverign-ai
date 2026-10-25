@@ -2,9 +2,11 @@
 import type { ChatMessage } from "@sa/client";
 import type { Agent, Chat, MessageBody } from "@sa/protocol";
 import { memo, useState } from "react";
+import { CallCard } from "../call/CallCard";
 import { Avatar, Button } from "../ds";
 import { formatSize, timeOf } from "../lib/format";
 import type { Reaction } from "../state/threads";
+import { VoiceMessage } from "../voice/VoiceMessage";
 import { AgentMessage } from "./AgentMessage";
 import { ImagePreview } from "./ImagePreview";
 import { WorkingBadge } from "./LiveStatus";
@@ -33,7 +35,20 @@ function LinkedText({ text }: { text: string }) {
   );
 }
 
-function FileBlock({ body, actions }: { body: FileBody; actions: RowActions }) {
+/** The decrypted audio of a file message, for a player. */
+export function loadAudio(body: FileBody, actions: RowActions): () => Promise<Blob> {
+  return async () => new Blob([(await actions.download(body)) as BlobPart], { type: body.mime });
+}
+
+function FileBlock({
+  body,
+  actions,
+  transcript,
+}: {
+  body: FileBody;
+  actions: RowActions;
+  transcript?: string | undefined;
+}) {
   const [failed, setFailed] = useState(false);
   async function download() {
     setFailed(false);
@@ -49,6 +64,14 @@ function FileBlock({ body, actions }: { body: FileBody; actions: RowActions }) {
       setFailed(true);
     }
   }
+  if (body.voice)
+    return (
+      <VoiceMessage
+        load={loadAudio(body, actions)}
+        durationMs={body.voice.duration_ms}
+        transcript={transcript}
+      />
+    );
   if (body.mime.startsWith("image/"))
     return <ImagePreview body={body} onDownload={actions.download} />;
   return (
@@ -76,6 +99,12 @@ export type MessageItemProps = {
   actions: RowActions;
   /** briefly marks the row a citation pointed at */
   highlight?: boolean;
+  /** transcript text of a voice message (the text whose meta.transcript_of is this file) */
+  transcript?: string | undefined;
+  /** the agent's spoken reply for this text, when meta.audio_id points at a file */
+  audio?: FileBody | undefined;
+  /** the viewer sent the voice message this agent text answers */
+  requester?: boolean | undefined;
 };
 
 export const MessageItem = memo(function MessageItem({
@@ -88,6 +117,9 @@ export const MessageItem = memo(function MessageItem({
   rootId,
   actions,
   highlight = false,
+  transcript,
+  audio,
+  requester = false,
 }: MessageItemProps) {
   const member = memberOfDevice(chat, m.senderDevice);
   const name = member?.display_name ?? "Unknown";
@@ -96,7 +128,8 @@ export const MessageItem = memo(function MessageItem({
   if (m.status === "pending") content = <p className="text-text-2">Waiting for the key…</p>;
   else if (m.status === "error" || !body)
     content = <p className="text-text-2">Can't decrypt this message</p>;
-  else if (body.type === "file") content = <FileBlock body={body} actions={actions} />;
+  else if (body.type === "file")
+    content = <FileBlock body={body} actions={actions} transcript={transcript} />;
   else if (body.type === "text" && member?.member_type === "agent")
     content = (
       <AgentMessage
@@ -108,8 +141,13 @@ export const MessageItem = memo(function MessageItem({
         onChip={(t) => actions.send(t, rootId)}
         chatId={chat.id}
         messageId={m.id}
+        audio={
+          audio && { load: loadAudio(audio, actions), durationMs: audio.voice?.duration_ms ?? 0 }
+        }
+        showLatency={requester}
       />
     );
+  else if (body.type === "text" && body.meta?.call) content = <CallCard meta={body.meta.call} />;
   else content = <LinkedText text={body.type === "text" ? body.text : ""} />;
 
   const isAgentCard = body?.type === "text" && member?.member_type === "agent" && m.status === "ok";

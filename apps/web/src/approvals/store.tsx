@@ -17,6 +17,7 @@ import {
   approvals as fetchApprovals,
   getQuestion,
 } from "../api";
+import { type BridgeEvent, dispatchBridgeEvent } from "../lib/bridge-events";
 import { openEvents } from "../lib/sse";
 import { useSession } from "../state/session";
 
@@ -88,6 +89,7 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
         if (e.type === "approval") putApproval(e.approval);
         else if (e.type === "approval_public") putPublic(e.approval);
         else if (e.type === "question") putQuestion(e.question);
+        else if (/^(call|voice|latency)\./.test(e.type)) dispatchBridgeEvent(e as BridgeEvent);
       },
       {
         signal: ctl.signal,

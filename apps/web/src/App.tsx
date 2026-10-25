@@ -14,10 +14,10 @@ export function App() {
 
   if (!session) return <Login onSignedIn={setSessionState} />;
   return (
-    <SessionProvider session={session}>
-      <BrowserRouter>
-        <RailProvider>
-          <ToastProvider>
+    <ToastProvider>
+      <SessionProvider session={session}>
+        <BrowserRouter>
+          <RailProvider>
             <ApprovalsProvider>
               <AppFrame
                 onSwitchUser={() => {
@@ -27,9 +27,9 @@ export function App() {
                 }}
               />
             </ApprovalsProvider>
-          </ToastProvider>
-        </RailProvider>
-      </BrowserRouter>
-    </SessionProvider>
+          </RailProvider>
+        </BrowserRouter>
+      </SessionProvider>
+    </ToastProvider>
   );
 }
