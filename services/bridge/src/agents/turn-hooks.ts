@@ -82,14 +82,21 @@ export function currentTurn(agentId: string): TurnContext | undefined {
   return current.get(agentId);
 }
 
-/** Fire-and-forget: never blocks the message loop. */
-export function runStored(m: StoredMessage, log: Log): void {
-  for (const h of hooks) {
-    if (!h.onStored) continue;
-    Promise.resolve()
-      .then(() => h.onStored?.(m))
-      .catch((e) => log("stored hook failed", { hook: h.name, error: (e as Error).message }));
-  }
+/**
+ * Starts every onStored hook without blocking the message loop. The promise settles when all of
+ * them have, and never rejects, so the host can track it and wait for it at shutdown.
+ */
+export function runStored(m: StoredMessage, log: Log): Promise<void> {
+  const runs = hooks.flatMap((h) =>
+    h.onStored
+      ? [
+          Promise.resolve()
+            .then(() => h.onStored?.(m))
+            .catch((e) => log("stored hook failed", { hook: h.name, error: (e as Error).name })),
+        ]
+      : [],
+  );
+  return Promise.allSettled(runs).then(() => {});
 }
 
 export function beginTurn(ctx: TurnContext, log: Log): void {

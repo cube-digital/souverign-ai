@@ -302,7 +302,8 @@ export class AgentHost implements AgentHostApi {
     for (const d of this.devices.values()) d.close();
     this.devices.clear();
     this.building.clear();
-    await Promise.allSettled([...this.handling]);
+    // A message still being handled can start a stored hook: wait until nothing is left.
+    while (this.handling.size > 0) await Promise.allSettled([...this.handling]);
     await this.opts.runtime.stopAll();
   }
 
@@ -450,7 +451,8 @@ export class AgentHost implements AgentHostApi {
       );
       if (fresh.length === 0) return;
       const body = m.body;
-      runStored(
+      // Detached from this message, but tracked: stopAll waits for it before the pool closes.
+      const stored = runStored(
         {
           agentId: dev.agent.id,
           deviceId: dev.deviceId,
@@ -465,6 +467,8 @@ export class AgentHost implements AgentHostApi {
         },
         log,
       );
+      this.handling.add(stored);
+      void stored.finally(() => this.handling.delete(stored));
       if (m.body.type === "reaction") {
         await this.onReaction(dev, m, m.body);
         return;
