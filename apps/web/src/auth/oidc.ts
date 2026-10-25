@@ -25,14 +25,16 @@ export const loginErrorText = (code: string): string =>
   LOGIN_ERRORS[code] ?? "Sign-in failed. Try again.";
 
 export const GOOGLE_TRUST_LINE = "Sign-in uses Google · chats and AI stay on this Mac";
+const PIN_ONLY: AuthProviders = { pin: true, oidc: [] };
 let cached: Promise<AuthProviders> | undefined;
-/** Providers the bridge offers; any failure means PIN only. Fetched once per page load. */
+/** Providers the bridge offers; any failure or odd answer means PIN only. Fetched once per page load. */
 export function useAuthProviders(): AuthProviders {
-  const [p, setP] = useState<AuthProviders>({ pin: true, oidc: [] });
+  const [p, setP] = useState<AuthProviders>(PIN_ONLY);
   useEffect(() => {
     cached ??= Promise.resolve()
-      .then(authProviders)
-      .catch(() => ({ pin: true, oidc: [] }));
+      .then(() => authProviders())
+      .then((r) => (Array.isArray(r?.oidc) ? r : PIN_ONLY))
+      .catch(() => PIN_ONLY);
     void cached.then(setP);
   }, []);
   return p;
