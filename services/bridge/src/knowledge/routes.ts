@@ -198,79 +198,95 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: RouteDeps): 
       return reply.code(500).send({ error: "internal" });
     });
 
-    s.post("/api/agents/:id/knowledge", async (req, reply) => {
-      const t = await teacher(req, reply, req);
-      if (!t) return;
-      let name = "";
-      try {
-        const raw = req.headers["x-file-name"];
-        name = basename(decodeURIComponent(typeof raw === "string" ? raw : ""));
-      } catch {
-        name = "";
-      }
-      if (!name || name.length > 200) return reply.code(400).send({ error: "bad_name" });
-      const body = req.body;
-      if (!Buffer.isBuffer(body)) return reply.code(400).send({ error: "bad_request" });
-      const mime = String(req.headers["x-file-type"] ?? "application/octet-stream");
-      const mem = memory();
-      if (!mem) return reply.code(503).send({ error: "memory_unavailable" });
-
-      let ex: Awaited<ReturnType<typeof extract>>;
-      try {
-        ex = await extract(body, name, mime);
-      } catch (e) {
-        const code = e instanceof ExtractError ? e.code : "failed";
-        log("knowledge extract failed", { agent: t.agent.id, size: body.byteLength, code });
-        if (code === "unsupported") return reply.code(415).send({ error: "unsupported" });
-        if (code === "too_large") return reply.code(413).send({ error: "too_large" });
-        if (code === "empty")
-          return reply.code(422).send({
-            error: "empty",
-            ...(e instanceof Error && e.message !== "empty" ? { message: e.message } : {}),
-          });
-        return reply.code(422).send({ error: "extract_failed" });
-      }
-
-      const id = newId();
-      const parts: Segment[] = ex.segments.map((x) => ({ label: x.label, text: x.text }));
-      await db.query(
-        `insert into sa.knowledge_items (id, agent_id, kind, title, mime, size, parts, truncated, taught_by)
-         values ($1, $2, 'document', $3, $4, $5, $6, $7, $8)`,
-        [
-          id,
-          t.agent.id,
-          name,
-          mime.slice(0, 200),
-          body.byteLength,
-          JSON.stringify(parts),
-          ex.truncated,
-          t.userId,
-        ],
-      );
-      try {
-        for (const p of segmentSources(id, name, ex.segments)) {
-          await mem.ingest({
-            namespace: `agent:${t.agent.id}`,
-            kind: "knowledge",
-            origin_chat_id: null,
-            source: { type: "doc", id: p.id, title: p.title, ts: Date.now() },
-            text: p.text,
-          });
+    // Auth and permission run before the body is buffered.
+    const checked = new WeakMap<object, { userId: string; agent: AgentRow }>();
+    s.post(
+      "/api/agents/:id/knowledge",
+      {
+        onRequest: async (req, reply) => {
+          const t = await teacher(req, reply, req);
+          if (t) checked.set(req, t);
+        },
+      },
+      async (req, reply) => {
+        const t = checked.get(req);
+        if (!t) return reply.code(401).send({ error: "unauthorized" });
+        let name = "";
+        try {
+          const raw = req.headers["x-file-name"];
+          name = basename(
+            decodeURIComponent(typeof raw === "string" ? raw : "")
+              .replace(/\p{C}/gu, "")
+              .trim(),
+          ).trim();
+        } catch {
+          name = "";
         }
-      } catch {
-        await cleanup(mem, t.agent.id, "doc", id);
-        await db.query("delete from sa.knowledge_items where id = $1", [id]);
-        log("knowledge ingest failed", { agent: t.agent.id, item: id });
-        return reply.code(502).send({ error: "memory_failed" });
-      }
-      log("knowledge added", {
-        agent: t.agent.id,
-        item: id,
-        parts: parts.length,
-        size: body.byteLength,
-      });
-      return toItem((await itemById(t.agent.id, id)) as ItemRow);
-    });
+        if (!name || name === "." || name === ".." || name.length > 200)
+          return reply.code(400).send({ error: "bad_name" });
+        const body = req.body;
+        if (!Buffer.isBuffer(body)) return reply.code(400).send({ error: "bad_request" });
+        const mime = String(req.headers["x-file-type"] ?? "application/octet-stream");
+        const mem = memory();
+        if (!mem) return reply.code(503).send({ error: "memory_unavailable" });
+
+        let ex: Awaited<ReturnType<typeof extract>>;
+        try {
+          ex = await extract(body, name, mime);
+        } catch (e) {
+          const code = e instanceof ExtractError ? e.code : "failed";
+          log("knowledge extract failed", { agent: t.agent.id, size: body.byteLength, code });
+          if (code === "unsupported") return reply.code(415).send({ error: "unsupported" });
+          if (code === "too_large") return reply.code(413).send({ error: "too_large" });
+          if (code === "empty")
+            return reply.code(422).send({
+              error: "empty",
+              ...(e instanceof Error && e.message !== "empty" ? { message: e.message } : {}),
+            });
+          return reply.code(422).send({ error: "extract_failed" });
+        }
+
+        const id = newId();
+        const parts: Segment[] = ex.segments.map((x) => ({ label: x.label, text: x.text }));
+        await db.query(
+          `insert into sa.knowledge_items (id, agent_id, kind, title, mime, size, parts, truncated, taught_by)
+         values ($1, $2, 'document', $3, $4, $5, $6, $7, $8)`,
+          [
+            id,
+            t.agent.id,
+            name,
+            mime.slice(0, 200),
+            body.byteLength,
+            JSON.stringify(parts),
+            ex.truncated,
+            t.userId,
+          ],
+        );
+        try {
+          for (const p of segmentSources(id, name, ex.segments)) {
+            await mem.ingest({
+              namespace: `agent:${t.agent.id}`,
+              kind: "knowledge",
+              origin_chat_id: null,
+              source: { type: "doc", id: p.id, title: p.title, ts: Date.now() },
+              text: p.text,
+            });
+          }
+        } catch {
+          await cleanup(mem, t.agent.id, "doc", id);
+          await db.query("delete from sa.knowledge_items where id = $1", [id]);
+          log("knowledge ingest failed", { agent: t.agent.id, item: id });
+          return reply.code(502).send({ error: "memory_failed" });
+        }
+        log("knowledge added", {
+          agent: t.agent.id,
+          item: id,
+          parts: parts.length,
+          size: body.byteLength,
+        });
+        return toItem((await itemById(t.agent.id, id)) as ItemRow);
+      },
+    );
   });
 
   app.get("/api/agents/:id/lessons", async (req, reply) => {
