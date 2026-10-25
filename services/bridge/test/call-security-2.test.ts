@@ -167,7 +167,7 @@ it("a failed post puts the notes back, and notes stuck as published without a me
     throw new Error("relay down");
   };
   const r = await decide(n.approvalId, "ana", { decision: "approve" });
-  w.host.sendAs = send;
+  if (send) w.host.sendAs = send;
   expect(r).toMatchObject({ ok: true, approval: { status: "failed" } });
   const status = async () =>
     (
