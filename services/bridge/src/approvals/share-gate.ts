@@ -14,7 +14,7 @@ import {
   requestApproval,
   withTimeout,
 } from "./service.js";
-import { displayName, isHumanMember } from "./store.js";
+import { displayName, getApproval, isHumanMember, rowToApproval } from "./store.js";
 
 export const SHARE_TOOL = "share_answer";
 const MAX_TEXT = 8000;
@@ -164,14 +164,14 @@ async function scrub(db: Db, id: string): Promise<void> {
     `update sa.approvals
         set args = jsonb_build_object('question', coalesce(args->'question', '""'::jsonb)),
             preview = jsonb_set(preview - 'sources', '{fields}', '[]'::jsonb)
-      where id = $1 and status in ('denied', 'expired', 'canceled')`,
+      where id = $1 and status in ('denied', 'expired', 'canceled', 'failed')`,
     [id],
   );
 }
 
 async function settled(a: Approval): Promise<void> {
   const d = approvalDeps();
-  if (a.status === "denied" || a.status === "expired" || a.status === "canceled") {
+  if (["denied", "expired", "canceled", "failed"].includes(a.status)) {
     try {
       await scrub(d.db, a.id);
     } catch (e) {
@@ -202,13 +202,25 @@ export function watchShare(a: { id: string; approver_user_id: string }): void {
   watchers.set(a.id, off);
 }
 
-/** Picks up the previews still pending after a restart. */
+/**
+ * After a restart: follows the previews still pending, and gives the answers that failed while
+ * the bridge was down (approved, never posted; their text is still there) their status line.
+ */
 export async function watchPendingShares(db: Db): Promise<void> {
   const rows = await db.query<{ id: string; approver_user_id: string }>(
     "select id, approver_user_id from sa.approvals where tool = $1 and status = 'pending'",
     [SHARE_TOOL],
   );
   for (const r of rows) watchShare(r);
+  const failed = await db.query<{ id: string }>(
+    `select id from sa.approvals where tool = $1 and status = 'failed' and args->>'text' is not null
+        and decided_at > now() - interval '1 day'`,
+    [SHARE_TOOL],
+  );
+  for (const r of failed) {
+    const row = await getApproval(db, r.id);
+    if (row) await settled(rowToApproval(row, false));
+  }
 }
 
 export function stopShareWatchers(): void {
@@ -242,7 +254,12 @@ export async function beforeReply(ctx: TurnContext, draft: ReplyDraft): Promise<
     requesterUserId: ctx.requesterUserId,
     kind: "share",
     tool: SHARE_TOOL,
-    args: { text: draft.text, meta: draft.meta, question: ctx.prompt },
+    // Only the sources the preview shows are kept; the trace and the rest of the draft stay out.
+    args: {
+      text: draft.text,
+      meta: draft.meta.citations ? { citations: draft.meta.citations } : {},
+      question: ctx.prompt,
+    },
   });
   if (res.status !== "pending") {
     throw new Error(`share gate: ${res.status === "error" ? res.error : res.status}`);

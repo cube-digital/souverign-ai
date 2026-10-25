@@ -11,7 +11,8 @@ import type { Db } from "../db.js";
 import { type RegisteredTool, registerTools, type ToolCtx } from "../mcp/registry.js";
 import { memory } from "./client.js";
 import { loadScopeInput } from "./scope-input.js";
-import { recallScopes } from "./scopes.js";
+import { oneToOneHuman, recallScopes } from "./scopes.js";
+import { addRecalls } from "./turn-recalls.js";
 
 const TEMPLATES = ["general", "devops", "qa", "ops", "dev", "tech", "sales", "scribe"] as const;
 const MAX_ITEMS = 5;
@@ -75,10 +76,14 @@ async function forget(ctx: ToolCtx, args: Record<string, unknown>): Promise<stri
   });
   if (!input) return NOTHING;
   const own = `agent:${ctx.agentId}`;
+  // D-9: the tool result names taught items and their teachers before any reply gate runs, so
+  // taught knowledge (no origin chat) is searched only where it may be shared without asking.
+  const taughtOk =
+    input.agent.share === "always" || oneToOneHuman(input.agent, input.chat) !== null;
   // The origin filter is what bounds reach; the time bound is for reading history, not for
   // forgetting what the agent itself saved.
   const scopes = recallScopes(input)
-    .filter((s) => s.namespace === own)
+    .filter((s) => s.namespace === own && (taughtOk || !(s.origin_chat_ids ?? []).includes(null)))
     .map(({ namespace, origin_chat_ids }) => ({
       namespace,
       origin_chat_ids: origin_chat_ids ?? null,
@@ -90,6 +95,8 @@ async function forget(ctx: ToolCtx, args: Record<string, unknown>): Promise<stri
   } catch {
     throw new Error("memory is unavailable");
   }
+  // What the turn read counts for the share gate and the citations like any recall.
+  addRecalls(turn.turnId, hits);
   const ids = [
     ...new Set(hits.filter((h) => h.space === own).map((h) => headId(h.source.id))),
   ].slice(0, MAX_ITEMS);

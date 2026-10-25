@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { Approval, ApprovalDecision, ApprovalPreview, ApprovalPublic } from "@sa/protocol";
 import type { AgentHostApi } from "../agents/api.js";
 import type { Db } from "../db.js";
+import { taughtHeld } from "../memory/scope-input.js";
 import type { Log } from "../plugin-api.js";
 import { publish } from "./events.js";
 import {
@@ -409,11 +410,14 @@ export async function requestApproval(req: GateRequest): Promise<GateResult> {
     error: "too_many_pending",
     message: `There are already ${MAX_PENDING_PER_CHAT} approvals waiting in this chat. Wait for a decision.`,
   };
-  // A grant needs a person who asked in this chat (never a proactive turn).
+  // A grant needs a person who asked in this chat (never a proactive turn), and a turn that did
+  // not read taught knowledge the share gate would hold: model text from such a turn is always
+  // shown to the approver first (D-9).
   const granted =
     spec.executor.alwaysAllowed &&
     req.requesterUserId !== null &&
     (await isHumanMember(d.db, req.chatId, req.requesterUserId)) &&
+    !(await heldByShareGate(req)) &&
     (await hasGrant(d.db, approver, req.agentId, req.tool));
   const placed = await withLock(`approvals:${req.agentId}:${req.chatId}`, async () => {
     const n = await usage(d.db, req.agentId, req.chatId);
@@ -436,6 +440,17 @@ export async function requestApproval(req: GateRequest): Promise<GateResult> {
   const a = toApproval(created);
   await announceNow(a);
   return { status: "pending", approval: a };
+}
+
+function heldByShareGate(req: GateRequest): Promise<boolean> {
+  if (!req.turnId) return Promise.resolve(false);
+  return taughtHeld(approvalDeps().db, {
+    turnId: req.turnId,
+    agentId: req.agentId,
+    chatId: req.chatId,
+    noTaught: false,
+    requesterUserId: req.requesterUserId,
+  });
 }
 
 function remember(turnId: string | null, id: string): void {

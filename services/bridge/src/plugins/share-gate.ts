@@ -1,5 +1,5 @@
 import { addTurnHooks, SHARE_GATE_HOOK } from "../agents/turn-hooks.js";
-import { registerGatedTool } from "../approvals/service.js";
+import { approvalsReady, registerGatedTool } from "../approvals/service.js";
 import {
   beforeReply,
   SHARE_TOOL,
@@ -16,6 +16,8 @@ export const plugin: BridgePlugin = {
     registerGatedTool(SHARE_TOOL, { executor: shareExecutor });
     addTurnHooks({ name: SHARE_GATE_HOOK, beforeReply });
     try {
+      // after initApprovals has failed the rows a restart interrupted
+      await approvalsReady();
       await watchPendingShares(ctx.db);
     } catch (e) {
       ctx.log("share gate watch failed", { error: (e as Error).name });
