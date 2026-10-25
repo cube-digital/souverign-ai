@@ -81,6 +81,7 @@ async function item(opts: {
   taughtBy: string | null;
   origin: string | null;
   parts?: string[];
+  ts?: number;
 }) {
   await w.db.query(
     "insert into sa.knowledge_items (id, agent_id, kind, title, taught_by, origin_chat_id) values ($1,'nora',$2,$3,$4,$5)",
@@ -95,7 +96,7 @@ async function item(opts: {
         type: opts.kind === "document" ? "doc" : "note",
         id: sid,
         title: opts.title,
-        ts: 1,
+        ts: opts.ts ?? Date.now() + 60_000,
       },
       text: opts.text,
     });
@@ -174,5 +175,26 @@ describe("memory_forget (T9)", () => {
     expect(out).toBe("Nothing I know here matches that.");
     expect(await items()).toEqual(["n2"]);
     expect((await recallAll("salary")).length).toBe(1);
+  });
+
+  it("cannot reach a note the agent saved in this chat before the requester joined", async () => {
+    await w.db.query("update sa.chat_members set joined_at = now() where chat_id = 'c1'");
+    await w.db.query(
+      "update sa.chat_members set joined_at = now() + interval '1 hour' where chat_id = 'c1' and member_id = 'bob'",
+    );
+    await item({
+      id: "n3",
+      kind: "note",
+      title: "Old budget",
+      text: "budget figures from before",
+      taughtBy: null,
+      origin: "c1",
+      ts: Date.now() + 1000,
+    });
+
+    const out = await forget("budget figures", "bob");
+
+    expect(out).toBe("Nothing I know here matches that.");
+    expect(await items()).toEqual(["n3"]);
   });
 });

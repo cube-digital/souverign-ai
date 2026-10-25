@@ -80,13 +80,14 @@ async function forget(ctx: ToolCtx, args: Record<string, unknown>): Promise<stri
   // taught knowledge (no origin chat) is searched only where it may be shared without asking.
   const taughtOk =
     input.agent.share === "always" || oneToOneHuman(input.agent, input.chat) !== null;
-  // The origin filter is what bounds reach; the time bound is for reading history, not for
-  // forgetting what the agent itself saved.
+  // D-9: reach is bounded by origin and by time, like recall: in a shared chat a late joiner
+  // cannot name (and so delete) notes saved before they joined.
   const scopes = recallScopes(input)
     .filter((s) => s.namespace === own && (taughtOk || !(s.origin_chat_ids ?? []).includes(null)))
-    .map(({ namespace, origin_chat_ids }) => ({
+    .map(({ namespace, origin_chat_ids, since_ts }) => ({
       namespace,
       origin_chat_ids: origin_chat_ids ?? null,
+      ...(since_ts === undefined ? {} : { since_ts }),
     }));
   if (scopes.length === 0) return NOTHING;
   let hits: Awaited<ReturnType<typeof mem.recall>>;
