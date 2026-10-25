@@ -255,7 +255,8 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
     const dmChat = chatId;
     // Another device of this user may have keyed the DM already, and a key once stored for an
     // epoch is final: a second key for that epoch would leave the agent unable to read the new
-    // device. Once the agent holds the current epoch, the answer carries the next one unspent.
+    // device. Once the agent holds the current epoch, key_epoch moves past it, which tells a
+    // device without a key to claim a fresh epoch instead of minting epoch 1.
     if (!created) {
       await db.query(
         `update sa.chats c set key_epoch = k.top + 1
