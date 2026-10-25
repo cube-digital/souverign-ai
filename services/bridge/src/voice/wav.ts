@@ -5,7 +5,8 @@ export type ParsedWav = {
   data: Uint8Array;
 };
 
-const tag = (b: Uint8Array, o: number) => String.fromCharCode(b[o], b[o + 1], b[o + 2], b[o + 3]);
+const tag = (b: Uint8Array, o: number) =>
+  String.fromCharCode(b[o] ?? 0, b[o + 1] ?? 0, b[o + 2] ?? 0, b[o + 3] ?? 0);
 
 /** Walks the RIFF chunks; does not assume a 44-byte header. */
 export function parseWav(bytes: Uint8Array): ParsedWav {
@@ -38,8 +39,8 @@ export function parseWav(bytes: Uint8Array): ParsedWav {
 
 export function concatWav(parts: Uint8Array[]): Uint8Array {
   const parsed = parts.map(parseWav);
-  if (parsed.length === 0) throw new Error("bad_wav");
   const f = parsed[0];
+  if (!f) throw new Error("bad_wav");
   for (const p of parsed) {
     if (
       p.sampleRate !== f.sampleRate ||

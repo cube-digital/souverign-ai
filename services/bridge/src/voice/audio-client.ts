@@ -22,7 +22,7 @@ export function httpAudioClient(opts: {
   return {
     async transcribe(bytes, filename, language = "auto") {
       const form = new FormData();
-      form.set("file", new Blob([bytes]), filename);
+      form.set("file", new Blob([new Uint8Array(bytes)]), filename);
       form.set("language", language);
       const res = await fetch(`${base}/v1/audio/transcriptions`, {
         method: "POST",

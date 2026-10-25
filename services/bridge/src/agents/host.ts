@@ -7,22 +7,33 @@ import {
 import { cryptoReady, randomId } from "@sa/crypto";
 import {
   type ActivityBody,
+  MAX_VOICE_MS,
   type MessageBody,
   type TextMeta,
   TICKET_TTL_MS,
   type TraceStep,
   type TurnTrigger,
+  type VoiceLatency,
 } from "@sa/protocol";
 import { signTicket } from "@sa/protocol/ticket";
+import { publish } from "../approvals/events.js";
 import type { Db } from "../db.js";
 import { ToolLog } from "../mcp/tool-log.js";
 import { waitForRelay } from "../relay-ready.js";
+import { type AudioClient, audioClientFromEnv, ttsLanguage } from "../voice/audio-client.js";
+import { Speaker } from "../voice/voice-turn.js";
 import { ACCESS_RE, accessSummary, agentTools } from "./access.js";
 import type { AgentHostApi, ProactiveRequest, StopResult } from "./api.js";
 import { postIntro } from "./intro.js";
 import { markReask, recordTurn, setFeedback, type TurnOutcome } from "./metrics.js";
 import { PgKeyStore } from "./pg-keystore.js";
-import { type AgentRuntime, abortError, type ChatMessage, type RuntimeAgent } from "./runtime.js";
+import {
+  type AgentRuntime,
+  abortError,
+  type ChatMessage,
+  type RuntimeAgent,
+  splitThink,
+} from "./runtime.js";
 import { decrypt, encrypt } from "./secrets.js";
 import {
   beginTurn,
@@ -32,9 +43,10 @@ import {
   runStored,
   type TurnContext,
 } from "./turn-hooks.js";
-import { setForceFirstTool } from "./turn-policy.js";
+import { forceFirstTool, setForceFirstTool } from "./turn-policy.js";
 import { type Priority, TurnQueue } from "./turn-queue.js";
 import { describeImage } from "./vision.js";
+import { addressesAgent, claimVoice } from "./voice-trigger.js";
 
 const MIN_GAP_MS = 3000;
 const CONTEXT_MESSAGES = 20;
@@ -50,6 +62,8 @@ const TRIGGER_MAX_AGE_MS = 5 * 60_000;
 /** How long the same person may follow up in a thread without a tag. */
 const FOLLOWUP_MS = 10 * 60_000;
 const KEY_WAIT_MS = 30_000;
+const COMPLETE_TIMEOUT_MS = 180_000;
+const STT_FAILED = "I couldn't transcribe that voice message.";
 const DONE_EMOJI = { done: "✅", stopped: "⏹️", error: "⚠️" } as const;
 
 export type AgentHostOptions = {
@@ -62,6 +76,8 @@ export type AgentHostOptions = {
   describe?: ((bytes: Uint8Array, mime: string, name: string) => Promise<string>) | undefined;
   /** Test seam: replaces the websocket client. */
   linkFactory?: (deviceId: string) => RelayLink;
+  /** Speech-to-text and text-to-speech; defaults to the audio-api from the environment. */
+  audio?: AudioClient | null;
 };
 
 type Device = {
@@ -73,6 +89,18 @@ type Device = {
   link: RelayLink;
   /** last time the link was seen `ready` (or the device was built) */
   lastReadyAt: number;
+};
+
+/** What a voice turn adds: the reply is also spoken. */
+type VoiceTurn = {
+  audio: AudioClient;
+  /** TTS language, from the language STT detected */
+  language: string;
+  /** the user's voice message */
+  sourceId: string;
+  /** when the bridge received the voice message */
+  receivedAt: number;
+  sttMs: number;
 };
 
 /** One turn, from its trigger to the final reply. */
@@ -96,6 +124,8 @@ type Turn = {
   requesterName?: string;
   /** retry after a denied private preview: recall must skip taught knowledge */
   noTaught?: boolean;
+  /** set for turns that answer a voice message */
+  voice?: VoiceTurn;
   abort: AbortController;
   stoppedBy?: string;
   /** the 👀 reaction, so the final reactions are sent after it */
@@ -144,9 +174,18 @@ export class AgentHost implements AgentHostApi {
   private queue = new TurnQueue();
   /** "agent|chat" → when the agent last replied there; kept here so a device rebuild keeps it. */
   private lastReplyAt = new Map<string, number>();
+  /** Message handlers in flight; stopAll waits for them so the database can close cleanly. */
+  private handling = new Set<Promise<void>>();
+  private audioClient: AudioClient | null | undefined;
+  private voiceDisabledLogged = false;
 
   constructor(private opts: AgentHostOptions) {
     this.toolLog = opts.toolLog ?? new ToolLog();
+  }
+
+  private audio(): AudioClient | null {
+    if (this.audioClient === undefined) this.audioClient = this.opts.audio ?? audioClientFromEnv();
+    return this.audioClient;
   }
 
   /** Starts a device for every agent that is an active member of at least one chat. */
@@ -254,6 +293,7 @@ export class AgentHost implements AgentHostApi {
     for (const d of this.devices.values()) d.close();
     this.devices.clear();
     this.building.clear();
+    await Promise.allSettled([...this.handling]);
     await this.opts.runtime.stopAll();
   }
 
@@ -362,7 +402,10 @@ export class AgentHost implements AgentHostApi {
       link,
       lastReadyAt: Date.now(),
     };
-    engine.onMessage((m) => void this.onMessage(dev, m));
+    engine.onMessage((m) => {
+      const p = this.onMessage(dev, m).finally(() => this.handling.delete(p));
+      this.handling.add(p);
+    });
     this.devices.set(agentId, dev);
     this.ensureHealthLoop();
     await connecting;
@@ -376,6 +419,7 @@ export class AgentHost implements AgentHostApi {
   }
 
   private async onMessage(dev: Device, m: EngineMessage): Promise<void> {
+    const receivedAt = Date.now();
     try {
       if (m.status !== "ok" || !m.body) return;
       const { db } = this.opts;
@@ -416,6 +460,10 @@ export class AgentHost implements AgentHostApi {
         await this.onReaction(dev, m, m.body);
         return;
       }
+      if (m.body.type === "file" && m.body.voice && m.senderDevice !== dev.deviceId) {
+        await this.voiceMessage(dev, m, m.body, receivedAt);
+        return;
+      }
       if (m.body.type !== "text" || m.senderDevice === dev.deviceId) return;
       const seed = await this.triggerFor(dev, m, m.body);
       if (!seed) return;
@@ -439,6 +487,156 @@ export class AgentHost implements AgentHostApi {
     return dev.engine.downloadFile(body);
   }
 
+  /** The active human member who owns the sending device, or null (agents never trigger). */
+  private async humanSender(
+    m: EngineMessage,
+  ): Promise<{ owner_id: string; display_name: string | null } | null> {
+    const [sender] = await this.opts.db.query<{ owner_id: string; display_name: string | null }>(
+      `select d.owner_id, u.display_name from sa.devices d
+       join sa.users u on u.id = d.owner_id and u.kind = 'person'
+       join sa.chat_members cm on cm.chat_id = $2 and cm.member_type = 'user'
+         and cm.member_id = d.owner_id and cm.removed_at is null
+       where d.id = $1 and d.owner_type = 'user'`,
+      [m.senderDevice, m.chatId],
+    );
+    return sender ?? null;
+  }
+
+  /**
+   * A voice message from a person. Every agent device sees it, one device wins the claim,
+   * transcribes it and picks the agent that answers (DM, addressed by name, or thread owner).
+   */
+  private async voiceMessage(
+    dev: Device,
+    m: EngineMessage,
+    body: Extract<MessageBody, { type: "file" }>,
+    receivedAt: number,
+  ): Promise<void> {
+    const audio = this.audio();
+    if (!audio) {
+      if (!this.voiceDisabledLogged) {
+        this.voiceDisabledLogged = true;
+        log("voice disabled");
+      }
+      return;
+    }
+    // Checked before the file is downloaded or decoded.
+    if (!body.voice || body.voice.duration_ms > MAX_VOICE_MS) return;
+    if (Date.now() - m.ts > TRIGGER_MAX_AGE_MS) return;
+    const sender = await this.humanSender(m);
+    if (!sender) return;
+    const { db } = this.opts;
+    const [me] = await db.query(
+      "select 1 from sa.chat_members where chat_id = $1 and member_type = 'agent' and member_id = $2 and removed_at is null",
+      [m.chatId, dev.agent.id],
+    );
+    if (!me) return;
+    if (!claimVoice(m.id)) return;
+
+    let transcript: { text: string; language: string };
+    try {
+      const bytes = await dev.engine.downloadFile(body);
+      transcript = await audio.transcribe(bytes, body.name, "auto");
+    } catch (e) {
+      log("voice stt failed", { agent: dev.agent.id, chat: m.chatId, error: (e as Error).message });
+      try {
+        await dev.engine.sendReaction(m.chatId, m.id, DONE_EMOJI.error, "add");
+        await dev.engine.sendText(
+          m.chatId,
+          STT_FAILED,
+          { local: true },
+          {
+            replyTo: body.reply_to ?? m.id,
+          },
+        );
+      } catch (e2) {
+        log("voice reply failed", { agent: dev.agent.id, error: (e2 as Error).message });
+      }
+      return;
+    }
+    const sttMs = Date.now() - receivedAt;
+    const text = transcript.text.slice(0, 8000);
+    log("voice transcribed", { chat: m.chatId, message: m.id, size: text.length, ms: sttMs });
+    if (!text) return;
+
+    const [chat] = await db.query<{ kind: string; users: number; agents: number }>(
+      `select c.kind,
+         count(*) filter (where m.member_type = 'user')::int as users,
+         count(*) filter (where m.member_type = 'agent')::int as agents
+       from sa.chats c join sa.chat_members m on m.chat_id = c.id and m.removed_at is null
+       where c.id = $1 group by c.kind`,
+      [m.chatId],
+    );
+    const agents = await db.query<{ id: string; name: string }>(
+      `select a.id, a.name from sa.chat_members cm join sa.agents a on a.id = cm.member_id
+       where cm.chat_id = $1 and cm.member_type = 'agent' and cm.removed_at is null
+       order by cm.joined_at, a.id`,
+      [m.chatId],
+    );
+    const thread = body.reply_to;
+    let pick: { agentId: string; trigger: TurnTrigger; replyTo?: string; force: boolean } | null =
+      null;
+    if (chat?.kind === "dm" && Number(chat.users) === 1 && Number(chat.agents) === 1 && agents[0]) {
+      pick = thread
+        ? { agentId: agents[0].id, trigger: "dm", replyTo: thread, force: false }
+        : { agentId: agents[0].id, trigger: "dm", force: true };
+    } else {
+      const named = agents.find((a) => addressesAgent(text, a.name));
+      if (named) {
+        pick = { agentId: named.id, trigger: "mention", replyTo: thread ?? m.id, force: true };
+      } else if (thread) {
+        const owner = this.threadOwner.get(`${m.chatId}|${thread}`);
+        if (
+          owner &&
+          owner.userId === sender.owner_id &&
+          Date.now() <= owner.until &&
+          agents.some((a) => a.id === owner.agentId)
+        ) {
+          pick = { agentId: owner.agentId, trigger: "followup", replyTo: thread, force: false };
+        }
+      }
+    }
+    if (!pick) return;
+    const answering = this.devices.get(pick.agentId) ?? (await this.deviceFor(pick.agentId));
+    if (!answering) return;
+
+    const seed: TurnSeed = {
+      chatId: m.chatId,
+      text,
+      messageId: m.id,
+      seq: m.seq,
+      requesterUserId: sender.owner_id,
+      requesterName: sender.display_name ?? sender.owner_id,
+      trigger: pick.trigger,
+      force: pick.force,
+      ...(pick.replyTo ? { replyTo: pick.replyTo } : {}),
+      voice: {
+        audio,
+        language: ttsLanguage(transcript.language),
+        sourceId: m.id,
+        receivedAt,
+        sttMs,
+      },
+    };
+    if (ACCESS_RE.test(text)) {
+      await this.queue.limit(seed.requesterUserId ?? "", () => this.answerAccess(answering, seed));
+      return;
+    }
+    const turn = this.newTurn(answering, seed, "human");
+    try {
+      await answering.engine.sendText(
+        m.chatId,
+        text,
+        { transcript_of: m.id, local: true },
+        pick.replyTo ? { replyTo: pick.replyTo } : undefined,
+      );
+    } catch (e) {
+      log("voice transcript send failed", { agent: pick.agentId, error: (e as Error).message });
+    }
+    await this.noteReask(turn);
+    void this.runTurn(answering, turn).catch(() => {});
+  }
+
   /** The answer rules (Decisions, in order). Null when this agent should stay quiet. */
   private async triggerFor(
     dev: Device,
@@ -447,14 +645,7 @@ export class AgentHost implements AgentHostApi {
   ): Promise<TurnSeed | null> {
     const { db } = this.opts;
     // 1. Only people trigger turns: agent devices never do, which prevents loops.
-    const [sender] = await db.query<{ owner_id: string; display_name: string | null }>(
-      `select d.owner_id, u.display_name from sa.devices d
-       join sa.users u on u.id = d.owner_id and u.kind = 'person'
-       join sa.chat_members cm on cm.chat_id = $2 and cm.member_type = 'user'
-         and cm.member_id = d.owner_id and cm.removed_at is null
-       where d.id = $1 and d.owner_type = 'user'`,
-      [m.senderDevice, m.chatId],
-    );
+    const sender = await this.humanSender(m);
     if (!sender) return null;
     // 2. Seeded history and replays are older than 5 minutes.
     if (Date.now() - m.ts > TRIGGER_MAX_AGE_MS) return null;
@@ -646,6 +837,52 @@ export class AgentHost implements AgentHostApi {
     }
   }
 
+  /** Sends one message from the agent's own device; resolves the message id. */
+  async sendAs(agentId: string, chatId: string, body: MessageBody): Promise<string> {
+    const dev = await this.deviceFor(agentId);
+    if (!dev) throw new Error("agent_not_ready");
+    // the chat key may still be on its way to a freshly added agent
+    const deadline = Date.now() + KEY_WAIT_MS;
+    while ((await dev.engine.latestEpoch(chatId)) <= 0) {
+      if (Date.now() >= deadline) throw new Error("agent_not_ready");
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return dev.engine.sendMessage(chatId, body);
+  }
+
+  /**
+   * One tool-less background completion on the shared queue, behind every human turn. The forced
+   * first tool is off for the call and restored afterwards.
+   */
+  async complete(agentId: string, sessionKey: string, messages: ChatMessage[]): Promise<string> {
+    const dev = await this.deviceFor(agentId);
+    if (!dev) throw new Error("agent_not_ready");
+    const { runtime } = this.opts;
+    return this.queue.enqueue(
+      async () => {
+        const agent = (this.devices.get(agentId) ?? dev).agent;
+        const previous = forceFirstTool(agentId);
+        setForceFirstTool(agentId, false);
+        const limit = new AbortController();
+        const timer = setTimeout(
+          () => limit.abort(Object.assign(new Error("timeout"), { name: "TimeoutError" })),
+          COMPLETE_TIMEOUT_MS,
+        );
+        try {
+          await runtime.ensureStarted(agent);
+          const r = await runtime.chat(agent, sessionKey, messages, { signal: limit.signal });
+          return splitThink(r.content).content;
+        } finally {
+          clearTimeout(timer);
+          setForceFirstTool(agentId, previous);
+        }
+      },
+      "proactive",
+      undefined,
+      { agentId, requester: sessionKey },
+    );
+  }
+
   /** "What can you access here?" is answered by the bridge from facts, never by the model. */
   private async answerAccess(dev: Device, seed: TurnSeed): Promise<void> {
     const { db } = this.opts;
@@ -761,6 +998,21 @@ export class AgentHost implements AgentHostApi {
       if (agentId === agent.id) act({ phase: "tool", tool: name.slice(0, 64) });
     };
     let outcome: "done" | "stopped" | "error" = "done";
+    const voice = turn.voice;
+    const speaker = voice
+      ? new Speaker(voice.audio, voice.language, (c) => {
+          if (!turn.requesterUserId) return;
+          publish([turn.requesterUserId], {
+            type: "voice.chunk",
+            chat_id: chatId,
+            source_id: voice.sourceId,
+            seq: c.seq,
+            text: c.text.slice(0, 1000),
+            wav_b64: Buffer.from(c.wav).toString("base64"),
+          });
+        })
+      : null;
+    let spoke = false;
     let text: string;
     let read = 0;
     let steps: TraceStep[] = [];
@@ -832,6 +1084,10 @@ export class AgentHost implements AgentHostApi {
                 if (abort.aborted) return;
                 firstTokenMs ??= Date.now() - turn.started;
                 draft = (draft + t).slice(0, DRAFT_MAX);
+                if (speaker && !guarded) {
+                  speaker.push(t);
+                  spoke = true;
+                }
                 if (Date.now() - lastSent >= WRITING_GAP_MS) flush();
               },
               { signal: abort },
@@ -855,6 +1111,7 @@ export class AgentHost implements AgentHostApi {
       text = out.text;
       Object.assign(meta, out.meta);
       if (out.failed) outcome = "error";
+      else if (speaker && !spoke) speaker.push(text);
     } catch (e) {
       const name = (e as Error).name;
       if (abort.aborted) {
@@ -883,6 +1140,7 @@ export class AgentHost implements AgentHostApi {
       this.toolLog.off("tool", onTool);
       endTurn(agent.id, log);
     }
+    if (outcome !== "done") speaker?.abort();
     meta.tools = steps.flatMap((s) => (s.kind === "tool" ? [s.name] : [])).slice(0, 20);
     meta.read = read;
     meta.ms = Date.now() - turn.started;
@@ -890,6 +1148,31 @@ export class AgentHost implements AgentHostApi {
     this.lastReplyAt.set(`${agent.id}|${chatId}`, Date.now());
     this.claimThread(dev, turn);
     let sent = true;
+    let latency: VoiceLatency | undefined;
+    if (voice && speaker && outcome === "done") {
+      const spoken = await speaker.finish();
+      if (spoken.wav) {
+        try {
+          meta.audio_id = await dev.engine.sendFile(
+            chatId,
+            { name: `reply-${Date.now()}.wav`, mime: "audio/wav", bytes: spoken.wav },
+            {
+              ...(turn.replyTo ? { replyTo: turn.replyTo } : {}),
+              voice: { duration_ms: Math.max(1, spoken.durationMs) },
+            },
+          );
+        } catch (e) {
+          log("agent voice send failed", { agent: agent.id, error: (e as Error).message });
+        }
+      }
+      latency = { stt_ms: voice.sttMs, total_ms: 0 };
+      if (firstTokenMs !== null)
+        latency.first_token_ms = Math.max(0, turn.started - voice.receivedAt + firstTokenMs);
+      if (spoken.firstAudioAt !== null && meta.audio_id)
+        latency.first_audio_ms = Math.max(0, spoken.firstAudioAt - voice.receivedAt);
+      latency.total_ms = Math.max(voice.sttMs, Date.now() - voice.receivedAt);
+      meta.latency = latency;
+    }
     try {
       await dev.engine.sendText(
         chatId,
@@ -905,6 +1188,14 @@ export class AgentHost implements AgentHostApi {
         ms: meta.ms,
         size: text.length,
       });
+      if (latency && turn.requesterUserId && voice) {
+        publish([turn.requesterUserId], {
+          type: "latency.sample",
+          chat_id: chatId,
+          source_id: voice.sourceId,
+          latency,
+        });
+      }
     } catch (e) {
       sent = false;
       log("agent send failed", { agent: agent.id, error: (e as Error).message });
