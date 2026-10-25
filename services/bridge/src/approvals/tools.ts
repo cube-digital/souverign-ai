@@ -27,7 +27,7 @@ const DEFS: Def[] = [
     description: `Save a note in this chat for everyone here to read.${NEEDS_APPROVAL}`,
     properties: {
       title: { type: "string", minLength: 1, maxLength: 200 },
-      body_md: { type: "string", minLength: 1, maxLength: 20000 },
+      body_md: { type: "string", minLength: 1, maxLength: 8000 },
     },
     required: ["title", "body_md"],
     templates: ALL_TEMPLATES,

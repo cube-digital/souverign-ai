@@ -1,5 +1,7 @@
 import {
   ArgsError,
+  approvalDeps,
+  ExecError,
   type Executor,
   type GatedToolSpec,
   requestApproval,
@@ -23,12 +25,18 @@ const SOURCE_TYPES: Record<string, string[]> = {
 };
 const headId = (id: string) => id.split(".")[0] ?? id;
 
-type Item = { id: string; kind: string; title: string; taught_by: string | null };
+type Item = {
+  id: string;
+  kind: string;
+  title: string;
+  taught_by: string | null;
+  origin_chat_id: string | null;
+};
 
 async function loadItems(db: Db, agentId: string, ids: string[]): Promise<Item[]> {
   if (ids.length === 0) return [];
   return db.query<Item>(
-    "select id, kind, title, taught_by from sa.knowledge_items where agent_id = $1 and id = any($2) order by created_at, id",
+    "select id, kind, title, taught_by, origin_chat_id from sa.knowledge_items where agent_id = $1 and id = any($2) order by created_at, id",
     [agentId, ids],
   );
 }
@@ -60,6 +68,7 @@ async function forget(ctx: ToolCtx, args: Record<string, unknown>): Promise<stri
   if (!mem) return OFF;
   const turn = ctx.turn;
   if (!ctx.chatId || !turn) return "This needs a chat turn.";
+  if (!turn.requesterUserId) return "Someone has to ask me to forget things.";
   const input = await loadScopeInput(ctx.db, ctx.agentId, ctx.chatId, {
     noTaught: turn.noTaught,
     requesterUserId: turn.requesterUserId,
@@ -88,13 +97,24 @@ async function forget(ctx: ToolCtx, args: Record<string, unknown>): Promise<stri
   if (items.length === 0) return NOTHING;
 
   const requester = turn.requesterUserId;
-  const free = items.filter((i) => i.taught_by === null || i.taught_by === requester);
+  const origins = new Set(scopes.flatMap((s) => s.origin_chat_ids ?? []).filter((o) => o !== null));
+  // Free: taught by the requester, or the agent's own note born in a chat within this scope.
+  const free = items.filter(
+    (i) =>
+      i.taught_by === requester ||
+      (i.taught_by === null && i.origin_chat_id !== null && origins.has(i.origin_chat_id)),
+  );
   const byTeacher = new Map<string, Item[]>();
   for (const i of items) {
     if (free.includes(i) || !i.taught_by) continue;
     byTeacher.set(i.taught_by, [...(byTeacher.get(i.taught_by) ?? []), i]);
   }
   const lines: string[] = [];
+  approvalDeps().log("memory_forget", {
+    agent: ctx.agentId,
+    free: free.map((i) => i.id),
+    asked: [...byTeacher.values()].flat().map((i) => i.id),
+  });
   if (free.length > 0) {
     try {
       await deleteItems(ctx.db, ctx.agentId, free);
@@ -161,6 +181,9 @@ const forgetExecutor: Executor = {
     const items = (await loadItems(ctx.db, ctx.agentId, ids)).filter(
       (i) => i.taught_by === teacher && teacher !== "",
     );
+    if (teacher !== ctx.approverUserId) {
+      throw new ArgsError("Only the person who taught this can approve.");
+    }
     if (items.length === 0) throw new ArgsError("Those items are already gone.");
     return {
       item_ids: items.map((i) => i.id),
@@ -187,7 +210,10 @@ const forgetExecutor: Executor = {
   },
   async execute(args, ctx) {
     const ids = (Array.isArray(args.item_ids) ? args.item_ids : []).map(String);
-    const items = await loadItems(ctx.db, ctx.approval.agent_id, ids);
+    const items = (await loadItems(ctx.db, ctx.approval.agent_id, ids)).filter(
+      (i) => i.taught_by === ctx.approval.approver_user_id,
+    );
+    if (items.length === 0) throw new ExecError("Those items are already gone.");
     await deleteItems(ctx.db, ctx.approval.agent_id, items);
     return `Forgot: ${items.map((i) => `"${i.title}"`).join(", ")}.`;
   },

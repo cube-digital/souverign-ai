@@ -279,6 +279,7 @@ export function buildSim(start: number) {
     addComment(id: string, author: string, body: string) {
       if (!allTickets().some((x) => x.id === id)) return undefined;
       const list = comments.get(id) ?? [];
+      if (list.length >= 200) return null;
       const c = { id: `${id}-c${list.length + 1}`, author, body, ts: now() };
       comments.set(id, [...list, c]);
       return c;

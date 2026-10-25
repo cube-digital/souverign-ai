@@ -33,6 +33,11 @@ const oneLine = (s: string) =>
     .replace(/ +/g, " ")
     .trim();
 
+const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+const BIDI = /[\u202a-\u202e\u2066-\u2069\u200b-\u200f\ufeff]/;
+export const isEmail = (s: string): boolean =>
+  s.length <= 200 && EMAIL.test(s) && !BIDI.test(s) && oneLine(s) === s;
+
 export type OutboxMail = {
   approvalId: string;
   agentId: string;
@@ -49,6 +54,11 @@ export type OutboxMail = {
  */
 export async function saveToOutbox(db: Db, m: OutboxMail): Promise<string> {
   if (!/^[a-z0-9]{1,40}$/.test(m.approvalId)) throw new ExecError(UNSAFE);
+  if (!isEmail(m.to)) throw new ExecError("The address is not valid.");
+  const subject = oneLine(m.subject).replace(BIDI, "");
+  if (!subject) throw new ExecError("The subject is not valid.");
+  const seen = await db.query("select 1 from sa.outbox where approval_id = $1", [m.approvalId]);
+  if (seen.length > 0) throw new ExecError("That email was already saved.");
   const dir = outboxDir();
   await mkdir(dir, { recursive: true, mode: 0o700 });
   if ((await lstat(dir)).isSymbolicLink()) throw new ExecError(UNSAFE);
@@ -57,7 +67,7 @@ export async function saveToOutbox(db: Db, m: OutboxMail): Promise<string> {
   const text = [
     `From: ${oneLine(m.agentName) || "Agent"} <agent-${m.agentId.replace(/[^a-zA-Z0-9_-]/g, "")}@outbox.local>`,
     `To: ${m.to}`,
-    `Subject: ${m.subject}`,
+    `Subject: ${subject}`,
     `Date: ${new Date().toUTCString()}`,
     `X-Approved-By: ${oneLine(m.approvedBy)}`,
     "Content-Type: text/plain; charset=utf-8",
@@ -70,7 +80,7 @@ export async function saveToOutbox(db: Db, m: OutboxMail): Promise<string> {
   try {
     await db.query(
       "insert into sa.outbox (id, agent_id, approval_id, to_addr, subject, file) values ($1,$2,$3,$4,$5,$6)",
-      [randomBytes(10).toString("hex"), m.agentId, m.approvalId, m.to, m.subject, name],
+      [randomBytes(10).toString("hex"), m.agentId, m.approvalId, m.to, subject, name],
     );
   } catch (e) {
     await unlink(path).catch(() => {});

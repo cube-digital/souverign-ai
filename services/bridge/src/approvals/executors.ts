@@ -1,11 +1,20 @@
 import { randomBytes } from "node:crypto";
 import type { ApprovalPreview } from "@sa/protocol";
-import { saveToOutbox } from "./outbox.js";
+import { isEmail, saveToOutbox } from "./outbox.js";
 import { ArgsError, ExecError, type Executor, type ValidateCtx } from "./service.js";
 
-const STAMP_LINE = /^\s*(Approved by|Auto-approved for|Declined by|Canceled by|Expired after) /im;
-const TICKET_ID = /^[A-Za-z0-9._-]{1,40}$/;
-const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+const STAMP_LINE =
+  /^\s*(Approved\s+by|Auto-approved\s+for|Declined\s+by|Canceled\s+by|Expired\s+after)\b/im;
+/** Zero-width, soft-hyphen, bidi and BOM characters that hide a lookalike. */
+const INVISIBLE = /[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+const looksLikeStamp = (s: string): boolean =>
+  STAMP_LINE.test(
+    s
+      .normalize("NFKC")
+      .replace(INVISIBLE, "")
+      .replace(/[\u0085\u2028\u2029\r]/g, "\n"),
+  );
+const TICKET_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 /** Control characters, CR/LF and Unicode line separators. */
 const hasControl = (s: string): boolean =>
   [...s].some((ch) => {
@@ -57,7 +66,7 @@ export const chatSend: Executor = {
   stamp: true,
   async validate(args, ctx) {
     const body = text(args.text, "text", 1, 4000);
-    if (STAMP_LINE.test(body)) {
+    if (looksLikeStamp(body)) {
       throw new ArgsError("The message can't start with an approval status line.");
     }
     const resolved = typeof args.chat === "string" ? args.chat : args.chat_id;
@@ -123,7 +132,7 @@ export const notesCreate: Executor = {
   async validate(args) {
     return {
       title: text(args.title, "title", 1, 200),
-      body_md: text(args.body_md, "body_md", 1, 20000),
+      body_md: text(args.body_md, "body_md", 1, 8000),
     };
   },
   preview(args, info) {
@@ -139,6 +148,8 @@ export const notesCreate: Executor = {
   },
   async execute(args, ctx) {
     const a = ctx.approval;
+    const done = await ctx.db.query("select 1 from sa.notes where approval_id = $1", [a.id]);
+    if (done.length > 0) throw new ExecError("That note was already saved.");
     await ctx.db.query(
       "insert into sa.notes (id, agent_id, chat_id, title, body_md, approval_id) values ($1,$2,$3,$4,$5,$6)",
       [randomBytes(10).toString("hex"), a.agent_id, a.chat_id, args.title, args.body_md, a.id],
@@ -154,7 +165,7 @@ export const emailSend: Executor = {
   stamp: true,
   async validate(args) {
     const to = text(args.to, "to", 1, 200);
-    if (!EMAIL.test(to)) throw new ArgsError("to must be one email address like name@example.com.");
+    if (!isEmail(to)) throw new ArgsError("to must be one email address like name@example.com.");
     const subject = text(args.subject, "subject", 1, 200);
     if (hasControl(subject)) throw new ArgsError("subject must be a single line.");
     return { to, subject, body: text(args.body, "body", 1, 8000) };
@@ -208,6 +219,7 @@ export const ticketComment: Executor = {
     try {
       const res = await fetch(`${simBase(ctx.opsSimUrl)}/sim/tickets/${encodeURIComponent(id)}`, {
         signal: AbortSignal.timeout(SIM_TIMEOUT_MS),
+        redirect: "error",
       });
       status = res.status;
     } catch (e) {
@@ -238,6 +250,7 @@ export const ticketComment: Executor = {
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ author: ctx.approval.agent_name, body: args.body }),
           signal: AbortSignal.timeout(SIM_TIMEOUT_MS),
+          redirect: "error",
         },
       );
       ok = res.status === 201;

@@ -96,6 +96,7 @@ export async function createSim(
             return send(res, 400, { error: "bad_request" });
           }
           const c = sim.addComment(ticketId, author, body);
+          if (c === null) return send(res, 429, { error: "too_many_comments" });
           return c ? send(res, 201, c) : send(res, 404, { error: "unknown_ticket" });
         } catch {
           return send(res, 400, { error: "bad_request" });
