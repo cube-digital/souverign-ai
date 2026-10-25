@@ -323,7 +323,7 @@ if ((await notesAs(vlad)) !== 403 || (await notesAs(rares)) !== 403)
   fail("notes were readable by a non-inviter");
 const approval = await until("no pending notes approval for Ana", NOTES_MS, async () => {
   const list = await api<Approval[]>(ana, "/approvals");
-  return list.find((a) => a.chat_id === chat.id && a.tool === "call_notes_publish");
+  return list.find((a) => a.tool === "call_notes_publish" && a.args.call_id === callId);
 });
 if (inbox.some((m) => m.body?.type === "text" && m.body.meta?.meeting))
   fail("notes were posted before approval");
