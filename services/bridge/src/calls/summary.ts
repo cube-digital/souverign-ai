@@ -159,38 +159,54 @@ function foldWithMap(text: string): { folded: string; starts: number[]; ends: nu
 }
 
 /**
- * Removes the names of people who were not captured from model text. The whole display name
- * matches in any case; the first/last name of a longer name matches only when capitalised, so
- * "They will ship" survives a decliner called "Will Smith". Diacritics are ignored. A name that
- * is also a captured speaker's name is left alone.
+ * Removes the names of people who were not captured from model text. A multi-word display name
+ * matches in any case; any single name (a one-word display name, or the first/last name of a
+ * longer one) matches only when capitalised, so "They will ship" survives a decliner called
+ * "Will Smith" or "Will". Diacritics are ignored. Text inside a captured speaker's name is never
+ * touched ("Ana Maria" is not scrubbed out of "Ana Maria Popescu").
  */
 export function scrubNames(text: string, notCaptured: string[], captured: string[]): string {
+  const rules: RegExp[] = [];
+  const seen = new Set<string>();
+  const re = (f: string, ci: boolean) =>
+    new RegExp(`(?<![\\p{L}\\p{N}])${esc(f)}(?![\\p{L}\\p{N}])`, ci ? "giu" : "gu");
   const keep = new Set(
     captured.flatMap((n) => [n, ...tokens(n)]).map((t) => fold(t).toLowerCase()),
   );
-  const rules: RegExp[] = [];
-  const seen = new Set<string>();
   const add = (name: string, ci: boolean) => {
     const f = fold(name);
     const key = `${ci}:${f}`;
     if (!f || seen.has(key) || keep.has(f.toLowerCase())) return;
     seen.add(key);
-    rules.push(new RegExp(`(?<![\\p{L}\\p{N}])${esc(f)}(?![\\p{L}\\p{N}])`, ci ? "giu" : "gu"));
+    rules.push(re(f, ci));
   };
   for (const full of notCaptured) {
-    const clean = full.replace(/\s+/g, " ").trim();
-    add(clean, true);
+    const clean = full.normalize("NFC").replace(/\s+/g, " ").trim();
     const parts = tokens(clean);
-    if (parts.length > 1) for (const t of parts) if (/^\p{Lu}/u.test(t)) add(t, false);
+    if (/\s/.test(clean)) {
+      add(clean, true);
+      for (const t of parts) if (/^\p{Lu}/u.test(t)) add(t, false);
+    } else if (/^\p{Lu}/u.test(clean)) {
+      add(clean, false);
+    }
   }
+  const protectedRes = captured
+    .map((n) => fold(n.normalize("NFC").replace(/\s+/g, " ").trim()))
+    .filter(Boolean)
+    .map((f) => re(f, true));
   rules.sort((a, b) => b.source.length - a.source.length);
-  let out = text;
-  for (const re of rules) {
+  let out = text.normalize("NFC");
+  for (const rule of rules) {
     const { folded, starts, ends } = foldWithMap(out);
-    for (const m of [...folded.matchAll(re)].reverse()) {
+    const guarded = protectedRes.flatMap((p) =>
+      [...folded.matchAll(p)].map((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length] as const),
+    );
+    for (const m of [...folded.matchAll(rule)].reverse()) {
       const i = m.index ?? 0;
+      const j = i + m[0].length;
+      if (guarded.some(([g0, g1]) => i < g1 && g0 < j)) continue;
       const from = starts[i] ?? 0;
-      const to = ends[i + m[0].length - 1] ?? out.length;
+      const to = ends[j - 1] ?? out.length;
       out = `${out.slice(0, from)}${NOT_CAPTURED}${out.slice(to)}`;
     }
   }

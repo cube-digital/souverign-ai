@@ -32,10 +32,16 @@ const TIMEOUT_MS = 5000;
  */
 async function run(log: Log, code: string, fn: (a: RoomAdmin) => Promise<void>): Promise<boolean> {
   try {
+    if (!process.env.LIVEKIT_API_SECRET && !override) {
+      // The call server is not configured at all: there is no room to act on.
+      log("livekit admin skipped", { code: "livekit_not_configured", action: code });
+      return true;
+    }
     const a = await admin();
     if (!a) {
+      // Configured but not answering: report failure so the caller tries again.
       log("livekit admin skipped", { code: "livekit_unavailable", action: code });
-      return true;
+      return false;
     }
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
@@ -48,6 +54,9 @@ async function run(log: Log, code: string, fn: (a: RoomAdmin) => Promise<void>):
     }
     return true;
   } catch (e) {
+    const err = e as { status?: number; code?: string };
+    // The participant or room is already gone: nothing left to do.
+    if (err.status === 404 || err.code === "not_found") return true;
     log("livekit admin failed", { code, error: (e as Error).name });
     return false;
   }

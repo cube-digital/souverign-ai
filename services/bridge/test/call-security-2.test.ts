@@ -178,7 +178,9 @@ it("a failed post puts the notes back, and notes stuck as published without a me
   expect(await status()).toBe("pending_approval");
 
   await w.db.query("update sa.call_notes set status = 'published' where id = $1", [n.notesId]);
-  await w.db.query("update sa.approvals set decided_at = now() where id = $1", [n.approvalId]);
+  await w.db.query("update sa.approvals set decided_at = now(), status = 'failed' where id = $1", [
+    n.approvalId,
+  ]);
   await sweep(Date.now());
   expect(await status()).toBe("published");
   await sweep(Date.now() + 10 * 60_000);
@@ -189,4 +191,65 @@ it("a failed post puts the notes back, and notes stuck as published without a me
   );
   void sleep;
   void waitFor;
+});
+
+it("scrubbing: a one-word name needs a capital, captured names are never cut, decomposed marks leave no stray", () => {
+  expect(scrubNames("Will ship it, they will too", ["Will"], [])).toBe(
+    "a participant who was not captured ship it, they will too",
+  );
+  expect(scrubNames("Ana Maria Popescu agreed", ["Ana Maria"], ["Ana Maria Popescu"])).toBe(
+    "Ana Maria Popescu agreed",
+  );
+  expect(scrubNames("Raresș spoke, then Rareş".normalize("NFD"), ["Rareș"], [])).not.toMatch(
+    /\p{M}/u,
+  );
+});
+
+it("a slow post is not flipped to not published by the sweep, and the message id lands on the published row", async () => {
+  w = await callsWorld();
+  const n = await w.finalNotes();
+  let release: (id: string) => void = () => {};
+  const send = w.host.sendAs;
+  w.host.sendAs = () => new Promise<string>((r) => (release = r));
+  const deciding = decide(n.approvalId, "ana", { decision: "approve" });
+  await waitFor(async () => {
+    const [r] = await w.db.query<{ status: string }>(
+      "select status from sa.call_notes where id = $1",
+      [n.notesId],
+    );
+    return r?.status === "published";
+  });
+  await sweep(Date.now() + 10 * 60_000);
+  release("slow-msg-1");
+  await deciding;
+  if (send) w.host.sendAs = send;
+  const [row] = await w.db.query<{ status: string; published_message_id: string }>(
+    "select status, published_message_id from sa.call_notes where id = $1",
+    [n.notesId],
+  );
+  expect(row).toEqual({ status: "published", published_message_id: "slow-msg-1" });
+});
+
+it("a participant the room no longer knows counts as removed; a configured but silent call server is retried", async () => {
+  w = await callsWorld();
+  const id = await w.startCall("ana");
+  await w.db.query("insert into sa.call_participants (call_id, user_id) values ($1, 'zed')", [id]);
+  const life = makeLifecycle(w.db, noHooks, () => {});
+  const open = () =>
+    w.db.query(
+      "select 1 from sa.call_participants where call_id = $1 and user_id = 'zed' and left_at is null",
+      [id],
+    );
+  // secret set, health probe down, no admin override: the kick fails and the row stays
+  await life.reconcile();
+  expect(await open()).toHaveLength(1);
+  setRoomAdminForTests({
+    removeParticipant: async () => {
+      throw Object.assign(new Error("gone"), { status: 404 });
+    },
+    deleteRoom: async () => {},
+  });
+  await life.reconcile();
+  life.clear();
+  expect(await open()).toHaveLength(0);
 });

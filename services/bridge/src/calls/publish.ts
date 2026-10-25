@@ -158,10 +158,10 @@ export const callNotesExecutor: Executor = {
       );
       throw e;
     }
-    await ctx.db.query("update sa.call_notes set published_message_id = $2 where id = $1", [
-      String(args.notes_id),
-      messageId,
-    ]);
+    await ctx.db.query(
+      "update sa.call_notes set published_message_id = $2 where id = $1 and status = 'published'",
+      [String(args.notes_id), messageId],
+    );
     const started = Math.round(Number(info.started_ms));
     let memoryOk = false;
     try {
@@ -364,7 +364,8 @@ export async function sweep(nowMs: number): Promise<void> {
   const stuck = await d.db.query<{ id: string; decided_ms: number }>(
     `select n.id, (extract(epoch from a.decided_at) * 1000)::float8 as decided_ms
        from sa.call_notes n join sa.approvals a on a.id = n.approval_id
-      where n.status = 'published' and n.published_message_id is null and a.decided_at is not null`,
+      where n.status = 'published' and n.published_message_id is null and a.decided_at is not null
+        and a.status = 'failed'`,
   );
   for (const n of stuck) {
     if (nowMs - Number(n.decided_ms) > STUCK_AFTER_MS) {

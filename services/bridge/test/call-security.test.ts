@@ -87,7 +87,7 @@ it("declining deletes what the person said and keeps it out of the notes; names 
   );
 
   w.state.complete = async () =>
-    "## Summary\nDan will review it, says bob.\n## Action items\n- [ ] Dan: review the plan\n- [ ] Ana: send notes";
+    "## Summary\nDan will review it, says Bob.\n## Action items\n- [ ] Dan: review the plan\n- [ ] Ana: send notes";
   await w.api("ana", "POST", `/api/calls/${s.callId}/notetaker/stop`);
   const notes = await waitFor(async () => {
     const [r] = await w.db.query<{ body_md: string; action_items: Array<{ owner: string }> }>(
