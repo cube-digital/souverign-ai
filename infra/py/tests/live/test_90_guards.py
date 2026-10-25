@@ -4,7 +4,7 @@ import os
 
 import psutil
 import pytest
-from sa_infra import egress, memguard, runfiles
+from sa_infra import egress, memguard, models_config, runfiles
 
 pytestmark = pytest.mark.live
 GIB = 1024**3
@@ -31,7 +31,14 @@ def _tree_listen_ports(pids):
 def test_loopback_only_and_memory_within_32_gib():
     services = runfiles.service_pids()
     assert {"llm", "whisper", "hermes-smoke"} <= services.keys(), services
-    bad = egress.scan({*services.values(), os.getpid()})
+    env = {**egress.read_env_file(models_config.REPO_ROOT / ".env"), **os.environ}
+    allow = (
+        egress.resolve_ips(egress.GOOGLE_OAUTH_HOSTS)
+        if egress.google_oauth_enabled(env)
+        else frozenset()
+    )
+    print(f"egress allowlist: {len(allow)} Google OAuth IPs")
+    bad = egress.scan({*services.values(), os.getpid()}, allow=allow)
     for c in bad:
         print("egress:", c)
     assert bad == []
