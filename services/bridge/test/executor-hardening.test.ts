@@ -75,6 +75,23 @@ describe("executor hardening", () => {
     expect(await approvals()).toBe(0);
   });
 
+  it("chat_send options never name a chat the requester is not in", async () => {
+    await w.db.query(
+      "insert into sa.chats (id, title, kind, created_by) values ('c9','Secret','group','ana')",
+    );
+    for (const [t, id] of [
+      ["user", "ana"],
+      ["agent", "nora"],
+    ])
+      await w.db.query(
+        "insert into sa.chat_members (chat_id, member_type, member_id, role) values ('c9',$1,$2,'member')",
+        [t, id],
+      );
+    const out = await call("chat_send", { chat: "Nowhere", text: "hi" }, "bob");
+    expect(out).toContain("#Project");
+    expect(out).not.toContain("Secret");
+  });
+
   it("memory_forget does nothing without a requester", async () => {
     await w.db.query(
       "insert into sa.knowledge_items (id, agent_id, kind, title, taught_by, origin_chat_id) values ('n1','nora','note','Parking',null,'c1')",

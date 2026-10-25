@@ -72,7 +72,19 @@ export const chatSend: Executor = {
     const resolved = typeof args.chat === "string" ? args.chat : args.chat_id;
     const ref = typeof resolved === "string" ? resolved.trim() : "";
     const chats = await sharedChats(ctx);
+    // Only chats the requester is in are named, so they never learn other chat titles.
+    const mine = ctx.requesterUserId
+      ? new Set(
+          (
+            await ctx.db.query<{ chat_id: string }>(
+              "select chat_id from sa.chat_members where member_type = 'user' and member_id = $1 and removed_at is null",
+              [ctx.requesterUserId],
+            )
+          ).map((r) => r.chat_id),
+        )
+      : new Set<string>();
     const options = chats
+      .filter((c) => mine.has(c.id))
       .slice(0, MAX_OPTIONS)
       .map((c) => `#${c.title}`)
       .join(", ");
