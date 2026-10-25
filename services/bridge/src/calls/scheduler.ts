@@ -204,7 +204,7 @@ export class NotesScheduler {
     const id = randomBytes(9).toString("base64url");
     const [row] = await db.query<{ version: number }>(
       `insert into sa.call_notes (id, notetaker_id, version, final, body_md, action_items)
-       select $1, $2, coalesce(max(version), 0) + 1, $3, $4, $5::jsonb
+       select $1, $2, coalesce(max(version), 0) + 1, $3, $4, $5::text::jsonb
          from sa.call_notes where notetaker_id = $2
        on conflict do nothing returning version`,
       [id, notetakerId, final, text, JSON.stringify(items)],
