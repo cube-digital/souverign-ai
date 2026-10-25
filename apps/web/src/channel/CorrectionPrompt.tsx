@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { sendCorrection } from "../api";
 import { Button, Textarea, useToast } from "../ds";
 
@@ -19,6 +19,10 @@ export function CorrectionPrompt({
   const toast = useToast();
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    box.current?.querySelector("textarea")?.focus();
+  }, []);
   async function send() {
     const t = text.trim();
     if (!t) return;
@@ -33,7 +37,7 @@ export function CorrectionPrompt({
     }
   }
   return (
-    <div className="mt-2 flex flex-col gap-1.5">
+    <div ref={box} className="mt-2 flex flex-col gap-1.5">
       <Textarea
         label="Correction"
         hideLabel
@@ -42,6 +46,7 @@ export function CorrectionPrompt({
         maxLength={1000}
         onChange={(e) => setText(e.target.value)}
       />
+      <p className="text-[12px] text-text-2">{`${text.length} / 1000`}</p>
       <div className="flex gap-1.5">
         <Button size="sm" disabled={busy || !text.trim()} onClick={() => void send()}>
           Send correction
