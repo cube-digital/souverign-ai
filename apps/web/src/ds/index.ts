@@ -13,5 +13,5 @@ export { Modal } from "./Modal";
 export { Overlay } from "./Overlay";
 export { StatusDot } from "./StatusDot";
 export { Tabs } from "./Tabs";
-export { ToastProvider, useToast } from "./Toast";
+export { ToastProvider, useOptionalToast, useToast } from "./Toast";
 export { Toggle } from "./Toggle";

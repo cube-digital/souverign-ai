@@ -8,6 +8,7 @@ import { LiveAnnouncer, LiveStatus } from "./LiveStatus";
 import { MessageItem } from "./MessageItem";
 import { useRowActions } from "./rowActions";
 import { agentsOutside, useWorkspaceAgents } from "./shared";
+import { isHiddenVoiceRow, voiceProps, voiceRows } from "./voiceRows";
 
 const GROUP_MS = 5 * 60 * 1000;
 const dayOf = (ts: number) => new Date(ts).toDateString();
@@ -35,7 +36,7 @@ export function MessageList({ chat }: { chat: Chat }) {
 }
 
 function MessageListInner({ chat }: { chat: Chat }) {
-  const { view } = useSession();
+  const { view, deviceId } = useSession();
   const v = view(chat.id);
   const workspace = useWorkspaceAgents();
   const others = useMemo(() => agentsOutside(chat, workspace), [chat, workspace]);
@@ -86,8 +87,11 @@ function MessageListInner({ chat }: { chat: Chat }) {
     return () => ro.disconnect();
   }, []);
 
+  const vr = useMemo(() => voiceRows(v.top, deviceId), [v.top, deviceId]);
+
   let prev: ChatMessage | null = null;
   const rows = v.top.map((m) => {
+    if (isHiddenVoiceRow(m, vr.audioIds)) return null;
     const newDay = !prev || dayOf(prev.ts) !== dayOf(m.ts);
     const divider = newDay ? <DayDivider key={`d-${m.id}`} ts={m.ts} /> : null;
     if (m.status === "ok" && m.body?.type === "system") {
@@ -113,6 +117,7 @@ function MessageListInner({ chat }: { chat: Chat }) {
         others={others}
         actions={actions}
         highlight={lit === m.id}
+        {...voiceProps(m, vr)}
       />,
     ];
   });
