@@ -28,13 +28,27 @@ export MEMORY_TOKEN=e2e-memory-token
 export SA_OUTBOX_DIR="$PWD/.run/e2e-outbox"
 rm -rf "$SA_OUTBOX_DIR"
 mkdir -p "$SA_OUTBOX_DIR"
+# free the port if a stale e2e fake from a previous run still holds it
+for pid in $(lsof -ti tcp:8656 -sTCP:LISTEN 2>/dev/null || true); do
+  if ps -o command= -p "$pid" | grep -q "memory-fake-main"; then kill "$pid" 2>/dev/null || true; fi
+done
+# children stay in this script's process group, so the runner's group kill reaches them
 pnpm --filter @sa/bridge exec tsx test/fakes/memory-fake-main.ts &
 MEM_PID=$!
 BRIDGE_PID=
+# kill a process tree leaf-first, so no child is reparented while its parent still holds the port
+killtree() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null || true); do killtree "$c"; done
+  kill "$1" 2>/dev/null || true
+}
 cleanup() {
-  [[ -n $BRIDGE_PID ]] && kill "$BRIDGE_PID" 2>/dev/null || true
-  kill "$MEM_PID" 2>/dev/null || true
-  pkill -P "$MEM_PID" 2>/dev/null || true
+  trap - EXIT
+  [[ -n $BRIDGE_PID ]] && killtree "$BRIDGE_PID"
+  killtree "$MEM_PID"
+  for pid in $(lsof -ti tcp:8656 -sTCP:LISTEN 2>/dev/null || true); do
+    ps -o command= -p "$pid" | grep -q "memory-fake-main" && kill "$pid" 2>/dev/null || true
+  done
 }
 trap cleanup EXIT
 trap 'exit 143' TERM INT
