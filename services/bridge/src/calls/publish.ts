@@ -23,6 +23,33 @@ const REMIND_AFTER_MS = 20 * 60 * 60 * 1000;
 const REPUBLISH_WITHIN_DAYS = 7;
 const MAX_TEXT = 7900;
 const STUCK_AFTER_MS = 5 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
+/** A DM that failed is tried again after 10 min, 20 min, ... up to DM_MAX_TRIES posts in all. */
+const DM_RETRY_MS = 10 * 60 * 1000;
+const DM_MAX_TRIES = 6;
+
+type DmKind = "not_published" | "reminder";
+const notPublishedText = (chatTitle: string | null) =>
+  `The notes from the call in #${chatTitle ?? "chat"} were not published.`;
+const reminderText = (chatTitle: string | null, startedMs: number, hoursLeft: number) =>
+  `Your notes from the call in #${chatTitle ?? "chat"} (${dateOf(Math.round(startedMs))}) are still waiting for your approval. They expire in ${hoursLeft} ${hoursLeft === 1 ? "hour" : "hours"}.`;
+const dmMeta = (callId: string, notesId: string, kind: DmKind) => ({
+  meta: {
+    call_notes: {
+      call_id: callId,
+      notes_id: notesId,
+      state: kind === "reminder" ? ("pending" as const) : ("not_published" as const),
+    },
+  },
+});
+
+/** The DM could not be posted (the inviter's DM with Scribe not keyed yet): the sweep retries it. */
+async function dmFailed(db: Db, notesId: string, kind: DmKind): Promise<void> {
+  await db.query(
+    "update sa.call_notes set dm_pending = $2, dm_tries = 1, dm_tried_at = now() where id = $1",
+    [notesId, kind],
+  );
+}
 
 let relayAdmin: RelayAdmin | undefined;
 /** The plugin hands over the relay admin so a missing DM with Scribe can be created. */
@@ -251,16 +278,95 @@ async function markNotPublished(
   const d = approvalDeps();
   const dm = row.dm_chat ?? fallbackDm?.chatId;
   d.log("call notes not published", { notes: notesId });
-  if (!dm || !d.agentHost.postAs) return;
+  if (!d.agentHost.postAs) return;
+  if (!dm) {
+    await dmFailed(db, notesId, "not_published");
+    return;
+  }
   try {
     await d.agentHost.postAs(
       fallbackDm?.agentId ?? row.agent_id,
       dm,
-      `The notes from the call in #${row.chat_title ?? "chat"} were not published.`,
-      { meta: { call_notes: { call_id: row.call_id, notes_id: notesId, state: "not_published" } } },
+      notPublishedText(row.chat_title),
+      dmMeta(row.call_id, notesId, "not_published"),
     );
   } catch (e) {
     d.log("call notes dm failed", { notes: notesId, error: (e as Error).name });
+    await dmFailed(db, notesId, "not_published");
+  }
+}
+
+/** Posts the DMs that failed before, once their wait is over; drops them when they no longer apply. */
+async function retryDms(db: Db, nowMs: number): Promise<void> {
+  const d = approvalDeps();
+  const rows = await db.query<{
+    id: string;
+    kind: DmKind;
+    tries: number;
+    tried_ms: number;
+    status: string;
+    call_id: string;
+    chat_title: string | null;
+    started_ms: number;
+    invited_by: string;
+    agent_id: string;
+    dm_chat: string | null;
+    approval_status: string | null;
+    expires_ms: number | null;
+  }>(
+    `select n.id, n.dm_pending as kind, n.dm_tries as tries, n.status,
+            (extract(epoch from n.dm_tried_at) * 1000)::float8 as tried_ms,
+            nt.call_id, ch.title as chat_title, nt.invited_by, nt.agent_id,
+            (extract(epoch from c.started_at) * 1000)::float8 as started_ms,
+            ap.chat_id as dm_chat, ap.status as approval_status,
+            (extract(epoch from ap.expires_at) * 1000)::float8 as expires_ms
+       from sa.call_notes n
+       join sa.call_notetakers nt on nt.id = n.notetaker_id
+       join sa.calls c on c.id = nt.call_id
+       join sa.chats ch on ch.id = c.chat_id
+       left join sa.approvals ap on ap.id = n.approval_id
+      where n.dm_pending is not null`,
+  );
+  for (const r of rows) {
+    const tries = Number(r.tries);
+    const applies =
+      r.kind === "not_published"
+        ? r.status === "not_published"
+        : r.status === "pending_approval" && r.approval_status === "pending";
+    if (!applies || tries >= DM_MAX_TRIES) {
+      await db.query(
+        "update sa.call_notes set dm_pending = null where id = $1 and dm_tries = $2 and dm_pending = $3",
+        [r.id, tries, r.kind],
+      );
+      continue;
+    }
+    if (nowMs - Number(r.tried_ms) < DM_RETRY_MS * tries) continue;
+    const [won] = await db.query(
+      `update sa.call_notes set dm_tries = dm_tries + 1, dm_tried_at = now()
+        where id = $1 and dm_tries = $2 and dm_pending = $3 returning id`,
+      [r.id, tries, r.kind],
+    );
+    if (!won || !d.agentHost.postAs) continue;
+    const dm =
+      r.dm_chat ?? (await ensureDm(db, r.invited_by, r.agent_id).catch(() => null)) ?? null;
+    if (!dm) continue;
+    const left = Math.max(1, Math.round((Number(r.expires_ms ?? nowMs) - nowMs) / HOUR_MS));
+    try {
+      await d.agentHost.postAs(
+        r.agent_id,
+        dm,
+        r.kind === "reminder"
+          ? reminderText(r.chat_title, Number(r.started_ms), left)
+          : notPublishedText(r.chat_title),
+        dmMeta(r.call_id, r.id, r.kind),
+      );
+      await db.query(
+        "update sa.call_notes set dm_pending = null where id = $1 and dm_pending = $2",
+        [r.id, r.kind],
+      );
+    } catch (e) {
+      d.log("call notes dm retry failed", { notes: r.id, error: (e as Error).name });
+    }
   }
 }
 
@@ -367,6 +473,8 @@ export async function republish(notesId: string, userId: string): Promise<Republ
 /** Finds denied or expired approvals and sends the 20 h reminder; safe to run as often as you like. */
 export async function sweep(nowMs: number): Promise<void> {
   const d = approvalDeps();
+  // First, so a DM that fails later in this sweep waits for its turn.
+  await retryDms(d.db, nowMs);
   const dead = await d.db.query<{ id: string }>(
     `select n.id from sa.call_notes n join sa.approvals a on a.id = n.approval_id
       where n.status = 'pending_approval' and n.published_message_id is null
@@ -418,11 +526,12 @@ export async function sweep(nowMs: number): Promise<void> {
       await d.agentHost.postAs(
         n.agent_id,
         n.dm_chat,
-        `Your notes from the call in #${n.chat_title ?? "chat"} (${dateOf(Math.round(Number(n.started_ms)))}) are still waiting for your approval. They expire in 4 hours.`,
-        { meta: { call_notes: { call_id: n.call_id, notes_id: n.id, state: "pending" } } },
+        reminderText(n.chat_title, Number(n.started_ms), 4),
+        dmMeta(n.call_id, n.id, "reminder"),
       );
     } catch (e) {
       d.log("call notes reminder failed", { notes: n.id, error: (e as Error).name });
+      await dmFailed(d.db, n.id, "reminder");
     }
   }
 }
