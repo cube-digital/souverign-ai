@@ -40,7 +40,7 @@ function ToastRow({ item, onDone }: { item: ToastItem; onDone: (id: number) => v
         item.tone === "error" ? "border-danger text-danger" : "border-border-soft text-text-0",
       )}
     >
-      {item.text}
+      <span>{item.text}</span>
       {action && (
         <button
           type="button"
