@@ -253,6 +253,18 @@ export function registerAgentRoutes(app: FastifyInstance, deps: AgentRoutesDeps)
     }
     const { chatId, created } = result;
     const dmChat = chatId;
+    // Another device of this user may have keyed the DM already, and a key once stored for an
+    // epoch is final: a second key for that epoch would leave the agent unable to read the new
+    // device. Once the agent holds the current epoch, the answer carries the next one unspent.
+    if (!created) {
+      await db.query(
+        `update sa.chats c set key_epoch = k.top + 1
+           from (select max(epoch) as top from sa.agent_chat_keys
+                  where device_id = $2 and chat_id = $1) k
+          where c.id = $1 and k.top is not null and k.top >= c.key_epoch`,
+        [dmChat, agent.device_id],
+      );
+    }
     void Promise.resolve(hooks?.onAgentDm?.(userId, agent.id, dmChat, created)).catch((e) =>
       log("agent dm hook failed", { agent: agent.id, error: (e as Error).message }),
     );

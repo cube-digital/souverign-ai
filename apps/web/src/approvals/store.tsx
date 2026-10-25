@@ -19,6 +19,7 @@ import {
 } from "../api";
 import { type BridgeEvent, dispatchBridgeEvent } from "../lib/bridge-events";
 import { openEvents } from "../lib/sse";
+import { isAgentDm, openAgentDm } from "../state/agentDm";
 import { useSession } from "../state/session";
 
 type Store = {
@@ -46,8 +47,22 @@ const withEntry = <T,>(m: ReadonlyMap<string, T>, id: string, v: T): Map<string,
 
 /** Holds approvals, their public shadows and questions; fed by the event stream and refetches. */
 export function ApprovalsProvider({ children }: { children: ReactNode }) {
-  const { user } = useSession();
+  const { user, chats, refreshChats, engine } = useSession();
   const me = user.id;
+  const sessionRef = useRef({ chats, refreshChats, engine });
+  sessionRef.current = { chats, refreshChats, engine };
+  // A request can sit in an agent DM this device holds no key for: the agent opened the DM just
+  // now (the inviter's notes), or another device of mine keyed it. Without a key here, the agent's
+  // later messages there (a "not published" reminder) could not be read on this device.
+  const keyRequestDm = useCallback(async (chatId: string) => {
+    const s = sessionRef.current;
+    const known = s.chats.find((c) => c.id === chatId);
+    const dm = known ?? (await s.refreshChats()).find((c) => c.id === chatId);
+    const { engine: eng, refreshChats: refresh } = sessionRef.current;
+    const agent = dm && isAgentDm(dm) ? dm.members.find((m) => m.member_type === "agent") : null;
+    if (!agent || !eng || (await eng.latestEpoch(chatId)) > 0) return;
+    await openAgentDm({ engine: eng, refreshChats: refresh }, agent.member_id);
+  }, []);
   const [approvals, setApprovals] = useState<ReadonlyMap<string, Approval>>(new Map());
   const [publics, setPublics] = useState<ReadonlyMap<string, ApprovalPublic>>(new Map());
   const [questions, setQuestions] = useState<ReadonlyMap<string, Question>>(new Map());
@@ -86,8 +101,10 @@ export function ApprovalsProvider({ children }: { children: ReactNode }) {
     const ctl = new AbortController();
     openEvents(
       (e) => {
-        if (e.type === "approval") putApproval(e.approval);
-        else if (e.type === "approval_public") putPublic(e.approval);
+        if (e.type === "approval") {
+          putApproval(e.approval);
+          void keyRequestDm(e.approval.chat_id).catch(() => {});
+        } else if (e.type === "approval_public") putPublic(e.approval);
         else if (e.type === "question") putQuestion(e.question);
         else if (/^(call|voice|latency)\./.test(e.type)) dispatchBridgeEvent(e as BridgeEvent);
       },
