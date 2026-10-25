@@ -66,9 +66,15 @@ export function PushToTalk({ onSend, disabled }: { onSend(rec: Rec): void; disab
         return;
       }
       rec.current = r;
-    } catch {
+    } catch (e) {
+      if (gen.current !== mine) return;
       end();
-      setNote("Microphone access is blocked for this site.");
+      const name = (e as { name?: string } | null)?.name;
+      setNote(
+        name === "NotAllowedError" || name === "SecurityError"
+          ? "Microphone access is blocked for this site."
+          : "Could not start the microphone.",
+      );
     }
   };
 
@@ -88,7 +94,10 @@ export function PushToTalk({ onSend, disabled }: { onSend(rec: Rec): void; disab
 
   useEffect(
     () => () => {
+      gen.current++;
+      held.current = false;
       rec.current?.cancel();
+      rec.current = null;
     },
     [],
   );
@@ -102,6 +111,7 @@ export function PushToTalk({ onSend, disabled }: { onSend(rec: Rec): void; disab
         onPointerDown={() => void press()}
         onPointerUp={() => void release()}
         onPointerLeave={() => active && cancel()}
+        onPointerCancel={() => cancel()}
         className={`flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full border border-ai bg-ai-bg text-ai disabled:cursor-not-allowed disabled:opacity-50 ${active ? "ring-2 ring-ai" : ""}`}
       >
         <svg

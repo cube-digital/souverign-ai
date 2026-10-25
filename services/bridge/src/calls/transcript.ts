@@ -5,8 +5,6 @@ const NONE = { error: "no_call_notes_here" };
 const MAX_LINES = 300;
 const MAX_QUERY_LINES = 60;
 const MAX_NOTES = 20_000;
-/** In the inviter's DM only the most recent calls are offered. */
-const DM_RECENT = 2;
 
 type CallRow = {
   id: string;
@@ -32,12 +30,18 @@ const CALL_SQL = `select c.id as id, n.id as notetaker_id, c.chat_id, ch.title a
   join sa.call_notetakers n on n.call_id = c.id and n.agent_id = $1
   join sa.chats ch on ch.id = c.chat_id`;
 
-async function chatIsDmOf(db: Db, chatId: string, userId: string): Promise<boolean> {
+async function chatIsDmOf(
+  db: Db,
+  chatId: string,
+  userId: string,
+  agentId: string,
+): Promise<boolean> {
   const rows = await db.query(
     `select 1 from sa.chats ch
      join sa.chat_members m on m.chat_id = ch.id and m.member_type = 'user' and m.member_id = $2
-     where ch.id = $1 and ch.kind = 'dm'`,
-    [chatId, userId],
+     where ch.id = $1 and ch.kind = 'dm'
+       and exists (select 1 from sa.chat_members a where a.chat_id = ch.id and a.member_type = 'agent' and a.member_id = $3)`,
+    [chatId, userId, agentId],
   );
   return rows.length > 0;
 }
@@ -98,12 +102,14 @@ export async function meetingTranscript(
   if (!chatId || !who) return NONE;
   const callId = typeof args.call_id === "string" ? args.call_id : undefined;
   const query = str(args.query, 200).trim();
-  const dm = await chatIsDmOf(db, chatId, who);
+  const dm = await chatIsDmOf(db, chatId, who, ctx.agentId);
 
   let calls: CallRow[];
   if (dm) {
     calls = await db.query<CallRow>(
-      `${CALL_SQL} where n.invited_by = $2 order by c.started_at desc limit ${DM_RECENT}`,
+      `${CALL_SQL} where n.invited_by = $2
+         and exists (select 1 from sa.chat_members m where m.chat_id = c.chat_id and m.member_type = 'user' and m.member_id = $2)
+       order by c.started_at desc limit 20`,
       [ctx.agentId, who],
     );
   } else {
