@@ -13,5 +13,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: { host: "127.0.0.1", port, strictPort: true, proxy, allowedHosts },
   preview: { host: "127.0.0.1", port, strictPort: true, proxy, allowedHosts },
-  test: { environment: "jsdom", include: ["test/**/*.test.{ts,tsx}"], passWithNoTests: true },
+  test: {
+    environment: "jsdom",
+    include: ["test/**/*.test.{ts,tsx}"],
+    setupFiles: ["test/setup.ts"],
+    passWithNoTests: true,
+  },
 });
