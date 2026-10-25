@@ -610,9 +610,10 @@ export class AgentHost implements AgentHostApi {
     let pick: { agentId: string; trigger: TurnTrigger; replyTo?: string; force: boolean } | null =
       null;
     if (chat?.kind === "dm" && Number(chat.users) === 1 && Number(chat.agents) === 1 && agents[0]) {
+      // the answer to a voice message always sits under it, like the visible failure reply does
       pick = thread
         ? { agentId: agents[0].id, trigger: "dm", replyTo: thread, force: false }
-        : { agentId: agents[0].id, trigger: "dm", force: true };
+        : { agentId: agents[0].id, trigger: "dm", replyTo: m.id, force: true };
     } else {
       const named = agents.find((a) => addressesAgent(text, a.name));
       if (named) {
