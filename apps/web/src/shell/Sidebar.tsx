@@ -63,12 +63,6 @@ export function Sidebar({
 
   const channels = chats.filter((c) => c.kind === "room" || c.kind === "group");
   const dms = chats.filter((c) => c.kind === "dm");
-  // an agent with its own DM is listed there; the Agents section is for the ones still to open
-  const inDm = new Set(
-    dms
-      .filter((c) => c.members.filter((m) => m.member_type === "user").length === 1)
-      .flatMap((c) => c.members.filter((m) => m.member_type === "agent").map((m) => m.member_id)),
-  );
   const chatRow = (c: Chat, glyph: React.ReactNode) => (
     <button
       key={c.id}
@@ -115,20 +109,21 @@ export function Sidebar({
         }
       >
         {agents?.length === 0 && <EmptyState>No agents yet</EmptyState>}
-        {(agents ?? [])
-          .filter((a) => !inDm.has(a.id))
-          .map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => onOpenAgent(a)}
-              className={cn(ROW, "text-text-1")}
-            >
-              <AgentAvatar name={a.name} id={a.id} rosterId={a.roster_id} size={16} />
-              <span className="truncate">{a.name}</span>
-              <StatusDot status={a.status} className="ml-auto" />
-            </button>
-          ))}
+        {/* every agent is listed here, also one with its own DM (that row opens the DM, this one
+            the agent); the name tells the two rows apart for assistive tech */}
+        {(agents ?? []).map((a) => (
+          <button
+            key={a.id}
+            type="button"
+            onClick={() => onOpenAgent(a)}
+            aria-label={`Agent ${a.name}, ${a.status}`}
+            className={cn(ROW, "text-text-1")}
+          >
+            <AgentAvatar name={a.name} id={a.id} rosterId={a.roster_id} size={16} />
+            <span className="truncate">{a.name}</span>
+            <StatusDot status={a.status} className="ml-auto" />
+          </button>
+        ))}
       </Group>
     </nav>
   );

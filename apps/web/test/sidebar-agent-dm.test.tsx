@@ -34,16 +34,22 @@ import { Sidebar } from "../src/shell/Sidebar";
 
 afterEach(cleanup);
 
-it("lists an agent with its own DM once, under Direct messages", async () => {
+it("lists an agent with its own DM in both places: its DM under Direct messages and the agent under Agents", async () => {
+  const opened: string[] = [];
   render(
     <Sidebar
       activeChatId={null}
-      onOpenChat={() => {}}
-      onOpenAgent={() => {}}
+      onOpenChat={(id) => opened.push(`chat:${id}`)}
+      onOpenAgent={(a) => opened.push(`agent:${a.id}`)}
       onNewChat={() => {}}
     />,
   );
   const nav = screen.getByRole("navigation", { name: "Chats" });
-  expect(await within(nav).findByRole("button", { name: /Ops/ })).toBeTruthy();
-  expect(within(nav).getAllByRole("button", { name: /Scribe/ })).toHaveLength(1);
+  expect(await within(nav).findByRole("button", { name: "Agent Ops, running" })).toBeTruthy();
+  const agentRow = within(nav).getByRole("button", { name: "Agent Scribe, running" });
+  // the DM row keeps its name, so one row answers to "Scribe"
+  const dmRow = within(nav).getByRole("button", { name: /^Scribe\b/ });
+  dmRow.click();
+  agentRow.click();
+  expect(opened).toEqual(["chat:dm-1", "agent:ag-scribe"]);
 });
