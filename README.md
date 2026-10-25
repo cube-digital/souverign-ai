@@ -115,6 +115,8 @@ Then open a few browser tabs, one user per tab:
 | `make agents-smoke` | the DevOps bot answers on the local LLM through the app |
 | `make demo` / `make share` | the whole demo, kept awake / published on your tailnet |
 
+Optional Google sign-in: see docs/auth.md (off unless .env enables it).
+
 ## Docs
 
 - Design and decisions: [`docs/superpowers/specs/`](docs/superpowers/specs/)
