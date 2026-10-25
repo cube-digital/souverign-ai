@@ -1,5 +1,13 @@
 import { execFileSync, spawn as nodeSpawn } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Db } from "../db.js";
@@ -23,21 +31,24 @@ export interface Spawner {
   spawn(
     cmd: string,
     args: string[],
-    opts: { env: Record<string, string>; stdin: string },
+    opts: { env: Record<string, string>; stdin: string; logFile?: string },
   ): SpawnedWorker;
 }
 
 /** Spawns a child with the given env, writes `stdin` once and closes it. */
 export const nodeSpawner: Spawner = {
   spawn(cmd, args, opts) {
+    // The worker's stderr holds ids and counts only (see sa_meeting.worker); keep it for the operator.
+    const errFd = opts.logFile ? openSync(opts.logFile, "a", 0o600) : null;
     const child = nodeSpawn(cmd, args, {
       env: opts.env,
       cwd: repoRoot,
-      stdio: ["pipe", "ignore", "ignore"],
+      stdio: ["pipe", "ignore", errFd ?? "ignore"],
       detached: true,
     });
-    child.stdin.on("error", () => {});
-    child.stdin.end(opts.stdin);
+    if (errFd !== null) closeSync(errFd);
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(opts.stdin);
     return {
       pid: child.pid ?? 0,
       onExit: (cb) => {
@@ -128,10 +139,11 @@ export class Notetakers {
       audio_token: this.env.AUDIO_TOKEN ?? "",
       media_key: mediaKey ?? null,
     })}\n`;
+    mkdirSync(this.pidDir, { recursive: true });
     const worker = this.o.spawner.spawn(
       "uv",
       ["run", "--project", repoRoot, "--no-sync", "sa-meeting", "join"],
-      { env, stdin },
+      { env, stdin, logFile: join(this.pidDir, `${notetakerId}.log`) },
     );
     this.running.set(notetakerId, worker);
     mkdirSync(this.pidDir, { recursive: true });
