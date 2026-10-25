@@ -112,15 +112,34 @@ test("approve: the card is shown, the pill counts it, approving writes one .eml 
   await expect.poll(emlCount).toBe(before + 1);
 });
 
-test("deny: Declined by Ana appears and the posted text never reaches #ops", async ({
+test("deny: a personal agent asked by Vlad needs Ana, who declines; the text never reaches #ops", async ({
   browser,
 }) => {
   const ana = await signIn(browser, "Ana", "111111");
-  const cmd = '@Scribe !tool chat_send {"chat":"ops","text":"e2e-deny-marker"}';
-  await openChat(ana, /^general( \d+)?$/, "Message # general");
-  await send(ana, "Message # general", cmd);
-  await openThread(ana, cmd);
+  const vlad = await signIn(browser, "Vlad", "222222");
 
+  // Ana owns the agent Pia and a chat with Vlad where Pia is a member
+  await ana.getByRole("button", { name: "All agents" }).click();
+  await ana.getByRole("button", { name: "+ New agent" }).click();
+  await ana.getByLabel("Name").fill("Pia");
+  await ana.getByRole("button", { name: "Create agent" }).click();
+  await expect(ana.getByRole("region", { name: "Pia" })).toBeVisible();
+  await ana.getByRole("button", { name: "New chat" }).click();
+  const dialog = ana.getByRole("dialog", { name: "New chat" });
+  await dialog.getByLabel("Title").fill("Deny room");
+  await dialog.getByLabel("Vlad").check();
+  await dialog.getByRole("button", { name: "Create" }).click();
+  await openChat(ana, /Deny room/, "Message # Deny room");
+  await ana.getByRole("button", { name: "Members" }).click();
+  await ana.getByRole("button", { name: "Add agent Pia" }).click();
+  await expect(ana.getByText(/Pia joined/).first()).toBeVisible();
+  await ana.getByRole("button", { name: "Close panel" }).click();
+
+  // Vlad asks; Ana (the approver, not the requester) sees Deny
+  const cmd = '@Pia !tool chat_send {"chat":"ops","text":"e2e-deny-marker"}';
+  await openChat(vlad, /Deny room/, "Message # Deny room");
+  await send(vlad, "Message # Deny room", cmd);
+  await openThread(ana, cmd);
   const card = details(ana).getByRole("region", { name: "Approval" });
   await card.getByRole("button", { name: "Deny" }).click({ timeout: 30_000 });
   await expect(
@@ -129,9 +148,9 @@ test("deny: Declined by Ana appears and the posted text never reaches #ops", asy
       .first(),
   ).toBeVisible();
 
-  await ana.waitForTimeout(3000);
-  await openChat(ana, /^ops( \d+)?$/, "Message # ops");
-  await expect(ana.getByText("e2e-deny-marker")).toHaveCount(0);
+  await vlad.waitForTimeout(3000);
+  await openChat(vlad, /^ops( \d+)?$/, "Message # ops");
+  await expect(vlad.getByText("e2e-deny-marker")).toHaveCount(0);
 });
 
 test("requester-only: another member sees Waiting for Ana and no approve button", async ({
