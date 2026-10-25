@@ -142,7 +142,14 @@ describe("recallScopes (D-9)", () => {
     const scopes = recallScopes(
       input({ agent: second, chat: { id: "dm2", kind: "dm", humans: ["ana"], agents: ["nora2"] } }),
     );
-    expect(namespaces(scopes)).toEqual(["agent:nora2", "chat:dm2"]);
+    expect(namespaces(scopes).sort()).toEqual(["agent:nora2", "agent:nora2", "chat:dm2"]);
+    expect(scopes).toEqual(
+      expect.arrayContaining([
+        { namespace: "agent:nora2", origin_chat_ids: [null] },
+        { namespace: "agent:nora2", origin_chat_ids: ["dm2"], since_ts: JOINED },
+        { namespace: "chat:dm2", since_ts: JOINED },
+      ]),
+    );
   });
 
   it("(f) never, ask without approver and retry exclude taught knowledge", () => {
