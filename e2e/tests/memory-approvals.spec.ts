@@ -9,7 +9,7 @@ const emlCount = () => readdirSync(OUTBOX).filter((f) => f.endsWith(".eml")).len
 const details = (p: Page) => p.getByRole("complementary", { name: "Details" });
 const EMAIL =
   '@Sales !tool email_send {"to":"buyer@northwind.example","subject":"7.4 date","body":"Hello from the e2e"}';
-const RECALL = '@Tech !tool memory_recall {"query":"termination notice period"}';
+const recallText = (query: string) => `@Tech !tool memory_recall {"query":"${query}"}`;
 
 async function signIn(browser: Browser, name: string, pin: string): Promise<Page> {
   const page = await (await browser.newContext()).newPage();
@@ -50,8 +50,8 @@ async function openThread(p: Page, text: string) {
   await p
     .getByRole("listitem")
     .filter({ hasText: text })
-    .getByRole("button", { name: /\d+ repl/i })
     .first()
+    .getByRole("button", { name: /\d+ repl/i })
     .click();
 }
 
@@ -61,10 +61,11 @@ async function teach(p: Page) {
   await expect(p.getByText("contract.txt").first()).toBeVisible({ timeout: 30_000 });
 }
 
-async function recall(p: Page) {
+async function recall(p: Page, query: string) {
+  const text = recallText(query);
   await openChat(p, /^general( \d+)?$/, "Message # general");
-  await send(p, "Message # general", RECALL);
-  await openThread(p, RECALL);
+  await send(p, "Message # general", text);
+  await openThread(p, text);
 }
 
 test.describe.configure({ mode: "serial" });
@@ -77,7 +78,7 @@ test("teach a document, recall it in chat: the citation chip opens the source", 
   await expect(ana.getByText("contract.txt").first()).toBeVisible();
   await expect(ana.getByText(/Taught by Ana/)).toBeVisible();
 
-  await recall(ana);
+  await recall(ana, "termination notice period");
   const chip = details(ana)
     .getByRole("list", { name: "Sources" })
     .getByRole("button", {
@@ -196,7 +197,7 @@ test("correct and forget: a correction is listed; after deleting the document re
   browser,
 }) => {
   const ana = await signIn(browser, "Ana", "111111");
-  await recall(ana);
+  await recall(ana, "notice period termination");
   const reply = details(ana).getByRole("listitem").filter({ hasText: "contract.txt" }).first();
   await expect(reply).toBeVisible({ timeout: 30_000 });
   await reply.getByRole("button", { name: "Not helpful" }).click();
@@ -216,7 +217,7 @@ test("correct and forget: a correction is listed; after deleting the document re
   await ana.getByRole("dialog").getByRole("button", { name: "Delete" }).click();
   await expect(ana.getByText("Taught by Ana")).toHaveCount(0);
 
-  await recall(ana);
+  await recall(ana, "termination notice period in days");
   await expect(
     details(ana)
       .getByText(/No memories matched\.|47 calendar days/)
