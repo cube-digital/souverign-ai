@@ -513,3 +513,11 @@ export type ApiError = z.infer<typeof ApiError>;
 
 // Roster and seed rooms are pure data, safe for every consumer (the web included).
 export * from "./roster.js";
+
+export const AuthProviders = z.object({
+  pin: z.boolean(),
+  oidc: z.array(z.object({ id: z.string().regex(/^[a-z0-9-]{1,32}$/), label: z.string().max(40) })),
+});
+export type AuthProviders = z.infer<typeof AuthProviders>;
+export const OidcExchangeRequest = z.object({ code: z.string().min(20).max(128) });
+export type OidcExchangeRequest = z.infer<typeof OidcExchangeRequest>;

@@ -154,6 +154,9 @@ importers:
       fastify:
         specifier: ^5.12.7
         version: 5.12.7
+      jose:
+        specifier: ^6
+        version: 6.2.13
       mammoth:
         specifier: ^1.13.0
         version: 1.13.0
