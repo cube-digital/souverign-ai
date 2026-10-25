@@ -165,7 +165,8 @@ describe("gated tools (T9)", () => {
     // Hidden has the agent and the requester, but not the approver (Ana).
     const refused = await call("nora", "chat_send", { chat: "Hidden", text: "psst" });
     expect(refused).toContain("No chat named Hidden that you and I are both in. Options:");
-    expect(refused).toContain("#Ops");
+    expect(refused).toContain("#Project");
+    expect(refused).not.toContain("#Ops");
     expect(refused).not.toContain("#Hidden");
     expect(await approvalIds("chat_send")).toEqual([]);
 
