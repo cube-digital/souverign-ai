@@ -77,6 +77,7 @@ const api = vi.hoisted(() => ({
   deleteRoutine: vi.fn(),
   getPrefs: vi.fn(),
   setPrefs: vi.fn(),
+  approvalGrants: vi.fn(async () => []),
 }));
 vi.mock("../src/api", () => api);
 

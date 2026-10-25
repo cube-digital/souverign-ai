@@ -46,6 +46,9 @@ export function ChannelHeader({ chat }: { chat: Chat }) {
         <Icons.Pulse />
         Activity
       </Button>
+      <Button size="sm" onClick={() => rail.open({ kind: "notes", chatId: chat.id })}>
+        Notes
+      </Button>
       <Button
         size="sm"
         aria-pressed={relayOpen}

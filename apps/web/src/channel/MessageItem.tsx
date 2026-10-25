@@ -74,6 +74,8 @@ export type MessageItemProps = {
   /** set inside a thread view */
   rootId?: string | undefined;
   actions: RowActions;
+  /** briefly marks the row a citation pointed at */
+  highlight?: boolean;
 };
 
 export const MessageItem = memo(function MessageItem({
@@ -85,6 +87,7 @@ export const MessageItem = memo(function MessageItem({
   others,
   rootId,
   actions,
+  highlight = false,
 }: MessageItemProps) {
   const member = memberOfDevice(chat, m.senderDevice);
   const name = member?.display_name ?? "Unknown";
@@ -103,6 +106,8 @@ export const MessageItem = memo(function MessageItem({
         reactions={reactions}
         onReact={(emoji, op) => actions.react(m.id, emoji, op)}
         onChip={(t) => actions.send(t, rootId)}
+        chatId={chat.id}
+        messageId={m.id}
       />
     );
   else content = <LinkedText text={body.type === "text" ? body.text : ""} />;
@@ -112,7 +117,11 @@ export const MessageItem = memo(function MessageItem({
   const n = replies?.length ?? 0;
   const last = replies?.[n - 1];
   return (
-    <li className="group relative flex gap-2.5 px-4 py-0.5 hover:bg-bg-1">
+    <li
+      data-message-id={m.id}
+      data-highlight={highlight ? "true" : undefined}
+      className="group relative flex gap-2.5 px-4 py-0.5 hover:bg-bg-1 data-[highlight=true]:bg-bg-2"
+    >
       {isAgentCard ? null : compact ? <span className="w-6 shrink-0" /> : <Avatar name={name} />}
       <div className="min-w-0 flex-1">
         {!isAgentCard && !compact && (

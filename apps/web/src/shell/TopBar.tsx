@@ -1,5 +1,6 @@
 // Ported from donna (MIT License, Copyright (c) 2026 Cube Digital). See THIRD_PARTY_NOTICES.md.
 import { useState } from "react";
+import { PendingPill } from "../approvals/PendingPill";
 import { Avatar, Button, Icons, Kbd, Menu } from "../ds";
 import { useSession } from "../state/session";
 import { getTheme, setTheme } from "./theme";
@@ -29,6 +30,7 @@ export function TopBar({
         </span>
       </p>
       <div className="ml-auto flex items-center gap-1.5">
+        <PendingPill />
         <Button size="sm" variant="ghost" onClick={onToggleRelay}>
           Relay view
         </Button>

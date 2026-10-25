@@ -2,6 +2,7 @@ import { type ReactNode, useEffect } from "react";
 import { useMatch, useNavigate } from "react-router";
 import { ActivityRail } from "../rail/ActivityRail";
 import { MembersRail } from "../rail/MembersRail";
+import { NotesRail } from "../rail/NotesRail";
 import { RelayRail } from "../rail/RelayRail";
 import { useRail } from "../shell/rail";
 import { ThreadPanel } from "./ThreadPanel";
@@ -46,6 +47,8 @@ export function useRightRail(): { node: ReactNode | null; close: () => void } {
         <MembersRail chatId={panel.chatId} />
       ) : panel.kind === "activity" ? (
         <ActivityRail chatId={panel.chatId} />
+      ) : panel.kind === "notes" ? (
+        <NotesRail chatId={panel.chatId} />
       ) : (
         <RelayRail chatId={panel.chatId} />
       );

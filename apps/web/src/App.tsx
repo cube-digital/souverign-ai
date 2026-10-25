@@ -2,6 +2,7 @@ import { useState } from "react";
 import { BrowserRouter } from "react-router";
 import { getSession, type Session, setSession } from "./api";
 import { AppFrame } from "./app/routes";
+import { ApprovalsProvider } from "./approvals/store";
 import { ToastProvider } from "./ds";
 import { Login } from "./pages/Login";
 import { RailProvider } from "./shell/rail";
@@ -17,13 +18,15 @@ export function App() {
       <BrowserRouter>
         <RailProvider>
           <ToastProvider>
-            <AppFrame
-              onSwitchUser={() => {
-                setSession(null);
-                resetAgents();
-                setSessionState(null);
-              }}
-            />
+            <ApprovalsProvider>
+              <AppFrame
+                onSwitchUser={() => {
+                  setSession(null);
+                  resetAgents();
+                  setSessionState(null);
+                }}
+              />
+            </ApprovalsProvider>
           </ToastProvider>
         </RailProvider>
       </BrowserRouter>

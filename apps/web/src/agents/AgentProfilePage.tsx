@@ -1,24 +1,44 @@
-import type { Agent } from "@sa/protocol";
-import { AUTONOMY, rosterEntry, TEMPLATE_INFO } from "@sa/protocol/roster";
+import type { Agent, ApprovalGrant } from "@sa/protocol";
+import { AUTONOMY, GATED_TOOLS, rosterEntry, TEMPLATE_INFO } from "@sa/protocol/roster";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
+import { approvalGrants } from "../api";
+import { ActionsLog } from "../approvals/ActionsLog";
 import { AgentAvatar, Chip, StatusDot, Tabs } from "../ds";
 import { openAgentDm } from "../state/agentDm";
 import { useAgents } from "../state/agents";
 import { useSession } from "../state/session";
 import { ActivityTab } from "./ActivityTab";
+import { KnowledgeTab } from "./KnowledgeTab";
 import { RoutinesTab } from "./RoutinesTab";
+import { toolTiers } from "./toolTiers";
 
-type Tab = "overview" | "activity" | "routines";
+type Tab = "overview" | "activity" | "routines" | "knowledge" | "approvals";
 const TABS: { id: Tab; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "activity", label: "Activity" },
   { id: "routines", label: "Routines" },
+  { id: "knowledge", label: "Knowledge" },
+  { id: "approvals", label: "Approvals" },
 ];
 
 function Overview({ agent }: { agent: Agent }) {
   const session = useSession();
   const { chats, user } = session;
   const navigate = useNavigate();
+  const [grants, setGrants] = useState<ApprovalGrant[]>([]);
+  useEffect(() => {
+    let live = true;
+    approvalGrants().then(
+      (g) => live && setGrants(g.filter((x) => x.agent_id === agent.id)),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [agent.id]);
+  const tiers = toolTiers(agent.template, grants);
+  const writes = (GATED_TOOLS[agent.template] ?? []).join(", ") || "none";
   const entry = rosterEntry(agent.roster_id);
   const info = entry ?? TEMPLATE_INFO[agent.template] ?? { tools: [], examples: [] };
   const readFrom = chats.flatMap((c) => {
@@ -42,11 +62,23 @@ function Overview({ agent }: { agent: Agent }) {
       </div>
       <section aria-label="Tools" className="flex flex-col gap-1">
         <h2 className="text-[12px] text-text-2">Tools</h2>
-        <div className="flex flex-wrap gap-1">
-          {info.tools.map((t) => (
-            <Chip key={t}>{t}</Chip>
+        <ul className="m-0 flex list-none flex-col gap-1 p-0">
+          {tiers.map((t) => (
+            <li key={t.tool} className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-text-1">{t.tool}</span>
+              <Chip
+                tone={t.tier === "free" ? "neutral" : t.tier === "always approved" ? "ok" : "warn"}
+              >
+                {t.tier}
+              </Chip>
+              {t.note && <span className="text-[12px] text-text-2">{t.note}</span>}
+            </li>
           ))}
-        </div>
+        </ul>
+      </section>
+      <section aria-label="Memory and writes" className="flex flex-col gap-1 text-text-1">
+        <p>{`Memory: remembers this chat since it joined, and what people taught it (sharing: ${agent.share_private_in_chats ?? "always"})`}</p>
+        <p>{`Writes (need approval): ${writes}`}</p>
       </section>
       <section aria-label="Examples" className="flex flex-col gap-1">
         <h2 className="text-[12px] text-text-2">Try asking</h2>
@@ -105,6 +137,14 @@ export function AgentProfilePage() {
         {tab === "overview" && <Overview agent={agent} />}
         {tab === "activity" && <ActivityTab agent={agent} />}
         {tab === "routines" && <RoutinesTab agent={agent} />}
+        {tab === "knowledge" && (
+          <KnowledgeTab
+            agent={agent}
+            itemId={params.get("item") ?? undefined}
+            onCloseItem={() => setParams({ tab: "knowledge" }, { replace: true })}
+          />
+        )}
+        {tab === "approvals" && <ActionsLog agentId={agent.id} />}
       </div>
     </div>
   );
