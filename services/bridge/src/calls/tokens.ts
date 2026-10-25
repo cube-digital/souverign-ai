@@ -5,8 +5,8 @@ const TTL = "2h";
 
 export const roomName = (callId: string): string => `call-${callId}`;
 
-const secret = (): string => {
-  const s = process.env.LIVEKIT_API_SECRET;
+const secret = (given?: string): string => {
+  const s = given ?? process.env.LIVEKIT_API_SECRET;
   if (!s) throw new Error("LIVEKIT_API_SECRET is not set");
   return s;
 };
@@ -34,8 +34,10 @@ export function notetakerToken(a: {
   callId: string;
   agentId: string;
   invitedByName: string;
+  /** defaults to LIVEKIT_API_SECRET */
+  secret?: string;
 }): Promise<string> {
-  const t = new AccessToken(API_KEY, secret(), {
+  const t = new AccessToken(API_KEY, secret(a.secret), {
     identity: `agent:${a.agentId}`,
     name: "Scribe · taking notes",
     metadata: JSON.stringify({ purpose: "notes", invited_by: a.invitedByName }),
